@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { creaBancoPassaggio, type BancoPassaggio } from '../helpers/passaggio-banco'
+import { type BancoPassaggio } from '../helpers/passaggio-banco'
+import { creaBancoAzzera } from '../helpers/banco-azzera'
 
 /**
  * OGNI COLONNA CHE LO SCRIPT DI AZZERAMENTO NOMINA ESISTE DAVVERO IN PRODUZIONE (e nel banco di prova).
@@ -118,7 +119,7 @@ describe('le colonne che gli script di azzeramento nominano esistono in produzio
 
 describe('il banco di prova ha le colonne della produzione, per le tabelle che lo script nomina', () => {
   let b: BancoPassaggio
-  beforeAll(async () => { b = await creaBancoPassaggio({ fino: 'M49b' }) }, 240_000)
+  beforeAll(async () => { b = await creaBancoAzzera() }, 240_000)
   afterAll(async () => { await b?.db.close() })
 
   const nelBanco = async (): Promise<Record<string, string[]>> => {

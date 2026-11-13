@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { SEDE_SIM, SEDE_VERA, UTENTE, creaBancoPassaggio, inRollback, una, type BancoPassaggio } from '../helpers/passaggio-banco'
+import { SEDE_SIM, SEDE_VERA, UTENTE, inRollback, una, type BancoPassaggio } from '../helpers/passaggio-banco'
+import { creaBancoAzzera } from '../helpers/banco-azzera'
 
 /**
  * IL FILE CHE AZZERA L'ANNO NUOVO DELLA DEMO, ESEGUITO DAVVERO (su PGlite, mai su Demo né su produzione).
@@ -38,11 +39,8 @@ let annoNuovoId: string
 let sezioneVecchia: string
 
 beforeAll(async () => {
-  b = await creaBancoPassaggio({ fino: 'M49b' })
+  b = await creaBancoAzzera()
   const q = (sql: string, p: unknown[] = []) => b.db.query(sql, p)
-  // In produzione la voce punta all'alunno (nessuna azione alla cancellazione): il banco no, e senza la chiave una voce incassata non
-  // tratterrebbe il suo alunno. NOT VALID: la chiave vale per le righe nuove, il banco del passaggio ha voci con alunni di prova.
-  await b.db.exec(`ALTER TABLE public.pagamenti ADD CONSTRAINT pagamenti_alunno_id_fkey FOREIGN KEY (alunno_id) REFERENCES public.alunni(id) NOT VALID`)
   await q(`INSERT INTO public.schools (id, nome) VALUES ($1, 'Demo di prova')`, [DEMO])
   await q(`SELECT public.anni_sede_crea_per_sede($1, DATE '2026-11-06')`, [DEMO])
   const anno = async (inizio: number) =>
@@ -634,6 +632,53 @@ describe('azzera-anno-nuovo-demo.sql · la partenza la dà la fotografia', () =>
       await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
       expect(await impronta(`SELECT f.id, f.alunno_id, f.anno_sede_id, f.creata_il FROM public.frequenze f WHERE f.alunno_id IN ($1, $2) AND f.anno_sede_id = $3`, [id(70), AL.a, annoVecchio])).toBe(prima)
       expect(await impronta(`SELECT id, scuola_id, creato_il FROM public.alunni WHERE id = $1`, [id(70)])).toBe(alunnoPrima)
+    })
+  })
+})
+
+describe('azzera-anno-nuovo-demo.sql · quello che nasce accogliendo una domanda (O1)', () => {
+  it('i legami dell’alunno e della domanda si tolgono con loro; gli account e il CRM restano, elencati per uuid', async () => {
+    await inRollback(b.db, async () => {
+      // Accogliere una domanda dall'app crea più di un alunno: i legami con i genitori (legame_genitori_alunni, student_parents) e l'invito con le
+      // credenziali (iscrizioni_inviti_credenziali). In produzione queste righe tenevano in vita l'alunno e la domanda: l'azzeramento "riusciva" e
+      // lasciava tutto. L'account (parents, utenti) non si cancella mai; il CRM (crm_bambini, crm_schede) nemmeno, e trattiene ciò a cui punta.
+      const f = await fotografa()
+      const q = (sql: string, p: unknown[] = []) => b.db.query(sql, p)
+      const X = id(90), Y = id(91), P = id(92), U = id(93)
+      const nuova = async (stato = 'approved') =>
+        una<string>(b.db, `INSERT INTO public.enrollment_submissions (scuola_id, anno_id, data, status) VALUES ($1, $2, '{}'::jsonb, $3) RETURNING id`, [DEMO, annoNuovoId, stato])
+      const D = await nuova()
+      const D3 = await nuova()
+      await q(`INSERT INTO public.parents (id) VALUES ($1)`, [P])
+      await q(`INSERT INTO public.utenti (id, ruolo) VALUES ($1, 'genitore')`, [U])
+      await q(`INSERT INTO public.alunni (id, scuola_id, stato) VALUES ($1, $3, 'in_arrivo'), ($2, $3, 'in_arrivo')`, [X, Y, DEMO])
+      await q(`INSERT INTO public.legame_genitori_alunni (genitore_id, alunno_id) VALUES ($1, $2)`, [U, X])
+      await q(`INSERT INTO public.student_parents (student_id, parent_id) VALUES ($1, $2)`, [X, P])
+      await q(`INSERT INTO public.iscrizioni_inviti_credenziali (submission_id, parent_id, auth_user_id) VALUES ($1, $2, $3)`, [D, P, U])
+      const C = await una<string>(b.db, `INSERT INTO public.crm_bambini (scuola_id, alunno_id) VALUES ($1, $2) RETURNING id`, [DEMO, Y])
+      const S = await una<string>(b.db, `INSERT INTO public.crm_schede (scuola_id, domanda_da_associare) VALUES ($1, $2) RETURNING id`, [DEMO, D3])
+
+      const risultati = await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
+      const voci = (risultati.at(-1)!.rows as { voce: string }[]).map((r) => r.voce)
+
+      expect(await conta(`SELECT 1 FROM public.alunni WHERE id = $1`, [X]), 'l’alunno accolto esce').toBe(0)
+      expect(await conta(`SELECT 1 FROM public.enrollment_submissions WHERE id = $1`, [D]), 'e la sua domanda').toBe(0)
+      expect(await conta(`SELECT 1 FROM public.legame_genitori_alunni WHERE alunno_id = $1`, [X])).toBe(0)
+      expect(await conta(`SELECT 1 FROM public.student_parents WHERE student_id = $1`, [X])).toBe(0)
+      expect(await conta(`SELECT 1 FROM public.iscrizioni_inviti_credenziali WHERE auth_user_id = $1`, [U]), 'e l’invito con le credenziali').toBe(0)
+      // gli account restano, e si elencano
+      expect(await conta(`SELECT 1 FROM public.parents WHERE id = $1`, [P])).toBe(1)
+      expect(await conta(`SELECT 1 FROM public.utenti WHERE id = $1`, [U])).toBe(1)
+      expect(voci).toContain(`lasciata · parents · ${P}`)
+      expect(voci).toContain(`lasciata · utenti · ${U}`)
+      // il CRM trattiene il suo alunno e la sua domanda, e si elenca
+      expect(await conta(`SELECT 1 FROM public.alunni WHERE id = $1`, [Y]), 'l’alunno del CRM resta').toBe(1)
+      expect(await conta(`SELECT 1 FROM public.enrollment_submissions WHERE id = $1`, [D3]), 'la domanda del CRM resta').toBe(1)
+      expect(await una<string>(b.db, `SELECT alunno_id FROM public.crm_bambini WHERE id = $1`, [C]), 'il CRM non perde il legame').toBe(Y)
+      expect(voci).toContain(`lasciata · crm_bambini · ${C}`)
+      expect(voci).toContain(`lasciata · crm_schede · ${S}`)
+      expect(voci).toContain(`lasciata · alunni · ${Y}`)
+      expect(voci).toContain(`lasciata · enrollment_submissions · ${D3}`)
     })
   })
 })

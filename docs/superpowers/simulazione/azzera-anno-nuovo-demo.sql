@@ -342,7 +342,18 @@ BEGIN
   INSERT INTO _azzera_cand (tabella, id)
     SELECT 'enrollment_submissions', e.id FROM public.enrollment_submissions e
      WHERE e.scuola_id = v_sede AND e.anno_id = v_anno_id AND e.created_at >= v_dal;
-  PERFORM pg_temp.azzera_blocca('enrollment_submissions', ARRAY['iscrizioni_decisioni']);
+  PERFORM pg_temp.azzera_blocca('enrollment_submissions', ARRAY['iscrizioni_decisioni', 'iscrizioni_inviti_credenziali']);
+  -- Accogliere la domanda ha creato un invito con le credenziali: va via con la domanda (nasce con lei, nella Demo, dopo la partenza). L'ACCOUNT
+  -- che ha creato (parents, utenti) NON si cancella mai: se è nato dopo la partenza si elenca fra le righe lasciate.
+  INSERT INTO _azzera_lasciate
+    SELECT DISTINCT 'parents', ic.parent_id FROM public.iscrizioni_inviti_credenziali ic JOIN public.parents p ON p.id = ic.parent_id
+     WHERE p.created_at >= v_dal AND ic.submission_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata)
+       AND NOT EXISTS (SELECT 1 FROM _azzera_lasciate la WHERE la.tabella = 'parents' AND la.id = ic.parent_id);
+  INSERT INTO _azzera_lasciate
+    SELECT DISTINCT 'utenti', u.id FROM public.iscrizioni_inviti_credenziali ic JOIN public.utenti u ON u.id = ic.auth_user_id
+     WHERE u.creato_il >= v_dal AND ic.submission_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata)
+       AND NOT EXISTS (SELECT 1 FROM _azzera_lasciate la WHERE la.tabella = 'utenti' AND la.id = u.id);
+  DELETE FROM public.iscrizioni_inviti_credenziali ic WHERE ic.submission_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata);
   DELETE FROM public.enrollment_submissions e WHERE e.id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
   INSERT INTO _azzera_lasciate SELECT k.tabella, k.id FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND k.bloccata;
@@ -352,12 +363,31 @@ BEGIN
   -- 6e · gli alunni nati dopo la partenza, solo se non resta loro NIENTE altrove (le tracce automatiche dello storico vanno via con loro)
   INSERT INTO _azzera_cand (tabella, id)
     SELECT 'alunni', al.id FROM public.alunni al WHERE al.scuola_id = v_sede AND al.creato_il >= v_dal;
-  PERFORM pg_temp.azzera_blocca('alunni', ARRAY['alunni_classi_storico', 'storici_revisioni', 'storici_collegamenti'], 'retta_a_carico_di');
+  PERFORM pg_temp.azzera_blocca('alunni', ARRAY['alunni_classi_storico', 'storici_revisioni', 'storici_collegamenti', 'student_parents', 'legame_genitori_alunni'], 'retta_a_carico_di');
+  -- I legami con i genitori nascono accogliendo la domanda (student_parents va via a cascata, legame_genitori_alunni no): si tolgono con l'alunno
+  -- che se ne va. L'ACCOUNT non si cancella mai: se è nato dopo la partenza si elenca fra le righe lasciate.
+  INSERT INTO _azzera_lasciate
+    SELECT DISTINCT 'parents', sp.parent_id FROM public.student_parents sp JOIN public.parents p ON p.id = sp.parent_id
+     WHERE p.created_at >= v_dal AND sp.student_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'alunni' AND NOT k.bloccata)
+       AND NOT EXISTS (SELECT 1 FROM _azzera_lasciate la WHERE la.tabella = 'parents' AND la.id = sp.parent_id);
+  INSERT INTO _azzera_lasciate
+    SELECT DISTINCT 'utenti', u.id FROM public.legame_genitori_alunni lg JOIN public.utenti u ON u.id = lg.genitore_id
+     WHERE u.creato_il >= v_dal AND lg.alunno_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'alunni' AND NOT k.bloccata)
+       AND NOT EXISTS (SELECT 1 FROM _azzera_lasciate la WHERE la.tabella = 'utenti' AND la.id = u.id);
+  DELETE FROM public.legame_genitori_alunni lg WHERE lg.alunno_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'alunni' AND NOT k.bloccata);
   DELETE FROM public.alunni al WHERE al.id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'alunni' AND NOT k.bloccata);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
   INSERT INTO _azzera_lasciate SELECT k.tabella, k.id FROM _azzera_cand k WHERE k.tabella = 'alunni' AND k.bloccata;
   GET DIAGNOSTICS v_lasciate = ROW_COUNT;
   INSERT INTO _azzera_esito (voce, tolte, lasciate) VALUES ('alunni nati dopo la partenza (lasciati: con righe altrove)', v_tolte, v_lasciate);
+  -- Il CRM non si cancella: trattiene il suo alunno o la sua domanda, e si elenca per uuid (così si sa PERCHÉ quell'alunno resta).
+  INSERT INTO _azzera_lasciate
+    SELECT 'crm_bambini', cb.id FROM public.crm_bambini cb
+     WHERE cb.alunno_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'alunni' AND k.bloccata)
+        OR cb.domanda_id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND k.bloccata);
+  INSERT INTO _azzera_lasciate
+    SELECT 'crm_schede', cs.id FROM public.crm_schede cs
+     WHERE cs.domanda_da_associare IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND k.bloccata);
 
   -- 6f · le sezioni dell'anno nuovo nate dopo la partenza; le copie (docenti, materie, orario, campanelle…) vanno via a cascata
   INSERT INTO _azzera_cand (tabella, id)

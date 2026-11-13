@@ -211,6 +211,14 @@ dice, per tabella, quante righe sono state tolte, rimesse, lasciate, poi gli uui
 | `AZZERA_FOTOGRAFIA` | la fotografia è della versione 1 o non ha `scattata_il` (si rifà con `fotografa-anno-nuovo-demo.sql`), non ha la forma attesa, è di un altro anno, o contiene righe di un altro anno |
 | `AZZERA_CONTEGGI` | dopo il lavoro restano righe nate dopo la partenza che non sono tra le «lasciate», o la configurazione non coincide con la fotografia |
 
+**Quello che nasce accogliendo una domanda.** Accogliere una domanda dall'app crea più di un alunno: i legami con i genitori
+(`legame_genitori_alunni`, `student_parents`) e l'invito con le credenziali (`iscrizioni_inviti_credenziali`). Questi **vanno via** insieme
+all'alunno e alla domanda che lo script toglie (sono della Demo e nati dopo la partenza), così l'anno nuovo torna davvero «appena nato».
+Restano invece, **elencati per uuid** fra le righe lasciate, gli **account** creati accogliendo la domanda (`parents`, `utenti`: li cancella solo
+chi sa che nessuno li usa) e il **CRM** (`crm_bambini`, `crm_schede`): un bambino del CRM che punta all'alunno o alla domanda li trattiene, e
+l'elenco dice perché quell'alunno non se n'è andato. Per le righe lasciate si decide a mano; l'invariante 11 conta gli alunni «in arrivo» rimasti
+senza più la frequenza nuova.
+
 **Che cosa non rimette.** Le spunte dei moduli di frequenze nate prima della partenza se un modulo è stato cambiato; i genitori creati accogliendo una
 domanda (restano, e il loro alunno con loro).
 

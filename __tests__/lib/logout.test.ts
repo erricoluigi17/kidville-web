@@ -61,6 +61,8 @@ describe('doLogout', () => {
     await doLogout()
     expect(fetchMock).toHaveBeenCalledWith('/api/auth/logout', { method: 'POST' })
     expect(signOut).toHaveBeenCalledTimes(1)
+    // Contratto: l'uscita tocca SOLO questo dispositivo. Senza scope supabase-js userebbe 'global'.
+    expect(signOut).toHaveBeenCalledWith({ scope: 'local' })
     for (const k of KV_KEYS) expect(localStorage.getItem(k)).toBeNull()
     // Non tocca chiavi non-identità.
     expect(localStorage.getItem('kv_altro')).toBe('resta')

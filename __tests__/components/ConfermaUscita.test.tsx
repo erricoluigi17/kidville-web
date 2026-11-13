@@ -12,12 +12,12 @@ import { UserMenu } from '@/components/ui/UserMenu'
 beforeEach(() => doLogout.mockClear())
 
 describe('LogoutMenuButton: l\'uscita passa dalla conferma', () => {
-  it('il primo tocco su «Esci» NON esce: apre «Vuoi uscire da Kidville?»', () => {
+  it('il primo tocco su «Esci» NON esce: apre «Vuoi uscire da Kidville su questo dispositivo?»', () => {
     render(<LogoutMenuButton />)
     fireEvent.click(screen.getByRole('button', { name: 'Esci' }))
     expect(doLogout).not.toHaveBeenCalled()
     const dialogo = screen.getByRole('dialog')
-    expect(dialogo).toHaveAccessibleName('Vuoi uscire da Kidville?')
+    expect(dialogo).toHaveAccessibleName('Vuoi uscire da Kidville su questo dispositivo?')
   })
 
   it('«Annulla» è il predefinito (ha il focus) e chiude senza uscire', async () => {

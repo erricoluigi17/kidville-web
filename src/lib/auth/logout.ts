@@ -65,7 +65,10 @@ export async function doLogout(): Promise<void> {
     /* ignore: procedo comunque a chiudere la sessione */
   }
   try {
-    await getSupabase().auth.signOut();
+    // `scope: 'local'`: l'uscita chiude la sessione di QUESTO dispositivo e basta. Senza scope supabase-js usa
+    // `'global'` e cancella le sessioni di quell'utente su TUTTI i dispositivi (visto nel collaudo del 13/11:
+    // un «Esci» sull'iPhone ha buttato fuori anche Chrome). Decisione di Luigi del 13/11/2026.
+    await getSupabase().auth.signOut({ scope: 'local' });
   } catch {
     /* ignore */
   }

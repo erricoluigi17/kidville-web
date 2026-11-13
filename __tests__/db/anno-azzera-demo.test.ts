@@ -974,6 +974,20 @@ describe('azzera-anno-nuovo-demo.sql · la prova a secco (B-n1)', () => {
     expect(commento).toMatch(/esecuzione vecchia/)
   })
 
+  it('il manuale dice dei codici che non cominciano per AZZERA_ (O-n13) e che le righe cambiate si rimettono, non si cancellano (O-n14)', () => {
+    const manuale = fs.readFileSync(path.join(DIR, 'anno-intero-demo.md'), 'utf8')
+    const dopoTabella = manuale.slice(manuale.indexOf('| `AZZERA_CONTEGGI`'), manuale.indexOf('**Le domande tolte.**'))
+    expect(dopoTabella).toMatch(/non comincia per `AZZERA_`/)
+    expect(dopoTabella).toMatch(/`CALENDARIO_NON_CONTINUO`/)
+    expect(dopoTabella).toMatch(/`23P01`/)
+    expect(dopoTabella).toMatch(/anni_sede_domande_solo_aperto/)
+    expect(dopoTabella).toMatch(/non (?:è cambiato niente|c'è il riassunto)/)
+    const date = manuale.slice(manuale.indexOf('**Le date degli anni.**'), manuale.indexOf('**Quello che nasce accogliendo'))
+    expect(date, 'le nate si tolgono').toMatch(/\*\*nate\*\* nel collaudo si tolgono/)
+    expect(date, 'le cambiate si rimettono').toMatch(/cambiate[^.]*si rimette la data/)
+    expect(date, 'perché non si cancellano').toMatch(/AZZERA_DATA/)
+  })
+
   it('dopo un’esecuzione vera, una prova nella stessa connessione non mostra l’esito vecchio', async () => {
     await inRollback(b.db, async () => {
       const f = await fotografa()

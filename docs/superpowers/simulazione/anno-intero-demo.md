@@ -197,7 +197,7 @@ quelle giuste e che ogni colonna nominata esiste. I vincoli differiti di `anni_s
 partenza, quindi il riassunto è fatto di zeri e il passo che toglie gli anni nati nel collaudo non gira. Quello si vede solo rifacendo la prova
 **dopo** un collaudo, prima di spegnere l'interruttore.
 
-**Ordine.** fotografia → prova a secco → collaudo → `ripristino-demo.sql` → prova a secco di nuovo (ora vede davvero che cosa c'è da togliere) → `azzera-anno-nuovo-demo.sql` con `c_prova_a_secco := false` → (se serve) collaudo successivo. La fotografia si rifà solo se
+**Ordine.** fotografia → prova a secco → collaudo → `ripristino-demo.sql` → prova a secco di nuovo (ora vede davvero che cosa c'è da togliere) → `azzera-anno-nuovo-demo.sql` con `c_prova_a_secco := false` → (se serve) collaudo successivo. Dopo una prova la sessione resta in una transazione abortita: se l'editor riusa la connessione, il primo invio vero si ferma su `BEGIN` con «current transaction is aborted». Prima di rilanciare si invia da solo `ROLLBACK;`, oppure si apre una scheda nuova dell'editor. E la `SELECT` finale lanciata a parte dopo una prova può mostrare l'esito di un'esecuzione vecchia, non quello della prova: l'esito della prova è nel messaggio dell'errore. La fotografia si rifà solo se
 l'anno nuovo viene preparato di nuovo a mano; per il collaudo successivo vale la stessa.
 
 **Che cosa fa.** Solo nella Demo e solo righe nate dopo la partenza: toglie le frequenze dell'anno nuovo (con le spunte), le voci di pagamento, le

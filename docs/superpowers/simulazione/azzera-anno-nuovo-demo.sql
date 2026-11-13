@@ -769,6 +769,9 @@ BEGIN
   RAISE NOTICE 'dopo: anno nuovo % com''era alla fotografia, % invarianti non a zero', v_etichetta, v_inv;
 
   -- ── 10 · La PROVA A SECCO: il messaggio di un'eccezione è l'unica cosa che l'editor mostra di sicuro, e l'eccezione annulla tutto ──
+  -- Dopo la prova la sessione resta in una transazione abortita: se l'editor riusa la connessione, prima di rilanciare serve un `ROLLBACK;` da solo
+  -- (o una scheda nuova). Le tabelle d'esito di un'esecuzione precedente sopravvivono al rollback: la SELECT finale lanciata a parte mostrerebbe
+  -- un'esecuzione vecchia. L'esito della prova è solo il messaggio qui sotto.
   IF c_prova_a_secco THEN
     -- Ordine: prima i conteggi per voce, poi gli uuid delle domande tolte (solo l'uuid), poi le lasciate, poi le invarianti: con molte domande i numeri
     -- che contano restano in cima. Due chiavi (gruppo, progressivo), così nessun progressivo si mescola con quello di un altro gruppo.

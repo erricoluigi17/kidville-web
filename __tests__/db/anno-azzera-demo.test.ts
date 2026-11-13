@@ -929,6 +929,17 @@ describe('azzera-anno-nuovo-demo.sql · la prova a secco (B-n1)', () => {
     })
   })
 
+  it('il manuale e lo script dicono che dopo la prova la sessione resta abortita: serve un ROLLBACK da solo o una scheda nuova (O-n9)', () => {
+    const manuale = fs.readFileSync(path.join(DIR, 'anno-intero-demo.md'), 'utf8')
+    const ordine = manuale.slice(manuale.indexOf('**Ordine.**'), manuale.indexOf('**Che cosa fa.**'))
+    expect(ordine).toMatch(/current transaction is aborted/)
+    expect(ordine).toMatch(/`ROLLBACK;`/)
+    expect(ordine).toMatch(/scheda nuova/)
+    const commento = AZZERA.slice(AZZERA.indexOf('-- ── 10 ·'), AZZERA.indexOf('IF c_prova_a_secco THEN'))
+    expect(commento).toMatch(/ROLLBACK;/)
+    expect(commento).toMatch(/esecuzione vecchia/)
+  })
+
   it('dopo un’esecuzione vera, una prova nella stessa connessione non mostra l’esito vecchio', async () => {
     await inRollback(b.db, async () => {
       const f = await fotografa()

@@ -7,18 +7,28 @@ import { describe, expect, it } from 'vitest'
 const css = readFileSync('src/app/auth/login/page.module.css', 'utf8')
 const tsx = readFileSync('src/app/auth/login/page.tsx', 'utf8')
 
+const switcher = readFileSync('src/components/features/i18n/LanguageSwitcher.tsx', 'utf8')
+
 describe('login: la pill della lingua non copre il logo', () => {
   it('la pill sta a max(12px, safe-area) dall’alto', () => {
     expect(tsx).toContain("top: 'max(12px, env(safe-area-inset-top))'")
   })
 
-  it('il padding di testa riserva almeno 36px sotto quella posizione, anche nel ramo per schermi bassi', () => {
-    const riga = css.match(/--kv-testa-login:\s*([^;]+);/)
-    expect(riga).not.toBeNull()
-    expect(riga![1]).toContain('max(12px, env(safe-area-inset-top))')
-    expect(riga![1]).toMatch(/\+ 36px/)
-    const usi = css.match(/padding:\s*var\(--kv-testa-login\)/g) ?? []
-    expect(usi).toHaveLength(2)
+  it('lo spazio sotto la pill (36px) si riserva solo sotto i 600px, in entrambi i padding di testa', () => {
+    const base = css.match(/--kv-testa-login:\s*calc\(16px \+ env\(safe-area-inset-top\)\);/)
+    expect(base, 'fuori dalla media query il padding di testa torna quello di sempre').not.toBeNull()
+    const media = css.match(/@media \(max-width: 600px\)\s*\{\s*\.page\s*\{([^}]*)\}/)
+    expect(media, 'manca la media query sotto i 600px').not.toBeNull()
+    expect(media![1]).toMatch(/--kv-testa-login:\s*max\([^;]*max\(12px, env\(safe-area-inset-top\)\)\s*\+ 36px/)
+    expect(media![1]).toMatch(/--kv-testa-login-bassa:\s*max\([^;]*max\(12px, env\(safe-area-inset-top\)\)\s*\+ 36px/)
+    expect(css.match(/padding:\s*var\(--kv-testa-login\) 0/g) ?? []).toHaveLength(1)
+    expect(css.match(/padding:\s*var\(--kv-testa-login-bassa\) 0/g) ?? []).toHaveLength(1)
     expect(css).not.toMatch(/padding:\s*calc\((?:12|16)px \+ env\(safe-area-inset-top\)\)/)
+  })
+
+  it('il 36 è legato all’altezza della pill: se il LanguageSwitcher cambia padding il lock cade', () => {
+    expect(switcher).toContain('p-1')
+    expect(switcher.match(/px-3 py-1 font-barlow text-xs/g) ?? []).toHaveLength(1)
+    expect(switcher).toContain('lock `login-pill-lingua-sotto-safe-area`')
   })
 })

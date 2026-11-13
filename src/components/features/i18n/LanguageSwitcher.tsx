@@ -14,6 +14,9 @@ function applicaLingua(l: Locale) {
 }
 
 // Selettore lingua (IT/EN). Nessuna dipendenza dal routing: funziona ovunque.
+// ⚠️ Nella login (`auth/login/page.module.css`, `--kv-testa-login`) lo spazio sotto questa pill è
+// 36px, calcolato su un'altezza di ~32px (`p-1` + `py-1 text-xs`). Se la pill diventa più alta,
+// quel 36 va rivisto: lo guarda il lock `login-pill-lingua-sotto-safe-area`.
 export function LanguageSwitcher({ className }: { className?: string }) {
   const locale = useLocale() as Locale;
   const t = useTranslations('common');

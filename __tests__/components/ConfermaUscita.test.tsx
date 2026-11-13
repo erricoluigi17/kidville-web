@@ -70,3 +70,41 @@ describe('UserMenu (barra della segreteria): stessa conferma', () => {
     await waitFor(() => expect(doLogout).toHaveBeenCalledTimes(1))
   })
 })
+
+describe('la conferma sta in un portale su document.body (B1)', () => {
+  it('dentro un foglio con transform il dialogo NON è figlio del foglio ma di document.body', () => {
+    // Un antenato con `transform` diventa il blocco contenitore dei discendenti `fixed`: il dialogo non coprirebbe
+    // lo schermo (collaudo/revisione 13/11, fogli Menu di segreteria, docente e genitore).
+    render(
+      <div data-testid="foglio" style={{ transform: 'translateX(-50%)', overflowY: 'auto' }}>
+        <LogoutMenuButton />
+      </div>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Esci' }))
+    const dialogo = screen.getByRole('dialog')
+    expect(screen.getByTestId('foglio').contains(dialogo)).toBe(false)
+    expect(document.body.contains(dialogo)).toBe(true)
+    let n: HTMLElement | null = dialogo
+    while (n && n.parentElement !== document.body) n = n.parentElement
+    expect(n?.parentElement).toBe(document.body)
+  })
+})
+
+describe('dopo «Annulla» il focus torna a un elemento che resta montato (S2)', () => {
+  it('LogoutMenuButton: torna al pulsante «Esci»', async () => {
+    render(<LogoutMenuButton />)
+    const esci = screen.getByRole('button', { name: 'Esci' })
+    fireEvent.click(esci)
+    fireEvent.click(screen.getByRole('button', { name: 'Annulla' }))
+    await waitFor(() => expect(document.activeElement).toBe(esci))
+  })
+
+  it('UserMenu: torna al pulsante «Menu account» (il menuitem si smonta)', async () => {
+    render(<UserMenu ruoloLabel="Segreteria" />)
+    const trigger = screen.getByRole('button', { name: /menu account/i })
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: /Esci/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Annulla' }))
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+  })
+})

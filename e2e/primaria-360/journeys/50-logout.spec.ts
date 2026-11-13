@@ -29,7 +29,7 @@ test('50 · Logout — Segreteria/Direzione (menu account TopBar)', async ({ bro
       await page.waitForTimeout(400);
       await page.getByRole('menuitem', { name: /Esci/i }).click();
       // Dal 13/11 «Esci» apre prima la conferma (`ConfermaUscita`): esce solo il secondo tocco.
-      await page.getByRole('dialog').getByRole('button', { name: /^Esci$/i }).click();
+      await page.getByRole('dialog', { name: /Vuoi uscire/i }).getByRole('button', { name: /^Esci$/i }).click();
       await page.waitForURL(/\/auth\/login/, { timeout: 15000 });
     },
     expect: async () => /\/auth\/login/.test(page.url()),
@@ -50,7 +50,7 @@ test('51 · Logout — Docente (menu bottom-sheet)', async ({ browser }) => {
       await page.waitForTimeout(500);
       await page.getByRole('button', { name: /^Esci$/i }).click();
       // Dal 13/11 «Esci» apre prima la conferma (`ConfermaUscita`): esce solo il secondo tocco.
-      await page.getByRole('dialog').getByRole('button', { name: /^Esci$/i }).click();
+      await page.getByRole('dialog', { name: /Vuoi uscire/i }).getByRole('button', { name: /^Esci$/i }).click();
       await page.waitForURL(/\/auth\/login/, { timeout: 15000 });
     },
     expect: async () => /\/auth\/login/.test(page.url()),
@@ -70,7 +70,7 @@ test('52 · Logout — Genitore (menu bottom-sheet)', async ({ browser }) => {
       await page.waitForTimeout(500);
       await page.getByRole('button', { name: /^Esci$/i }).click();
       // Dal 13/11 «Esci» apre prima la conferma (`ConfermaUscita`): esce solo il secondo tocco.
-      await page.getByRole('dialog').getByRole('button', { name: /^Esci$/i }).click();
+      await page.getByRole('dialog', { name: /Vuoi uscire/i }).getByRole('button', { name: /^Esci$/i }).click();
       await page.waitForURL(/\/auth\/login/, { timeout: 15000 });
     },
     expect: async () => /\/auth\/login/.test(page.url()),

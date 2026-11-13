@@ -1,6 +1,7 @@
 'use client';
 
-import { useId } from 'react';
+import { useId, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslations } from 'next-intl';
 import { Modal } from '@/components/ui/Modal';
 
@@ -15,16 +16,26 @@ export function ConfermaUscita({
   onAnnulla,
   onConferma,
   busy = false,
+  returnFocusRef,
 }: {
   open: boolean;
   onAnnulla: () => void;
   onConferma: () => void;
   busy?: boolean;
+  /** Dove torna il focus alla chiusura: un elemento che RESTA montato (il pulsante che ha aperto il menu o «Esci»). */
+  returnFocusRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const t = useTranslations('shared');
   const titoloId = useId();
-  return (
-    <Modal open={open} onClose={busy ? () => {} : onAnnulla} title={t('uscitaConfermaTitolo')} labelledBy={titoloId} safeArea>
+  // Senza `document` (render sul server) non c'è dove montare: `open` è comunque falso fino al primo tocco.
+  if (typeof document === 'undefined') return null;
+  // PORTALE su `document.body`: `Modal` è `fixed`, ma dentro un foglio con `transform`/`translate` (il foglio Menu
+  // della segreteria, i bottom sheet di docente e genitore) il foglio diventa il blocco contenitore e il dialogo
+  // non copre più lo schermo (nel foglio scorso in fondo finiva fuori vista). In body non eredita transform,
+  // overflow né stacking context: sta sopra tutto, come in `z-[120]`. Il comportamento di `Modal` per le altre
+  // pagine non cambia.
+  return createPortal(
+    <Modal open={open} onClose={busy ? () => {} : onAnnulla} title={t('uscitaConfermaTitolo')} labelledBy={titoloId} safeArea returnFocusRef={returnFocusRef}>
       <div className="w-[min(92vw,22rem)] rounded-card bg-kidville-white p-5 shadow-xl">
         <h2 id={titoloId} className="font-barlow text-xl font-extrabold uppercase text-kidville-green">
           {t('uscitaConfermaTitolo')}
@@ -48,6 +59,7 @@ export function ConfermaUscita({
           </button>
         </div>
       </div>
-    </Modal>
+    </Modal>,
+    document.body,
   );
 }

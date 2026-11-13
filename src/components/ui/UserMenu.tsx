@@ -18,6 +18,9 @@ export function UserMenu({ ruoloLabel }: { ruoloLabel: string }) {
   // «Esci» apre la conferma (`ConfermaUscita`): esce solo il secondo tocco.
   const [conferma, setConferma] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  // Il menuitem «Esci» si smonta quando si apre la conferma: dopo «Annulla» il focus torna al pulsante del menu,
+  // che resta montato (altrimenti finirebbe su <body>).
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -41,6 +44,7 @@ export function UserMenu({ ruoloLabel }: { ruoloLabel: string }) {
   return (
     <div ref={ref} className="relative pl-1.5">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
@@ -85,7 +89,7 @@ export function UserMenu({ ruoloLabel }: { ruoloLabel: string }) {
           </button>
         </div>
       )}
-      <ConfermaUscita open={conferma} busy={busy} onAnnulla={() => setConferma(false)} onConferma={onLogout} />
+      <ConfermaUscita open={conferma} busy={busy} returnFocusRef={triggerRef} onAnnulla={() => setConferma(false)} onConferma={onLogout} />
     </div>
   );
 }

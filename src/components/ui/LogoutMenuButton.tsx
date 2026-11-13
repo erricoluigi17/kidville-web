@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { LogOut } from 'lucide-react';
 import { doLogout } from '@/lib/auth/logout';
@@ -21,9 +21,12 @@ export function LogoutMenuButton({
   const [busy, setBusy] = useState(false);
   // Il tocco su «Esci» NON esce più: apre la conferma (vedi `ConfermaUscita`). Esce solo il secondo tocco.
   const [conferma, setConferma] = useState(false);
+  // Safari/iOS non dà il focus a un `<button>` al tocco: senza questo, dopo «Annulla» il focus finirebbe su <body>.
+  const triggerRef = useRef<HTMLButtonElement>(null);
   return (
     <>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setConferma(true)}
         disabled={busy}
@@ -37,6 +40,7 @@ export function LogoutMenuButton({
       <ConfermaUscita
         open={conferma}
         busy={busy}
+        returnFocusRef={triggerRef}
         onAnnulla={() => setConferma(false)}
         onConferma={async () => {
           setBusy(true);

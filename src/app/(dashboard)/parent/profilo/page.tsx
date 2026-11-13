@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useId, useState, useEffect, useCallback } from 'react';
+import { Suspense, useId, useState, useEffect, useCallback, useRef } from 'react';
 import { LinkInterno } from '@/components/ui/LinkInterno';
 import { IdCard, ShieldCheck, FileText, LifeBuoy, Loader2, AlertTriangle, Trash2, RotateCcw, Fingerprint, KeyRound, ChevronDown } from 'lucide-react';
 import { useTranslations } from 'next-intl';
@@ -42,6 +42,7 @@ function Inner() {
   // «Esci» apre la conferma (`ConfermaUscita`): esce solo il secondo tocco.
   const [confermaUscita, setConfermaUscita] = useState(false);
   const [uscendo, setUscendo] = useState(false);
+  const esciRef = useRef<HTMLButtonElement>(null);
   const [errore, setErrore] = useState<string | null>(null);
 
   // Sblocco biometrico opt-in (nativo). `bioSupportata`: null = in verifica,
@@ -318,6 +319,7 @@ function Inner() {
       </section>
 
       <button
+        ref={esciRef}
         onClick={() => setConfermaUscita(true)}
         className="min-h-[44px] w-full rounded-pill px-4 py-2.5 font-barlow text-sm font-extrabold uppercase text-kidville-muted active:bg-kidville-cream"
       >
@@ -326,6 +328,7 @@ function Inner() {
       <ConfermaUscita
         open={confermaUscita}
         busy={uscendo}
+        returnFocusRef={esciRef}
         onAnnulla={() => setConfermaUscita(false)}
         onConferma={() => {
           setUscendo(true);

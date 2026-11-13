@@ -432,6 +432,16 @@ describe('PassaggioClient · giro di correzione 1', () => {
     expect(screen.queryByRole('button', { name: itPassaggio.azioneCalcola })).toBeNull()
   })
 
+  it('anno IN PREPARAZIONE (iscrizioni chiuse): non rimanda al selettore, dice che le iscrizioni vanno aperte', async () => {
+    s.passaggio = null
+    s.righe = []
+    h.anno = { effettivo: { annoSedeId: ANNO, attivo: false, stato: 'in_preparazione' } }
+    render(<PassaggioClient />)
+    expect(await screen.findByText(itPassaggio.rimandoApertura)).toBeTruthy()
+    expect(screen.queryByText(itPassaggio.rimandoSelettore)).toBeNull()
+    expect(screen.queryByRole('button', { name: itPassaggio.azioneCalcola })).toBeNull()
+  })
+
   it('S15 · la classe di PARTENZA viene dalla riga, non dalla scheda del bambino', async () => {
     render(<PassaggioClient />)
     await screen.findByText('CognomeUno NomeUno')

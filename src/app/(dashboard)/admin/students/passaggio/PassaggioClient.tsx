@@ -152,10 +152,10 @@ export function PassaggioClient() {
   const effettivo = anno?.effettivo ?? null;
   if (!effettivo || !effettivo.annoSedeId) return <p className="font-maven text-sm text-kidville-sub">{t('nessunAnno')}</p>;
   // `key`: cambiato l'anno si riparte da zero (filtro, pagina, esito).
-  return <Passaggio key={effettivo.annoSedeId} annoSedeId={effettivo.annoSedeId} puoCalcolare={!effettivo.attivo && effettivo.stato === 'iscrizioni_aperte'} />;
+  return <Passaggio key={effettivo.annoSedeId} annoSedeId={effettivo.annoSedeId} puoCalcolare={!effettivo.attivo && effettivo.stato === 'iscrizioni_aperte'} inPreparazione={effettivo.stato === 'in_preparazione'} />;
 }
 
-function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcolare: boolean }) {
+function Passaggio({ annoSedeId, puoCalcolare, inPreparazione }: { annoSedeId: string; puoCalcolare: boolean; inPreparazione: boolean }) {
   const t = useTranslations('annoPassaggio');
   const locale = useLocale();
   const { userId } = useAdminIdentity();
@@ -383,11 +383,11 @@ function Passaggio({ annoSedeId, puoCalcolare }: { annoSedeId: string; puoCalcol
     return (
       <div>
         <p className="font-maven text-sm text-kidville-green">{annullato ? t('statoAnnullato') : t('nessunaAnteprima')}</p>
-        {/* (giro 1, S17) Il passaggio si calcola sull'anno con le iscrizioni aperte: dall'anno in corso si rimanda al selettore. */}
+        {/* (giro 1, S17) Il passaggio si calcola sull'anno con le iscrizioni aperte: dall'anno in corso si rimanda al selettore; su un anno ancora in preparazione si dice che vanno aperte le iscrizioni. */}
         {puoCalcolare || annullato ? (
           <button type="button" className={`${btnPrimary} mt-3`} disabled={occupato} onClick={calcola}>{t('azioneCalcola')}</button>
         ) : (
-          <p className={hint}>{t('rimandoSelettore')}</p>
+          <p className={hint}>{t(inPreparazione ? 'rimandoApertura' : 'rimandoSelettore')}</p>
         )}
         {esitoMessaggio}
       </div>

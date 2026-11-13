@@ -1,3 +1,9 @@
+## 🔎 Changelog — Collaudo dell'anno scolastico, «Passaggio d'anno» su un anno in preparazione — 2026-11-13 (ramo `claude/anno-agente1-passaggio-testo`)
+
+- **Etichetta falsa trovata sull'iPhone.** Sul 2027/28 «in preparazione» (iscrizioni non ancora aperte) la pagina «Passaggio d'anno» diceva «scegli quell'anno dal selettore in alto», ma quell'anno era già scelto: non diceva perché non c'era il pulsante per calcolare l'anteprima.
+- **Correzione.** `PassaggioClient` distingue l'anno in corso (resta il rimando al selettore) dall'anno `in_preparazione`, per cui mostra la nuova frase `rimandoApertura` (it/en): le iscrizioni non sono aperte, si aprono da Impostazioni → «Anno scolastico» → «Apri le iscrizioni».
+- **Test:** `passaggio-client.test.tsx` (anno in preparazione: niente rimando al selettore, niente pulsante «Calcola», frase nuova; visto rosso prima). Nessun log da aggiungere (testo). Nessuna migrazione.
+
 ## 🔎 Changelog — Collaudo dell'anno scolastico, lotto 3: «Esci» chiede conferma — 2026-11-13 (ramo `claude/anno-agente1-lotto3`, sopra il lotto 2)
 
 - **E3 — un tocco sbagliato su «Esci» faceva uscire da tutta l'app.** Nel collaudo sull'iPhone un tocco caduto mentre il foglio Menu scorreva per inerzia ha premuto «Esci»: `doLogout` → `auth.signOut()` (scope globale) ha cancellato le sessioni su tutti i dispositivi (prova: «Uscita…» era sullo schermo, `auth.sessions` a 0 righe, nessun 401/403 nei log). Non era un difetto di Conferme.

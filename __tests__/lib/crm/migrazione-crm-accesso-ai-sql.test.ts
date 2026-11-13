@@ -228,6 +228,12 @@ describe('crm_ai_prenota', () => {
     expect(await conta('crm_bambini', `esito = 'aperto' AND motivo_perdita IS NULL AND esito_origine = 'automatico' AND esito_da IS NULL`)).toBe(1)
     expect(await conta('crm_eventi', `tipo = 'esito_cambiato' AND autore_via = 'ai' AND dati->>'da' = 'perso' AND dati->>'a' = 'aperto'`)).toBe(1)
   })
+  it('una nascita prevista nel futuro si salva: la scheda non ha vincoli sulla data di nascita', async () => {
+    const futura = `${new Date().getUTCFullYear() + 1}-04-15`
+    const r = await prenota({ bambini: [{ nome: 'Bimbo Prova', data_nascita: futura }] })
+    expect(r.esito).toBe('creata')
+    expect(await conta('crm_bambini', `data_nascita::text = '${futura}'`)).toBe(1)
+  })
   it('9 · due gemelli (stessa data, nomi diversi) sono due bambini (R10)', async () => {
     await prenota({ bambini: [{ nome: 'Bimbo Prova', data_nascita: NASCITA }, { nome: 'Bimba Prova', data_nascita: NASCITA }] })
     expect(await conta('crm_bambini')).toBe(2)

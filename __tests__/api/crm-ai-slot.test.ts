@@ -271,7 +271,8 @@ describe('GET /api/crm/ai/slot', () => {
   it.each([
     ['8 mesi: nido', '2026-03', ['nido'], true],
     ['4 mesi: nido', '2026-07', ['nido'], true],
-    ['2 mesi: nessun servizio', '2026-09', [], false],
+    ['2 mesi oggi: a settembre ne avrà 12', '2026-09', ['nido'], true],
+    ['nascita prevista a luglio 2027: a settembre 2 mesi', '2027-07', [], false],
     ['4 anni: infanzia', '2022-06', ['infanzia'], true],
   ])('sede A (nido e infanzia) · %s', async (_caso, nascita, gradi, coperta) => {
     programma(null, [{}])
@@ -319,8 +320,15 @@ describe('GET /api/crm/ai/slot', () => {
     expect(h.lette).not.toContain('crm_appuntamenti')
   })
 
-  it('con un mese di nascita futuro non legge servizi né agenda', async () => {
-    const r = await chiama({ nascita: '2026-12' })
+  it('un bambino non ancora nato è accettato se a settembre avrà almeno 3 mesi', async () => {
+    programma(null, [{}])
+    const r = await chiama({ nascita: '2027-03' })
+    expect(r.status).toBe(200)
+    expect(await r.json()).toMatchObject({ gradi: ['nido'], etaCoperta: true, slot: [expect.anything(), expect.anything()] })
+  })
+
+  it('con un mese di nascita troppo lontano risponde ETA non coperta, non un errore di formato, e non legge servizi né agenda', async () => {
+    const r = await chiama({ nascita: '2028-01' })
     expect(r.status).toBe(200)
     expect(await r.json()).toEqual({ sede: SEDE_A, gradi: [], etaCoperta: false, troncato: false, slot: [] })
     expect(h.lette).toEqual(['crm_integrazioni', 'crm_integrazioni'])

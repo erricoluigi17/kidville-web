@@ -419,13 +419,39 @@ describe('POST /api/crm/ai/prenota', () => {
     expect(r.status).toBe(201)
   })
 
+  it('non ancora nato, nascita prevista a marzo: a settembre avrà 6 mesi, la visita si fissa', async () => {
+    h.rpc.mockReturnValueOnce(esito(creata()))
+    const r = await chiama({ bambini: [{ nome: NOME_BIMBO, dataNascita: '2027-03-10' }] })
+    expect(r.status).toBe(201)
+    expect(h.rpc.mock.calls[0][0].p_bambini).toEqual([expect.objectContaining({ data_nascita: '2027-03-10' })])
+  })
+
+  it('nascita prevista troppo in là: ETA_NON_COPERTA, non un errore di formato', async () => {
+    const r = await chiama({ bambini: [{ nome: NOME_BIMBO, dataNascita: '2027-07-10' }] })
+    expect(r.status).toBe(422)
+    expect(await r.json()).toMatchObject({ codice: 'ETA_NON_COPERTA' })
+    expect(h.rpc).not.toHaveBeenCalled()
+  })
+
   it('4 mesi: il nido è offerto, la visita si fissa', async () => {
     h.rpc.mockReturnValueOnce(esito(creata()))
     const r = await chiama({ bambini: [{ nome: NOME_BIMBO, dataNascita: '2026-07-10' }] })
     expect(r.status).toBe(201)
   })
 
-  it('2 mesi: sotto i 3 mesi nessun servizio, ETA_NON_COPERTA', async () => {
+  it('2 mesi oggi: a settembre prossimo ne avrà 12, il nido è offerto', async () => {
+    h.rpc.mockReturnValueOnce(esito(creata()))
+    const r = await chiama({ bambini: [{ nome: NOME_BIMBO, dataNascita: '2026-09-10' }] })
+    expect(r.status).toBe(201)
+  })
+
+  it('un mese di nascita fuori forma resta un 400', async () => {
+    const r = await chiama({ bambini: [{ nome: NOME_BIMBO, dataNascita: '2027-13-10' }] })
+    expect(r.status).toBe(400)
+  })
+
+  it('senza nido (sede senza elenco) anche un neonato è ETA_NON_COPERTA', async () => {
+    h.db.crm_servizi_sede = []
     const r = await chiama({ bambini: [{ nome: NOME_BIMBO, dataNascita: '2026-09-10' }] })
     expect(r.status).toBe(422)
     expect(await r.json()).toMatchObject({ codice: 'ETA_NON_COPERTA' })

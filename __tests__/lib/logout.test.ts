@@ -15,6 +15,9 @@ vi.mock('@/lib/native/badge', () => ({ impostaBadgeNonLette }))
 const svuotaCacheLocale = vi.hoisted(() => vi.fn(async () => undefined))
 vi.mock('@/lib/offline/pulizia-cache', () => ({ svuotaCacheLocale }))
 
+const logClient = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/logging/client', () => ({ logClient, nomeErrore: (e: unknown) => (e instanceof Error ? e.name : 'errore') }))
+
 import { doLogout } from '@/lib/auth/logout'
 
 const KV_KEYS = ['kv_user_id', 'kv_user_role', 'kv_parent_id', 'kv_student_id', 'kv_teacher_id']
@@ -158,5 +161,34 @@ describe('doLogout', () => {
     await doLogout()
 
     expect(location.href).toBe('/auth/login')
+  })
+  // S4 (regola 7 di AGENTS.md): `signOut` NON lancia, ritorna `{ error }`. Una revoca fallita lato server lascia
+  // vivo il refresh token: con `scope: 'local'` è l'unica revoca che resta, quindi non si può perdere in silenzio.
+  it('signOut che RITORNA { error }: scrive un log col codice (mai il messaggio) e l\'uscita si completa', async () => {
+    signOut.mockResolvedValueOnce({ error: { name: 'AuthRetryableFetchError', code: 'unexpected_failure', message: 'mario.rossi@example.com non raggiungibile' } } as never)
+    await doLogout()
+    expect(logClient).toHaveBeenCalledTimes(1)
+    const evento = logClient.mock.calls[0][0]
+    expect(evento.livello).toBe('warn')
+    expect(evento.messaggio).toContain('passo=signOut')
+    expect(evento.messaggio).toContain('unexpected_failure')
+    expect(JSON.stringify(evento)).not.toContain('mario.rossi')
+    expect(location.href).toBe('/auth/login')
+    for (const k of KV_KEYS) expect(localStorage.getItem(k)).toBeNull()
+  })
+
+  it('un passo che LANCIA viene loggato e gli altri passi girano comunque (fail-open)', async () => {
+    svuotaCacheLocale.mockRejectedValueOnce(new Error('boom'))
+    await doLogout()
+    expect(logClient.mock.calls.some((c) => String(c[0].messaggio).includes('passo=cache'))).toBe(true)
+    expect(location.href).toBe('/auth/login')
+  })
+
+  it('anche se il logger stesso lancia, si esce (il logger non rompe mai l\'app)', async () => {
+    logClient.mockImplementation(() => { throw new Error('log rotto') })
+    signOut.mockResolvedValueOnce({ error: { name: 'AuthApiError', code: 'session_not_found', message: 'x' } } as never)
+    await doLogout()
+    expect(location.href).toBe('/auth/login')
+    logClient.mockReset()
   })
 })

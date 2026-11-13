@@ -309,6 +309,52 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
     })
   })
 
+  it('le altre sedi non si muovono: righe nate DOPO la partenza sullo stesso 2027/28 (e un 2028/29 di un’altra sede) sopravvivono tutte', async () => {
+    await inRollback(b.db, async () => {
+      // Il 2027/28 globale è condiviso da tutte le sedi: se un filtro `scuola_id = v_sede` mancasse, le righe nate dopo la partenza in
+      // un'altra sede sarebbero candidate alla cancellazione quanto quelle della Demo. Prima del giro 1 le righe delle altre sedi stavano
+      // tutte PRIMA della partenza, quindi nessuna versione dello script le avrebbe mai viste: il test era verde con e senza i filtri.
+      const dal = await adesso()
+      const f = await fotografa()
+      const stati = await statiDemo()
+      await collaudo(true)
+      const q = (sql: string, p: unknown[] = []) => b.db.query(sql, p)
+      const sedi = [SEDE_SIM, SEDE_VERA] as const
+      const creati: { sede: string; alunno: string; pagamento: string; domanda: string; sezione: string }[] = []
+      for (const [i, sede] of sedi.entries()) {
+        const alunno = `44444444-4444-4444-8444-4444444444${80 + i}`
+        await q(`INSERT INTO public.alunni (id, scuola_id, stato) VALUES ($1, $2, 'in_arrivo')`, [alunno, sede])
+        const pagamento = await una<string>(b.db, `INSERT INTO public.pagamenti (alunno_id, scuola_id, descrizione, importo, scadenza, anno_id) VALUES ($1, $2, 'voce di un’altra sede', 120, DATE '2027-10-05', $3) RETURNING id`, [alunno, sede, annoNuovoId])
+        const domanda = await una<string>(b.db, `INSERT INTO public.enrollment_submissions (scuola_id, anno_id, data, status) VALUES ($1, $2, '{}'::jsonb, 'pending') RETURNING id`, [sede, annoNuovoId])
+        const sezione = await una<string>(b.db, `INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1, $2, 'Sezione di un’altra sede', 'infanzia', 'infanzia') RETURNING id`, [sede, annoNuovoId])
+        creati.push({ sede, alunno, pagamento, domanda, sezione })
+      }
+      // un 2028/29 anche per la sede di simulazione: la riga globale dell'anno è usata da due sedi e non deve sparire
+      await q(`SELECT public.anni_tick('2027-09-02'::date, $1::uuid)`, [SEDE_SIM])
+      const anno2028Sim = () => conta(`SELECT 1 FROM public.anni_sede s JOIN public.anni_scolastici y ON y.id = s.anno_id WHERE s.scuola_id = $1 AND y.anno_inizio = 2028`, [SEDE_SIM])
+      expect(await anno2028Sim(), 'la sede di simulazione ha il suo 2028/29').toBe(1)
+      const prima = await quadro(dal)
+      const globaliPrima = await una<string>(b.db, `SELECT string_agg(id::text, ',' ORDER BY id) FROM public.anni_scolastici`)
+
+      await ripristina(dal, stati)
+      await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
+
+      for (const c of creati) {
+        for (const [tabella, colonna, valore] of [['alunni', 'id', c.alunno], ['pagamenti', 'id', c.pagamento], ['enrollment_submissions', 'id', c.domanda], ['sections', 'id', c.sezione]] as const) {
+          expect(await conta(`SELECT 1 FROM public.${tabella} WHERE ${colonna} = $1`, [valore]), `${tabella} di ${c.sede === SEDE_SIM ? 'SEDE_SIM' : 'SEDE_VERA'} sopravvive`).toBe(1)
+        }
+      }
+      expect(await anno2028Sim(), 'il 2028/29 dell’altra sede sopravvive').toBe(1)
+      expect(await conta(`SELECT 1 FROM public.anni_scolastici y WHERE y.anno_inizio = 2028`), 'e la riga globale con lui').toBe(1)
+      expect(await una<string>(b.db, `SELECT string_agg(id::text, ',' ORDER BY id) FROM public.anni_scolastici`)).toBe(globaliPrima)
+      expect(await conta(`SELECT 1 FROM public.anni_sede s JOIN public.anni_scolastici y ON y.id = s.anno_id WHERE s.scuola_id = $1 AND y.anno_inizio = 2028`, [DEMO]), 'quello della Demo è sparito').toBe(0)
+      const dopo = await quadro(dal)
+      const soloAltre = (q: Awaited<ReturnType<typeof quadro>>) =>
+        Object.fromEntries(Object.entries(q).filter(([k]) => k.startsWith('altr')))
+      expect(soloAltre(dopo), 'le altre sedi, riga per riga, sono identiche').toEqual(soloAltre(prima))
+    })
+  })
+
   it('senza collaudo (niente da togliere) riesce e lascia tutto com’era', async () => {
     await inRollback(b.db, async () => {
       const dal = await adesso()

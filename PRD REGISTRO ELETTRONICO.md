@@ -117,6 +117,27 @@ Nessun log da aggiungere (testi e CSS). Nessuna migrazione.
 
 **Consegne alla 4.9.** Il lock `anni-tick-non-fa-il-passaggio` e la guardia della 3-B sono della 4.9 (la 4.8 non tocca `anni_tick`, così il lock resta verde); il testo del 403 «anno passato» per `in_chiusura` lo riprende la 4.9; in `anno_invarianti()` la 4.9 riparte dal corpo con la `15` e la `15-bis` (il suo `16` resta suo). Difetti secondari annotati: `docs/superpowers/plans/2026-11-09-pr4-8-difetti-secondari.md`.
 
+## 🧪 Changelog — Anno scolastico: azzerare l'anno nuovo della Demo fra un collaudo e l'altro — 2026-11-13 (ramo `claude/anno-azzera-demo-96ac71`, sopra la 4.9)
+
+Strumento di collaudo, **non è schema e non porta migrazioni**. Dopo la 4.9 tre agenti collaudano l'app vera nella sede Demo; fra uno e l'altro
+`ripristino-demo.sql` rimette gli stati degli anni ma lascia frequenze, voci, sezioni, domande, listino e posti. Questo secondo file riporta l'anno
+nuovo (2027/28) com'era prima dei collaudi.
+
+| Voce | Stato |
+|---|---|
+| `docs/superpowers/simulazione/fotografa-anno-nuovo-demo.sql`: **sola lettura**, prima dei collaudi; restituisce un JSON con stato, domande aperte, listino, moduli, posti (con i loro uuid) e i conteggi di partenza | ✅ provato su PGlite |
+| `docs/superpowers/simulazione/azzera-anno-nuovo-demo.sql`: `BEGIN; CREATE FUNCTION pg_temp…; DO …; DROP FUNCTION; COMMIT;` in un invio solo. Solo nella Demo e solo righe nate dopo la partenza: toglie frequenze (e spunte) dell'anno nuovo, voci di pagamento, domande del modulo pubblico, alunni nati dopo la partenza, sezioni dell'anno nuovo con le loro copie; rimette a NULL i «no» dell'anno corrente; rimette stato, `domande_aperte`, listino, moduli e posti **riga per riga con gli stessi uuid** | ✅ provato su PGlite; ⏳ non eseguito sull'editor di Supabase |
+| Ciò che ha un legame **resta e si elenca per uuid**, non si tocca: una voce con incasso, fattura o movimento; un alunno a cui resta una riga altrove (frequenze, genitori, documenti…); una sezione ancora usata. I legami si leggono dalle chiavi esterne vere del database, non da un elenco scritto nel file | ✅ |
+| Guardia: sede `e2e00000…` oppure unica in `anno_regole.sedi_simulazione`. Sette codici: `AZZERA_SEGNAPOSTO`, `_SEDE_NON_DI_PROVA`, `_DATA`, `_ANNO_NUOVO_NON_UNO`, `_PRIMA_IL_RIPRISTINO`, `_FOTOGRAFIA`, `_CONTEGGI`; un codice ferma tutto e non cambia niente | ✅ un test per codice |
+| `__tests__/db/anno-azzera-demo.test.ts` (17 prove): Demo più tre sedi con la loro popolazione; collaudo → ripristino → azzeramento, listino/moduli/posti uguali alla fotografia, zero righe nate dopo la partenza, md5 delle righe di prima e delle altre sedi identico. Prova del rosso fatta: tolta la cancellazione delle sezioni il test è diventato rosso | ✅ |
+| Manuale `anno-intero-demo.md`: sezione «Azzerare l'anno nuovo» (quando, in che ordine rispetto al ripristino, i codici d'errore) | ✅ |
+
+**Lo script NON rimette:** le spunte dei moduli delle frequenze nate prima della partenza se un modulo è stato cambiato (la riga del modulo torna
+com'era, la spunta di una frequenza vecchia resta); i genitori (`utenti`) creati accogliendo una domanda; gli anni nati durante il collaudo (come il
+ripristino); qualunque modifica a una riga nata prima della partenza che non sia la configurazione sopra e i «no».
+
+**Lo esegue il titolare** dall'editor SQL: contiene `DELETE`, e il freno `supabase_sql_freno.py` lo nega giustamente.
+
 ## 🗓️ Changelog — Anno scolastico, PR 4.7: il cruscotto dell'anno prossimo — 2026-11-09 (#306, `554ec69b`, in produzione il 09/11/2026)
 
 **Stato:** ✅ in `main` con la #306 (squash `554ec69b`), 09/11/2026. **Ha una migrazione**, applicata dall'integrazione di Supabase al merge con la version del proprio file: `20261109165244_anno_cruscotto.sql` (M47). Solo due funzioni di LETTURA nuove (`anno_cruscotto`, `anno_quota_piu_voci`): nessun `UPDATE` di dati, nessun `DROP`, nessun interruttore del freno, nessuna riga scritta in produzione. Provata in PGlite (Postgres 18; la produzione è la 17) su route vere; nessun controllo visivo nel browser e nessuna prova da telefono.

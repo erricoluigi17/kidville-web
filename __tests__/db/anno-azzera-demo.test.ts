@@ -978,6 +978,15 @@ describe('azzera-anno-nuovo-demo.sql · la prova a secco (B-n1)', () => {
     return m
   }
 
+  it('prova a secco subito dopo la fotografia, senza collaudo: lo stato dell’anno nuovo dice rimesse 0 (nulla da rimettere)', async () => {
+    await inRollback(b.db, async () => {
+      const f = await fotografa()
+      const m = await messaggio(compila({ sede: DEMO, foto: f.fotografia!, prova: true }))
+      expect(m).toContain('AZZERA_PROVA_A_SECCO')
+      expect(m).toMatch(/stato e domande aperte dell'anno nuovo \(tolte: righe di cronologia\) · tolte 0 · rimesse 0 · lasciate 0/)
+    })
+  })
+
   it('il file com’è (interruttore acceso) non scrive niente e porta il riassunto nel messaggio dell’eccezione', async () => {
     await inRollback(b.db, async () => {
       const dal = await adesso()

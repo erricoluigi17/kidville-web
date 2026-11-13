@@ -615,8 +615,9 @@ describe('AgendaSettimana · i comandi rapidi', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(ultima('PATCH', /appuntamenti\//)?.corpo).toEqual({ azione: 'svolto', svoltoDa: P1 })
-    // L'agenda si è ricaricata: la visita ora è chiusa.
-    expect(richiesteAgenda().length).toBeGreaterThanOrEqual(2)
+    // L'agenda si è ricaricata: la visita ora è chiusa. La ricarica parte DOPO la chiusura del dialogo (stesso gestore, ma la richiesta nasce
+    // in un effetto): si aspetta una presenza, non la si legge subito (su una CI lenta il conteggio è ancora 1).
+    await waitFor(() => expect(richiesteAgenda().length).toBeGreaterThanOrEqual(2))
   })
 
   it('svolto senza una assegnataria fra le persone della sede non indovina: il pulsante resta spento', async () => {

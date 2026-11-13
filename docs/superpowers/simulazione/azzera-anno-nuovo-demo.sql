@@ -48,7 +48,7 @@
 --
 -- ⚠️ LO ESEGUE IL TITOLARE DALL'EDITOR SQL DI SUPABASE, MAI L'AGENTE: il freno `.claude/hooks/supabase_sql_freno.py` nega queste
 -- istruzioni (DELETE, UPDATE), giustamente. Il file è provato sul banco di prova automatico (PGlite, mai su Demo né su produzione):
--- `__tests__/db/anno-azzera-demo.test.ts`. NON è stato eseguito sull'editor di Supabase: vedi il manuale `anno-intero-demo.md`.
+-- `__tests__/db/anno-azzera-demo.test.ts`. Il 13/11/2026 la PROVA A SECCO è stata eseguita dall'editor di Supabase sulla Demo, con la fotografia v2 appena scattata, ed è finita in AZZERA_PROVA_A_SECCO (ha anche mostrato che il passo 7 contava 1 «rimessa» senza niente da rimettere: corretto). Il ripristino e l'azzeramento veri NON sono ancora stati eseguiti: vedi il manuale `anno-intero-demo.md`.
 --
 -- PROVA A SECCO. L'interruttore `c_prova_a_secco` (punto ③) è ACCESO per difetto: il file fa tutto, poi si ferma con l'errore
 -- `AZZERA_PROVA_A_SECCO` e nel MESSAGGIO c'è il riassunto (che cosa avrebbe tolto, rimesso, lasciato, una voce per riga). L'errore annulla ogni
@@ -642,7 +642,8 @@ BEGIN
 
   -- ── 7 · LO STATO dell'anno nuovo, come nella fotografia; la cronologia degli stati scritta dopo la partenza va via ──
   UPDATE public.anni_sede a SET stato = v_foto->>'stato', domande_aperte = (v_foto->>'domande_aperte')::boolean
-   WHERE a.id = v_anno AND a.scuola_id = v_sede;
+   WHERE a.id = v_anno AND a.scuola_id = v_sede
+     AND (a.stato, a.domande_aperte) IS DISTINCT FROM (v_foto->>'stato', (v_foto->>'domande_aperte')::boolean);  -- solo se c'è qualcosa da rimettere
   GET DIAGNOSTICS v_rimesse = ROW_COUNT;
   DELETE FROM public.anni_sede_stati st WHERE st.anno_sede_id = v_anno AND st.dal >= v_dal;
   GET DIAGNOSTICS v_cron = ROW_COUNT;

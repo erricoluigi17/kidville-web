@@ -79,7 +79,7 @@ Il giorno si passa sempre come `p_oggi`. Il tick è `SELECT public.anni_tick(DAT
 segreteria fa il passaggio. Il tick non fa mai il passaggio e non promuove mai a `corrente`.
 
 La colonna «atteso» vale per la guardia **in osservazione** (com'è oggi): le scritture passano e si contano. Se la guardia è già accesa
-per tutti, dove scritto «passa e si conta» su un anno `chiuso` si legge `409 ANNO_CHIUSO`, e su un `in_chiusura` lo staff passa senza gettone.
+per tutti, dove scritto «passa e si conta» su un anno `chiuso` si legge `409 ANNO_CHIUSO`, e su un `in_chiusura` la segreteria passa con un gettone `agosto`, senza dialogo e senza motivo (il contatore non sale).
 
 | # | Quando (`p_oggi`) | Cosa si fa | Cosa deve succedere | Cosa si guarda |
 |---|---|---|---|---|
@@ -87,7 +87,7 @@ per tutti, dove scritto «passa e si conta» su un anno `chiuso` si legge `409 A
 | 2 | un mese prima di `U` | si apre l'anno nuovo alle iscrizioni (Impostazioni di sede › Anno scolastico) | l'anno nuovo è `iscrizioni_aperte`, le classi continuano | schermata segreteria; invarianti `0` |
 | 3 | `U` | `anni_tick` | niente cambia: l'ultimo giorno aperto è ancora `corrente` | stati invariati |
 | 4 | `U + 1` | `anni_tick` | **il vecchio diventa `in_chiusura`** con `domande_aperte` falso; il nuovo resta `iscrizioni_aperte` (nessun anno è `corrente` nell'intervallo fino al passo 6: è l'ordine vero) | stati; una riga in `anni_sede_stati`; invarianti `0` |
-| 5 | `U + 1` | una scrittura dello staff sul vecchio anno, per esempio una presenza dall'appello (è una scrittura di **oggi**, orologio vero: cade nel vecchio anno) | su un anno `in_chiusura` lo staff scrive **senza gettone**: la scrittura passa e viene contata | il contatore in `anno_guardia_osservazioni` sale di 1, nessun gettone creato |
+| 5 | `U + 1` | la segreteria scrive sul vecchio anno (per esempio un periodo di scrutinio) | su un anno `in_chiusura` passa con un gettone `agosto`, senza dialogo e senza motivo; il contatore non sale | un gettone `agosto` in più in `correzioni_anno_chiuso` (solo il conteggio) |
 | 6 | `U + 1` | **il passaggio**: anteprima e decisioni dalla schermata `/admin/students/passaggio`, **conferma da SQL con `p_oggi`** (vedi sotto) | nuovo `corrente`; il vecchio resta `in_chiusura` con `domande_aperte` falso | schermate docente (classi del vecchio anno in sola lettura, «anno che si sta chiudendo»), genitore, segreteria; invarianti `0` |
 | 7 | `U + 1` | `anni_tick` | **non cambia niente**: la conferma ha già mosso gli stati | stati identici al passo 6 |
 | 8 | `U + 1` | **annullare** (SQL, vedi sotto) con una presenza già presa nel nuovo anno | rifiuto `PASSAGGIO_NON_ANNULLABILE` | il codice d'errore, mai la riga |

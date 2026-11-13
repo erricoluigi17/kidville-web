@@ -287,7 +287,7 @@ describe('GET conferme', () => {
     const per = (f: string) => data.righe.find((r: { frequenza_id: string }) => r.frequenza_id === f)
     expect(per(F1)).toEqual({
       frequenza_id: F1, alunno_id: AL[0], section_id: S_INF, nuova_frequenza_id: N1, nuova_section_id: S_NUOVA_PRIM,
-      conferma: 'confermato', non_rinnova_motivo: null, moduli: { fatti: 1, richiesti: 2 }, quota: 'da_pagare', quota_piu_voci: false, cambia_grado: true,
+      conferma: 'confermato', non_rinnova_motivo: null, moduli: { fatti: 1, richiesti: 2 }, quota: 'da_pagare', quota_piu_voci: false, cambia_grado: true, grado_partenza: 'infanzia',
       stato_frequenza: 'in_attesa', nome: 'NomeProva1', cognome: 'CognomeProva1', classe: 'Sezione Prova A',
     })
     expect(per(F2)).toMatchObject({ conferma: 'no', non_rinnova_motivo: 'trasloco', quota: 'assente', cambia_grado: false, nuova_frequenza_id: null })
@@ -366,7 +366,7 @@ describe('GET conferme', () => {
 
   it('la risposta porta nome e cognome SOLO nei campi dedicati; ogni altra foglia e il log restano uuid, stati, numeri e booleani', async () => {
     const corpo = await (await leggi()).json()
-    const ammessi = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|confermato|no|non_risposto|saldata|da_pagare|assente|trasloco|in_attesa|iscritto)$/
+    const ammessi = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|confermato|no|non_risposto|saldata|da_pagare|assente|trasloco|in_attesa|iscritto|infanzia|primaria)$/
     const foglie: unknown[] = []
     const visita = (v: unknown, chiave?: string): void => {
       if (v !== null && typeof v === 'object') Object.entries(v).forEach(([k, x]) => visita(x, k))

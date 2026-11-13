@@ -299,6 +299,24 @@ describe('AvvisoNotificheDocente — sul WEB non si attiva niente', () => {
   })
 })
 
+describe('AvvisoNotificheDocente — dice al foglio settimanale che la card c\u2019è (lotto 5)', () => {
+  beforeEach(() => {
+    stato.nativo = true
+    stato.piattaforma = 'android'
+  })
+
+  it('mentre la card è a schermo la segnalazione è accesa; allo smontaggio si spegne', async () => {
+    h.statoPermessoPush.mockResolvedValue('denied')
+    contaDispositivi([{ stato: 200, dispositivi: 0 }])
+    const { unmount } = await monta()
+    await attendiTitolo()
+    const { cardNotificheVisibile } = await import('@/lib/native/card-notifiche-visibile')
+    expect(cardNotificheVisibile()).toBe(true)
+    unmount()
+    expect(cardNotificheVisibile()).toBe(false)
+  })
+})
+
 describe('AvvisoNotificheDocente — le varianti native', () => {
   beforeEach(() => {
     stato.nativo = true

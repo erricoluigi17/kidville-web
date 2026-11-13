@@ -18,6 +18,7 @@ import { indicizzaLegami, legamiDaRisposta, nomePagante, nonVisibiliDaRisposta, 
 import { classiDaAlunni, filtraPerClassi } from '@/lib/pagamenti/filtro-classi';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { useAnnoDi } from '@/lib/context/calendario-context';
+import { useAnnoOpzionale } from '@/lib/context/anno-context';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { SospensioneToggle } from './SospensioneToggle';
 import { QuickAcquistoModal } from './QuickAcquistoModal';
@@ -215,7 +216,11 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const oggiStr = dataCivile();
     const annoInCorso = useAnnoDi(scuolaId)(oggiStr).annoInizio;
     const [annoScelto, setAnnoScolastico] = useState<number | null>(null);
-    const annoScolastico = annoScelto ?? annoInCorso;
+    // Il selettore globale dell'anno (accanto alla sede) è lo stesso anno di settembre di questa tendina: la pagina PARTE da lì
+    // e resta cambiabile a mano. Fuori dal provider (docenti, test) o senza anno effettivo vale quello in corso.
+    const annoGlobale = useAnnoOpzionale()?.effettivo?.annoInizio ?? null;
+    const annoBase = annoGlobale ?? annoInCorso;
+    const annoScolastico = annoScelto ?? annoBase;
     /** I mesi scelti (1–12); all'apertura il mese corrente. Cambiando anno si mantengono. */
     const [mesiScelti, setMesiScelti] = useState<number[]>(() => [meseDi(dataCivile())]);
 
@@ -749,7 +754,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     {/* L'anno prima dei mesi: le etichette dei mesi («Ott 2026») dipendono da lui. */}
                     <FiltroAnnoContabilita
                         anno={annoScolastico}
-                        anni={[annoInCorso - 1, annoInCorso, annoInCorso + 1]}
+                        anni={[annoBase - 1, annoBase, annoBase + 1]}
                         onChange={setAnnoScolastico}
                         className="max-sm:w-full"
                     />

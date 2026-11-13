@@ -8,6 +8,7 @@ import { apriImpostazioniNotifiche, impostazioniApribili } from '@/lib/native/av
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { esitoPushRitentabile } from '@/lib/push/esiti-ritentabili'
 import { ascoltaPushRegistrata } from '@/lib/push/registrazione-riuscita'
+import { segnalaCardNotifiche } from '@/lib/native/card-notifiche-visibile'
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile'
 import { Card } from '@/components/ui/Card'
 import { Btn } from '@/components/ui/Btn'
@@ -47,9 +48,8 @@ import { Btn } from '@/components/ui/Btn'
  * ma quello NON ricontrolla, perché decide una volta per sessione: concesso il permesso, il
  * suo riquadro resta a schermo finché lo si chiude, mentre questo sparisce da sé. Le due cose
  * possono quindi dirsi diverse per qualche secondo, e la più aggiornata è questa.
- * ⚠️ Resta aperto per il titolare: quando questo avviso è visibile, nell'app quello
- * settimanale dice la stessa cosa una seconda volta. Spegnerlo lì tocca il layout del docente
- * (condiviso col genitore), fuori dal perimetro di C1.
+ * Chiuso nel lotto 5: quando questa card è a schermo lo scrive in `card-notifiche-visibile`, e il
+ * riquadro settimanale non si disegna (un avviso solo, e il foglio non copre più la lista).
  */
 
 /**
@@ -301,6 +301,13 @@ export function AvvisoNotificheDocente({ userId }: Props) {
     if (!nostro) return
     titolo.current?.focus({ preventScroll: true })
   }, [variante])
+
+  // Il foglio settimanale dell'app dice la stessa cosa: finché questa card c'è, sta zitto (un avviso solo).
+  const cardVisibile = variante !== null
+  useEffect(() => {
+    segnalaCardNotifiche(cardVisibile)
+    return () => segnalaCardNotifiche(false)
+  }, [cardVisibile])
 
   if (variante === null) return null
 

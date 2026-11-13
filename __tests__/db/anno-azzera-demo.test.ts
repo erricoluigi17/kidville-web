@@ -686,6 +686,66 @@ describe('azzera-anno-nuovo-demo.sql · quello che nasce accogliendo una domanda
   })
 })
 
+describe('azzera-anno-nuovo-demo.sql · le dipendenze di secondo livello (O4)', () => {
+  it('una sezione con una materia a cui punta una valutazione, o un menù della mensa, resta (elencata); una materia sola va via con la sezione', async () => {
+    await inRollback(b.db, async () => {
+      // sections → materie → valutazioni (NO ACTION): togliere la sezione trascinerebbe la materia e farebbe fallire il DELETE con un 23503 grezzo.
+      // mensa_class_menu_assignment.section_id è SET NULL: togliere la sezione scollegherebbe il menù senza dire niente.
+      const f = await fotografa()
+      const q = (sql: string, p: unknown[] = []) => b.db.query(sql, p)
+      const sez = async (nome: string) =>
+        una<string>(b.db, `INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1, $2, $3, 'infanzia', 'infanzia') RETURNING id`, [DEMO, annoNuovoId, nome])
+      const materia = async (s: string, codice: string) =>
+        una<string>(b.db, `INSERT INTO public.materie (scuola_id, section_id, nome, codice) VALUES ($1, $2, $3, $3) RETURNING id`, [DEMO, s, codice])
+      const conValutazione = await sez('con una valutazione')
+      const matV = await materia(conValutazione, 'AAA')
+      const val = await una<string>(b.db, `INSERT INTO public.valutazioni (alunno_id, materia_id) VALUES ($1, $2) RETURNING id`, [AL.a, matV])
+      // un trigger ricava section_id dalla classe a ogni INSERT o UPDATE di `classe`: il legame si mette con un UPDATE a parte
+      const conMensa = await sez('con un menù')
+      const mensa = await una<string>(b.db, `INSERT INTO public.mensa_class_menu_assignment (scuola_id, classe, section_id) VALUES ($1, 'A', NULL) RETURNING id`, [DEMO])
+      await b.db.query(`UPDATE public.mensa_class_menu_assignment SET section_id = $2 WHERE id = $1`, [mensa, conMensa])
+      const libera = await sez('libera')
+      const matL = await materia(libera, 'BBB')
+
+      const risultati = await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
+      const voci = (risultati.at(-1)!.rows as { voce: string }[]).map((r) => r.voce)
+
+      expect(await conta(`SELECT 1 FROM public.sections WHERE id = $1`, [conValutazione]), 'la sezione con la valutazione resta').toBe(1)
+      expect(await conta(`SELECT 1 FROM public.materie WHERE id = $1`, [matV])).toBe(1)
+      expect(await una<string>(b.db, `SELECT materia_id FROM public.valutazioni WHERE id = $1`, [val]), 'la valutazione non perde la materia').toBe(matV)
+      expect(await conta(`SELECT 1 FROM public.sections WHERE id = $1`, [conMensa]), 'la sezione con il menù resta').toBe(1)
+      expect(await una<string>(b.db, `SELECT section_id FROM public.mensa_class_menu_assignment WHERE id = $1`, [mensa]), 'il menù non viene scollegato').toBe(conMensa)
+      expect(voci).toContain(`lasciata · sections · ${conValutazione}`)
+      expect(voci).toContain(`lasciata · sections · ${conMensa}`)
+      expect(await conta(`SELECT 1 FROM public.sections WHERE id = $1`, [libera]), 'la sezione libera va via').toBe(0)
+      expect(await conta(`SELECT 1 FROM public.materie WHERE id = $1`, [matL]), 'con la sua materia').toBe(0)
+    })
+  })
+
+  it('una voce di pagamento con una quota a cui punta un incasso resta (elencata): l’incasso non perde il legame in silenzio', async () => {
+    await inRollback(b.db, async () => {
+      // pagamenti → pagamenti_quote (cascade) → incassi.quota_id (SET NULL): togliere la voce lascerebbe l'incasso senza quota, senza dirlo.
+      const f = await fotografa()
+      const voce = async () =>
+        una<string>(b.db, `INSERT INTO public.pagamenti (alunno_id, scuola_id, descrizione, importo, scadenza, anno_id) VALUES ($1, $2, 'voce', 100, DATE '2027-10-05', $3) RETURNING id`, [AL.a, DEMO, annoNuovoId])
+      const conIncasso = await voce()
+      const libera = await voce()
+      const quota = await una<string>(b.db, `INSERT INTO public.pagamenti_quote (pagamento_id, adult_id, importo) VALUES ($1, $2, 100) RETURNING id`, [conIncasso, id(95)])
+      const quotaL = await una<string>(b.db, `INSERT INTO public.pagamenti_quote (pagamento_id, adult_id, importo) VALUES ($1, $2, 100) RETURNING id`, [libera, id(95)])
+      const inc = await una<string>(b.db, `INSERT INTO public.incassi (quota_id, importo) VALUES ($1, 100) RETURNING id`, [quota])
+
+      const risultati = await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
+      const voci = (risultati.at(-1)!.rows as { voce: string }[]).map((r) => r.voce)
+
+      expect(await conta(`SELECT 1 FROM public.pagamenti WHERE id = $1`, [conIncasso]), 'la voce con l’incasso resta').toBe(1)
+      expect(await una<string>(b.db, `SELECT quota_id FROM public.incassi WHERE id = $1`, [inc]), 'l’incasso tiene la sua quota').toBe(quota)
+      expect(voci).toContain(`lasciata · pagamenti · ${conIncasso}`)
+      expect(await conta(`SELECT 1 FROM public.pagamenti WHERE id = $1`, [libera]), 'la voce libera va via').toBe(0)
+      expect(await conta(`SELECT 1 FROM public.pagamenti_quote WHERE id = $1`, [quotaL]), 'con la sua quota').toBe(0)
+    })
+  })
+})
+
 describe('azzera-anno-nuovo-demo.sql · una richiesta sola, COMMIT compreso', () => {
   // ULTIMA prova del file: scrive davvero (COMMIT), quindi niente ROLLBACK a proteggere il banco dopo di lei.
   it('riesce con il file COM’È (BEGIN, funzione, DO, DROP, COMMIT in un invio) e la scrittura è definitiva', async () => {

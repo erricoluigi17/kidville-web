@@ -8,7 +8,7 @@ import { creaBancoPassaggio, type BancoPassaggio } from './passaggio-banco'
  *  · `legame_genitori_alunni.alunno_id → alunni` NO ACTION · `student_parents.student_id → alunni` e `.parent_id → parents` CASCADE;
  *  · `iscrizioni_inviti_credenziali.submission_id → enrollment_submissions` e `.parent_id → parents` SET NULL;
  *  · `crm_bambini.alunno_id → alunni` e `.domanda_id → enrollment_submissions` SET NULL · `crm_schede.domanda_da_associare` SET NULL;
- *  · `valutazioni.materia_id → materie` NO ACTION · `incassi.quota_id → pagamenti_quote` SET NULL · `incassi.pagamento_id → pagamenti` RESTRICT.
+ *  · `mensa_class_menu_assignment.section_id → sections` SET NULL · `valutazioni.materia_id → materie` NO ACTION · `incassi.quota_id → pagamenti_quote` SET NULL · `incassi.pagamento_id → pagamenti` RESTRICT.
  *
  * Le colonne che lo script nomina devono esistere anche in produzione: lo controlla `anno-azzera-colonne.test.ts`.
  */

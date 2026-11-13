@@ -105,6 +105,36 @@ BEGIN
 END
 $blocca$;
 
+-- Il secondo livello: una copia che va via a cascata (le `materie` di una sezione, le `pagamenti_quote` di una voce) può avere a sua volta
+-- qualcosa attaccato che NON va via a cascata: una valutazione sulla materia (NO ACTION: il DELETE fallirebbe con un 23503), un incasso sulla
+-- quota (SET NULL: l'incasso perderebbe il legame in silenzio). In quel caso la riga candidata resta, come per un legame di primo livello.
+CREATE FUNCTION pg_temp.azzera_blocca_nipoti(p_tabella text, p_figlia text, p_colonna text, p_ignora text[]) RETURNS integer
+LANGUAGE plpgsql AS $nipoti$
+DECLARE
+  r record;
+  v_bloccate integer;
+BEGIN
+  FOR r IN
+    SELECT quote_ident(ns.nspname) || '.' || quote_ident(cl.relname) AS da, a.attname AS colonna
+      FROM pg_constraint c
+      JOIN pg_class cl ON cl.oid = c.conrelid
+      JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+     WHERE c.contype = 'f'
+       AND c.confrelid = ('public.' || quote_ident(p_figlia))::regclass
+       AND cardinality(c.conkey) = 1
+       AND c.conrelid <> c.confrelid
+       AND NOT (ns.nspname = 'public' AND cl.relname = ANY (p_ignora))
+  LOOP
+    EXECUTE format(
+      'UPDATE _azzera_cand k SET bloccata = true WHERE k.tabella = %L AND NOT k.bloccata AND EXISTS (SELECT 1 FROM public.%I f JOIN %s x ON x.%I = f.id WHERE f.%I = k.id)',
+      p_tabella, p_figlia, r.da, r.colonna, p_colonna);
+  END LOOP;
+  SELECT count(*) INTO v_bloccate FROM _azzera_cand k WHERE k.tabella = p_tabella AND k.bloccata;
+  RETURN v_bloccate;
+END
+$nipoti$;
+
 DO $azzera$
 DECLARE
   -- ① DA COMPILARE · la sede di Demo (comincia per `e2e00000`; altrimenti deve essere l'UNICA in `anno_regole.sedi_simulazione`). Sostituisci <DEMO> con il suo uuid.
@@ -332,6 +362,7 @@ BEGIN
       FROM public.pagamenti g
      WHERE g.scuola_id = v_sede AND g.anno_id = v_anno_id AND g.creato_il >= v_dal;
   PERFORM pg_temp.azzera_blocca('pagamenti', ARRAY['pagamenti_quote', 'solleciti', 'fatture_coda'], 'parent_payment_id');
+  PERFORM pg_temp.azzera_blocca_nipoti('pagamenti', 'pagamenti_quote', 'pagamento_id', ARRAY[]::text[]);
   DELETE FROM public.pagamenti g WHERE g.id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'pagamenti' AND NOT k.bloccata);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
   INSERT INTO _azzera_lasciate SELECT k.tabella, k.id FROM _azzera_cand k WHERE k.tabella = 'pagamenti' AND k.bloccata;
@@ -398,7 +429,10 @@ BEGIN
     SELECT 'sections', s.id FROM public.sections s WHERE s.scuola_id = v_sede AND s.anno_id = v_anno_id AND s.created_at >= v_dal;
   PERFORM pg_temp.azzera_blocca('sections',
     ARRAY['utenti_sezioni', 'utenti_sezioni_materie', 'materie', 'sezione_materia_obiettivo', 'orario_settimanale', 'campanelle',
-          'tempo_scuola', 'locker_config', 'mensa_class_menu_assignment']);
+          'tempo_scuola', 'locker_config']);
+  -- sections → materie → (valutazioni, registro, scrutini…): le copie che vanno via con la materia non bloccano, il resto sì
+  PERFORM pg_temp.azzera_blocca_nipoti('sections', 'materie', 'section_id',
+    ARRAY['utenti_sezioni_materie', 'sezione_materia_obiettivo', 'orario_settimanale']);
   DELETE FROM public.sections s WHERE s.id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'sections' AND NOT k.bloccata);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
   INSERT INTO _azzera_lasciate SELECT k.tabella, k.id FROM _azzera_cand k WHERE k.tabella = 'sections' AND k.bloccata;
@@ -618,6 +652,7 @@ END
 $azzera$;
 
 DROP FUNCTION pg_temp.azzera_blocca(text, text[], text);
+DROP FUNCTION pg_temp.azzera_blocca_nipoti(text, text, text, text[]);
 
 COMMIT;
 

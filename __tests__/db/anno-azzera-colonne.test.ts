@@ -27,7 +27,8 @@ const SNAPSHOT = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../fixtures
 function nudo(sql: string): string {
   return sql
     // la funzione d'appoggio legge il CATALOGO (pg_attribute…): i suoi alias non sono tabelle di `public`
-    .replace(/CREATE FUNCTION pg_temp\.azzera_blocca[\s\S]*?\$blocca\$;/, '')
+    .replace(/CREATE FUNCTION pg_temp\.azzera_blocca\([\s\S]*?\$blocca\$;/, '')
+    .replace(/CREATE FUNCTION pg_temp\.azzera_blocca_nipoti[\s\S]*?\$nipoti\$;/, '')
     .split('\n').map((riga) => riga.replace(/--.*$/, '')).join('\n')
     .replace(/'(?:[^']|'')*'/g, "''")
 }

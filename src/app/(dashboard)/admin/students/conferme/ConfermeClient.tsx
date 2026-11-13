@@ -55,6 +55,8 @@ type RigaApi = {
   /** Dal server (4.7.4): la quota non è nata perché il bambino ha più voci da guardare. Sopravvive al ricaricamento. */
   quota_piu_voci?: boolean;
   cambia_grado: boolean;
+  /** Il grado (`school_type`) della classe di OGGI del bambino: chi è già in primaria non «va alla primaria». */
+  grado_partenza?: string | null;
   stato_frequenza: string | null;
   nome: string | null;
   cognome: string | null;
@@ -594,10 +596,12 @@ function RigaConferma({
           <div className="flex flex-col gap-2">
             {vista === 'conferme' && r.conferma !== 'confermato' && (
               <>
+                {r.grado_partenza !== 'primaria' && (
                 <label className="flex cursor-pointer items-center gap-2" htmlFor={`${id}-primaria`}>
                   <input id={`${id}-primaria`} type="checkbox" className="h-4 w-4 rounded accent-kidville-green" checked={vaPrimaria} onChange={(e) => setVaPrimaria(e.target.checked)} />
                   <span>{t('vaAllaPrimaria')}</span>
                 </label>
+                )}
                 {vaPrimaria && (
                   primarie.length === 0 ? (
                     <p className={hint}>{t('nessunaPrimaria')}</p>

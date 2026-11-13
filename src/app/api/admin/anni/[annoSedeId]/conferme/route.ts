@@ -396,6 +396,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
             quota: n ? quotaDi(n) : ('assente' as StatoQuota),
             quota_piu_voci: confermata ? piuVoci.has(n.id) : false,
             cambia_grado: confermata ? cambiaGrado(p.section_id, n.section_id) : false,
+            grado_partenza: p.section_id ? (sezioni.get(p.section_id)?.school_type ?? null) : null,
             stato_frequenza: confermata ? n.stato : null,
             nome: nomi.get(p.alunno_id)?.nome ?? null,
             cognome: nomi.get(p.alunno_id)?.cognome ?? null,

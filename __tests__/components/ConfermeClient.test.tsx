@@ -70,6 +70,7 @@ const s = {
   ritiroRifiutato: false, // 4.5.16 (B): la route risponde 409 FREQUENZA_NON_DI_CONFERMA (bambino che non frequenta ancora)
   extraPost: {} as Record<string, unknown>, // 4.5.16: `riaperta` / `sezione_ignorata` che il POST di conferma può rispondere
   quotaPost: 'creata' as string, // l'esito della voce che il POST di conferma risponde
+  gradoPartenza: null as string | null, // lotto 5: il grado (`school_type`) della classe di oggi del bambino, come lo legge la route
   piuVoci: false, // 4.7.4: `quota_piu_voci` che il server legge per la riga di conferma
   quotaArrivo: 'assente' as 'assente' | 'da_pagare', // la quota del bambino in arrivo, che «Genera la quota» fa nascere (4.5.16, F)
 }
@@ -78,7 +79,7 @@ const fetchMock = vi.fn()
 const rigaConferma = () => ({
   frequenza_id: F_PART, alunno_id: AL1, section_id: null, conferma: s.confermata || s.confermato ? 'confermato' : 'non_risposto',
   nuova_frequenza_id: s.confermata || s.confermato ? F_NUOVA : null, nuova_section_id: null, non_rinnova_motivo: null,
-  moduli: { fatti: s.spunteConferma.length, richiesti: 2 }, quota: s.quota, quota_piu_voci: s.piuVoci, cambia_grado: false,
+  moduli: { fatti: s.spunteConferma.length, richiesti: 2 }, quota: s.quota, quota_piu_voci: s.piuVoci, cambia_grado: false, grado_partenza: s.gradoPartenza,
   stato_frequenza: s.confermata || s.confermato ? 'in_attesa' : null, nome: 'NomeProva', cognome: 'CognomeProva', classe: 'Sezione Prova',
 })
 const rigaNuova = () => ({
@@ -154,6 +155,7 @@ beforeEach(() => {
   s.ritiroRifiutato = false
   s.quotaArrivo = 'assente'
   s.piuVoci = false
+  s.gradoPartenza = null
   q.query = ''
   s.quotaRitiro = 'tolta'
   s.rifiutaModulo = false
@@ -217,6 +219,26 @@ describe('ConfermeClient — la scheda del bambino in arrivo (4.5.15, C2)', () =
     await screen.findByText('CognomeArrivo NomeArrivo')
     const link = screen.getByRole('link', { name: /CognomeArrivo NomeArrivo/ })
     expect(link.getAttribute('href')).toBe(`/admin/students/${AL2}?kind=child`)
+  })
+})
+
+describe('ConfermeClient — la casella «Va alla primaria» solo per chi non è già in primaria (lotto 5)', () => {
+  const montaConGrado = async (grado: string | null) => {
+    s.confermato = false
+    s.gradoPartenza = grado
+    render(<ConfermeClient />)
+    await screen.findByText('CognomeProva NomeProva')
+  }
+
+  it('la riga di un bambino d\u2019infanzia ha la casella', async () => {
+    await montaConGrado('infanzia')
+    expect(screen.getByRole('checkbox', { name: itConferme.vaAllaPrimaria })).toBeInTheDocument()
+  })
+
+  it('la riga di un bambino già in primaria non ha la casella, ma ha ancora «Conferma»', async () => {
+    await montaConGrado('primaria')
+    expect(screen.getByRole('button', { name: itConferme.azioneConferma })).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: itConferme.vaAllaPrimaria })).toBeNull()
   })
 })
 

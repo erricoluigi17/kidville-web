@@ -66,6 +66,8 @@ const eslintConfig = defineConfig([
     // di questo branch fallisce per il codice di un branch diverso — e chi legge il
     // rosso non ha modo di capire che non è suo. (Stessa esclusione in vitest.config.ts.)
     ".claude/**",
+    // Lavoro e prove delle sessioni di sviluppo (git-ignored): una copia dell'albero lì dentro non deve entrare nel gate.
+    ".superpowers/**",
     // Report e tooling del collaudo manuale: li scrivono i venti tester in chat separate,
     // e `.gitignore` (righe 83-88) li tiene fuori dal repo perché possono contenere estratti
     // del database di PRODUZIONE. Escluso da git ma non da ESLint, il risultato era il peggiore

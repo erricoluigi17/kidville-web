@@ -43,7 +43,7 @@ const validBody = { alunno_id: ALUNNO, materiale: 'Pannolini', quantita: 3 }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  h.requireParentOfStudent.mockResolvedValue({ user: { id: 'p1', role: 'genitore', scuola_id: 'sc1' } })
+  h.requireParentOfStudent.mockResolvedValue({ user: { id: 'p1', role: 'genitore', scuola_id: 'sc1' }, perLegame: true })
 })
 
 describe('POST /api/locker/inventory — gate genitore↔alunno (M9)', () => {

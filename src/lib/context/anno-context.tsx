@@ -28,6 +28,7 @@ import { useTranslations } from 'next-intl';
 import { annoAttivoDelCalendario, etichettaAnno, type Calendario } from '@/lib/anno-scolastico';
 import type { StatoAnno } from '@/lib/anno/tipi';
 import { logClient } from '@/lib/logging/client';
+import { AvvisoAnnoInChiusura } from '@/components/features/anno/AvvisoAnnoInChiusura';
 import { useRuoloCockpit } from './admin-identity';
 import { useCalendario } from './calendario-context';
 import { useSediAttive } from './sede-context';
@@ -274,15 +275,22 @@ export function AnnoNotice() {
   const visibile = useVedeAnno();
   const t = useTranslations('shared');
   const testoStato = useTestoStatoAnno();
-  if (!ctx || !visibile || !ctx.effettivo || ctx.eAttivo) return null;
+  if (!ctx || !visibile || !ctx.effettivo) return null;
   const { effettivo } = ctx;
+  // PR 4.9: l'anno che si sta guardando è `in_chiusura` o `chiuso` (anche se è l'anno attivo): una riga fissa, in flusso, che lo dice.
+  const inChiusura = effettivo.stato === 'in_chiusura' || effettivo.stato === 'chiuso';
+  const rigaChiusura = inChiusura ? <AvvisoAnnoInChiusura etichetta={effettivo.etichetta} /> : null;
+  if (ctx.eAttivo) {
+    return rigaChiusura ? <div className="px-4 pt-3">{rigaChiusura}</div> : null;
+  }
   // `stato` è `null` quando le sedi attive non concordano: dicitura neutra (nel testo di `testoStato`).
   const stato = testoStato(effettivo.stato);
+  // In FLUSSO (mai `fixed`): spinge giù il contenuto invece di coprirlo. `sticky` perché resti visibile
+  // scorrendo, appoggiato sotto la barra: sul telefono quella verde (`--kv-appbar-h`), da 744 px la
+  // topbar desktop alta 64 px (`top-16`, la stessa che regge il binario e la sidebar). `z-30`: sotto le
+  // barre (z-40 / z-105) e i fogli (z-110).
   return (
-    // In FLUSSO (mai `fixed`): spinge giù il contenuto invece di coprirlo. `sticky` perché resti visibile
-    // scorrendo, appoggiato sotto la barra: sul telefono quella verde (`--kv-appbar-h`), da 744 px la
-    // topbar desktop alta 64 px (`top-16`, la stessa che regge il binario e la sidebar). `z-30`: sotto le
-    // barre (z-40 / z-105) e i fogli (z-110).
+    <>
     <div
       role="status"
       data-kv-anno-avviso
@@ -297,5 +305,7 @@ export function AnnoNotice() {
         {t('annoAvvisoTorna')}
       </button>
     </div>
+    {rigaChiusura ? <div className="px-4 pt-3">{rigaChiusura}</div> : null}
+    </>
   );
 }

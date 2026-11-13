@@ -43,6 +43,9 @@ const MIGRAZIONI = [
   'supabase/migrations/20261109182420_anno_passaggio_anteprima.sql',
   'supabase/migrations/20261109182421_anno_passaggio_didattica.sql',
   'supabase/migrations/20261109182422_anno_passaggio_conferma.sql',
+  // PR 4.9 (chiusura A): il tick degli stati e il passaggio da fare.
+  'supabase/migrations/20261112181553_anno_stati_automatici.sql',
+  'supabase/migrations/20261112181554_anno_passaggio_da_fare.sql',
 ] as const
 
 /**
@@ -83,6 +86,12 @@ const FILE_NUOVI_SRC = [
   'src/app/api/admin/anni/[annoSedeId]/passaggio/nomi/route.ts',
   'src/lib/anno/passaggio.ts',
   'src/lib/anno/passaggio-risposte.ts',
+  // PR 4.9 (chiusura A): il dialogo della correzione e le sue librerie.
+  'src/components/features/anno/CorrezioneAnnoDialog.tsx',
+  'src/components/features/anno/useCorrezioneAnno.tsx',
+  'src/lib/anno/anno-della-riga.ts',
+  'src/lib/anno/correzione.ts',
+  'src/lib/ui/correzione-fetch.ts',
 ] as const
 
 const MINIMO_MIGRAZIONI = 8

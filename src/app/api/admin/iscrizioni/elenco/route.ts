@@ -83,6 +83,9 @@ const ESTENSIONI_ELENCO = /\.(xlsx|xls)$/i
 
 const queryScuolaSchema = z.object({
   scuola_id: z.string().uuid().optional(),
+  // L'anno si DICHIARA, come in ogni altra scrittura dello staff: `anni_scolastici.id` dell'anno che la pagina sta guardando. Senza,
+  // vale il cookie (che la pagina scrive solo quando si SCEGLIE un anno) o l'unico `corrente`; in agosto, senza `corrente`, 400.
+  anno_id: z.string().uuid().optional(),
 })
 
 const fileSchema = z.object({
@@ -224,7 +227,7 @@ export const POST = withRoute('admin/iscrizioni/elenco:POST', async (request: Ne
   // di blocchi si conosce solo da lì. (`usi` ha il tetto di 10: oltre ~1.600 righe i blocchi eccedono.)
   const BLOCCO = 200
   const usi = 1 + 1 + Math.ceil(letto.righe.length / BLOCCO) + 1
-  const esito = await resolveAnnoScrittura(request, supabase, auth.user, scuolaId, { usi })
+  const esito = await resolveAnnoScrittura(request, supabase, auth.user, scuolaId, { dichiarato: q.data.anno_id, usi })
   if (esito instanceof NextResponse) return esito
   const scrittura = await clientPerScrittura(supabase, esito)
 

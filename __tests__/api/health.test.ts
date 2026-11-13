@@ -813,6 +813,7 @@ describe('GET /api/health', () => {
         for (let i = 0; i < n; i++) {
             db.app_log.push({
                 id: `err-${i}`,
+                fingerprint: `errore-di-prova:${i}`,
                 evento: 'route',
                 livello: 'error',
                 sorgente: 'server',
@@ -907,6 +908,7 @@ describe('GET /api/health', () => {
         const db = dbSano()
         db.app_log.push({
             id: 'err-ripetuto',
+            fingerprint: 'email-ripetuta-di-prova',
             evento: 'email',
             livello: 'error',
             sorgente: 'server',

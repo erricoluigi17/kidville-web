@@ -243,7 +243,7 @@ export async function creaBancoPassaggio(opzioni: OpzioniBancoPassaggio = {}): P
   ` : ''
   const db = await creaDbAnnoPr2({
     sedi: [SEDE_E2E, SEDE_SIM, SEDE_VERA],
-    fino: o.fino ?? 'M48b',
+    fino: o.fino ?? 'M49b',
     completo: o.completo,
     codaPrima:
       (o.completo ? '' : SCHEMA_GALLERIA_GENITORE) + SCHEMA_ISCRIZIONE_ANNO + SCHEMA_PASSAGGIO_DIDATTICA + colonne + storico + (o.codaPrima ?? ''),

@@ -11,6 +11,7 @@ import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
 import { bcp47 } from '@/i18n/config'
 import { formatData } from '@/lib/i18n/date'
 import type { DettaglioVotazione as DettaglioDati, RisultatoScheda } from '@/lib/votazioni/tipi'
+import { useCorrezioneAnno } from '@/components/features/anno/useCorrezioneAnno'
 import { leggiDettaglio, scrivi, type LetturaDettaglio } from './chiamate'
 import { cifreLocali, stessoIstante } from './scadenza'
 
@@ -250,6 +251,9 @@ function AzioniVotazione({
   const [inCorso, setInCorso] = useState(false)
   const [messaggio, setMessaggio] = useState<Messaggio | null>(null)
   const lavoroRef = useRef(false)
+  // Chiudere, prorogare o eliminare una votazione di un anno già chiuso è una CORREZIONE (PR 4.9): il server risponde 409 con
+  // `correzione_possibile` e il nome dell'anno, il dialogo chiede il motivo e la richiesta riparte con `correzione` nel corpo.
+  const { inviaConCorrezione, dialogo } = useCorrezioneAnno()
 
   const puoChiudere = votazione.stato === 'aperta'
   const puoProrogare = votazione.chiusaIl === null
@@ -271,7 +275,7 @@ function AzioniVotazione({
 
   const chiudi = () =>
     lavora(async () => {
-      const r = await scrivi('PATCH', percorso, { azione: 'chiudi' }, t('erroreAzione'), 'votazioni-chiudi')
+      const r = await scrivi('PATCH', percorso, { azione: 'chiudi' }, t('erroreAzione'), 'votazioni-chiudi', inviaConCorrezione)
       setPannello(null)
       if (r.ok) {
         setMessaggio({ tipo: 'ok', testo: t('chiusaFatto') })
@@ -296,6 +300,7 @@ function AzioniVotazione({
         { azione: 'proroga', scadenza: cifreLocali(nuovaScadenza) },
         t('erroreAzione'),
         'votazioni-proroga',
+        inviaConCorrezione,
       )
       if (r.ok) {
         setPannello(null)
@@ -313,7 +318,8 @@ function AzioniVotazione({
 
   const elimina = () =>
     lavora(async () => {
-      const r = await scrivi('DELETE', percorso, undefined, t('erroreAzione'), 'votazioni-elimina')
+      // Corpo JSON vuoto (non assente): su un anno chiuso la correzione viaggia lì dentro, mai nella URL.
+      const r = await scrivi('DELETE', percorso, {}, t('erroreAzione'), 'votazioni-elimina', inviaConCorrezione)
       setPannello(null)
       if (r.ok || r.codice === 'VOTAZIONE_NON_TROVATA') {
         // Già eliminata da una collega vale come eliminata: il risultato voluto c'è.
@@ -404,6 +410,7 @@ function AzioniVotazione({
           </div>
         </div>
       )}
+      {dialogo}
     </div>
   )
 }

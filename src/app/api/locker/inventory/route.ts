@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
-import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { assertAlunnoScrivibile, resolveScuoleAttive } from '@/lib/auth/scope';
 import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { logScrittura } from '@/lib/audit/scrittura';
@@ -238,6 +238,13 @@ export const POST = withRoute('locker/inventory:POST', async (request: NextReque
 
         const supabase = await createAdminClient();
 
+        // Il genitore (legame di famiglia) scrive sul proprio figlio; lo STAFF che è passato per lo scope di classe
+        // non scrive su una classe di un anno in chiusura (docente: 403 SEZIONE_*; Direzione/segreteria passano).
+        if (!auth.perLegame) {
+            const chiusa = await assertAlunnoScrivibile(supabase, auth.user, alunno_id);
+            if (chiusa) return chiusa;
+        }
+
         const targetDate = date ?? new Date().toISOString().slice(0, 10);
 
         // L'anagrafica dell'alunno si legge PRIMA di scrivere: serviva già per
@@ -349,7 +356,7 @@ export const PATCH = withRoute('locker/inventory:PATCH', async (request: NextReq
         const admin = await createAdminClient();
         const { alunno_id, materiale, quantita_usata } = b.data;
 
-        const scopeErr = await assertAlunnoInScope(admin, auth.user, alunno_id);
+        const scopeErr = await assertAlunnoScrivibile(admin, auth.user, alunno_id);
         if (scopeErr) return scopeErr;
         const today = new Date().toISOString().slice(0, 10);
 

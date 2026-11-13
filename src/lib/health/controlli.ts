@@ -402,6 +402,15 @@ export const JOB_CRON: readonly JobCron[] = [
     // il 2026-11-09, nella PR-B della 4.5, con la migrazione già in produzione e il battito già visto in `app_log`.
     // Finestra 3 × `ORA`: assorbe un giro saltato senza gridare, e non due.
     { nome: 'anni-tick', finestraMs: 3 * ORA },
+    // `passaggio-ricopia-schede` (`35 * * * *`, OGNI ORA, `public.passaggio_ricopia_schede()`, PR 4.8): il giorno dell'inizio dell'anno nuovo ricopia le
+    // schede dei bambini sulla classe nuova ed e' idempotente; batte `ok` anche a vuoto (`cron:passaggio-ricopia-schede`, «giro completato»).
+    // Entrato il 2026-11-12 (PR-B della 4.8, dentro la 4.9): migrazione in produzione e primo battito visto in `app_log` alle 17:35 UTC.
+    // Finestra 3 × `ORA`, come `anni-tick`.
+    { nome: 'passaggio-ricopia-schede', finestraMs: 3 * ORA },
+    // `anno-invarianti` (`17 3 * * *`, `anno_invarianti_notturno`, PR 4.5): batte sempre `ok` (il lavoro e' girato; che i dati siano a posto lo dice la riga
+    // `error` che scrive se un'invariante non e' zero, e il controllo `anno-invarianti`). Entrato il 2026-11-12 con tre notti di battito di fila
+    // (l'ultima alle 03:17 UTC del 12/11). Finestra 26 × `ORA` come gli altri notturni.
+    { nome: 'anno-invarianti', finestraMs: 26 * ORA },
     // Notturno di sola SQL (`29 4 * * *`, `fascicolo_audit_ip_retention_tick`): azzera `ip` e
     // `user_agent` del registro degli accessi ai dati dei bambini dopo un anno. Battito
     // `cron:fascicolo-audit-ip-retention`; primo `ok` visto in produzione prima del 2026-10-25
@@ -475,24 +484,6 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             'allora entra in `JOB_CRON` con `finestraMs: 26 * ORA` come tutti gli altri. ' +
             'Il 20/10 era SPENTO in cron.job: `cron-esiti` legge i soli job attivi, e lo ' +
             'riprende da solo il giorno in cui torna attivo.',
-    },
-    {
-        nome: 'passaggio-ricopia-schede',
-        perche:
-            'Orario (`35 * * * *`), PR 4.8 giro 2: la migrazione è nella PR 4.8 e non è ancora nella fotografia delle ' +
-            'applicate (il lock `cron-sorvegliato-e-applicato` vieta un nome in `JOB_CRON` prima). Il giorno dell’inizio dell’anno nuovo ricopia le schede dei bambini sulla ' +
-            'classe nuova ed è idempotente. Nel frattempo lo sorveglia `cron-esiti`; logga anche il successo, con i conteggi. ' +
-            'Passa in `JOB_CRON` con `finestraMs` 3 × `ORA` con la PR-B della 4.8, che sta nella parte B della 4.9, dopo la rigenerazione della fotografia e il primo battito visto in `app_log`.',
-    },
-    {
-        nome: 'anno-invarianti',
-        perche:
-            'Notturno (`17 3 * * *`). La migrazione è in produzione dal 09/11/2026 e la fotografia la contiene, ma il suo ' +
-            'primo battito arriva solo alle 03:17 del giorno dopo: entrato in `JOB_CRON` prima, `/api/health` si sarebbe ' +
-            'acceso fino a quella notte. Il nome passa in `JOB_CRON` con `finestraMs` 26 × `ORA` nella prossima PR-B (parte B della 4.9), ' +
-            'a primo battito visto in `app_log`. ' +
-            'Nel frattempo lo sorveglia `cron-esiti`. Batte sempre `ok` (il lavoro è girato): che i dati siano a ' +
-            'posto lo dice la riga `error` che scrive se un’invariante non è zero, e il controllo `anno-invarianti`.',
     },
     {
         nome: 'app-log-purge',
@@ -1036,7 +1027,7 @@ const RIGHE_MAX_OCCORRENZE = 500
  * Le righe lette portano UNA colonna, `occorrenze`: né `messaggio`, né `stack`, né `contesto`.
  * Il conteggio delle impronte viene da `count: 'exact'`, non dalla lunghezza dell'elenco.
  */
-async function controlloTassoErrore(
+export async function controlloTassoErrore(
     supabase: SupabaseClient,
     adesso: number,
     ambiente: string,
@@ -1050,6 +1041,12 @@ async function controlloTassoErrore(
             .eq('sorgente', 'server')
             .eq('ambiente', ambiente)
             .gte('visto_l_ultima', da)
+            // (PR 4.9) Le due righe `error` di `anni_tick` (una per sede e per giorno) le copre già il controllo `anno`
+            // GRAZIE A `passaggio_da_fare` e a `guardia_spenta_vicina` di `salute_anno()` (che conta anche l'anno rimasto
+            // `in_chiusura` oltre la `fine` a guardia spenta, M1 del giro 3): contate qui, tre sedi in ritardo fanno 6 impronte
+            // (soglia 5) e il controllo resterebbe `degradato` 15 minuti al giorno. Nessun'altra impronta di `anni_tick` è esclusa.
+            .not('fingerprint', 'like', 'anni-tick-passaggio-da-fare:%')
+            .not('fingerprint', 'like', 'anni-tick-guardia-spenta:%')
             .limit(RIGHE_MAX_OCCORRENZE)
         if (error) {
             return { esito: 'degradato', dettaglio: `conteggio app_log ${codiceDi(error)}` }
@@ -1629,11 +1626,23 @@ export async function controlloCronEsiti(supabase: SupabaseClient, adesso: numbe
     })
 }
 
-/** I tre numeri di `salute_anno()`. Niente nomi, niente uuid: la risposta della funzione è già solo conteggi. */
+/**
+ * I numeri di `salute_anno()`. Niente nomi, niente uuid: la risposta della funzione è già solo conteggi.
+ * I primi tre ci sono dalla PR 4.5; gli ultimi due (`passaggio_da_fare`, `guardia_spenta_vicina`) dalla PR 4.9 (M49b): `null` =
+ * la funzione installata è quella di prima e le chiavi non ci sono. Non è un errore: è il merge a metà, o il database della CI.
+ */
 interface SaluteAnno {
     sedi_senza_successivo: number
     in_ritardo_giorni: number
     invarianti_non_zero: number
+    passaggio_da_fare: number | null
+    /**
+     * Di `passaggio_da_fare`, le sedi il cui anno nuovo È GIÀ COMINCIATO. Chiave opzionale e nuova: la funzione SQL di oggi non la
+     * scrive (la sua `passaggio_da_fare` conta tutte le sedi con `oggi >= inizio - 7`, prima e dopo l'inizio) e allora si legge
+     * `null`: la frase resta vera in tutti e due i casi. Quando la migrazione la scriverà, il controllo distingue da solo.
+     */
+    passaggio_iniziato: number | null
+    guardia_spenta_vicina: number | null
 }
 
 function leggiSaluteAnno(data: unknown): SaluteAnno | null {
@@ -1644,7 +1653,22 @@ function leggiSaluteAnno(data: unknown): SaluteAnno | null {
     const ritardo = n(d.in_ritardo_giorni)
     const invarianti = n(d.invarianti_non_zero)
     if (sedi === null || ritardo === null || invarianti === null) return null
-    return { sedi_senza_successivo: sedi, in_ritardo_giorni: ritardo, invarianti_non_zero: invarianti }
+    // Chiave assente = funzione di prima (si legge `null`). Chiave presente ma storta = risposta illeggibile, come le altre tre.
+    if ('passaggio_da_fare' in d && n(d.passaggio_da_fare) === null) return null
+    if ('guardia_spenta_vicina' in d && n(d.guardia_spenta_vicina) === null) return null
+    if ('passaggio_iniziato' in d && n(d.passaggio_iniziato) === null) return null
+    const passaggio = 'passaggio_da_fare' in d ? n(d.passaggio_da_fare) : null
+    const iniziato = 'passaggio_iniziato' in d ? n(d.passaggio_iniziato) : null
+    // Più sedi «già cominciate» che sedi da fare è un conto che non torna: risposta illeggibile, non una frase sbagliata.
+    if (iniziato !== null && (passaggio === null || iniziato > passaggio)) return null
+    return {
+        sedi_senza_successivo: sedi,
+        in_ritardo_giorni: ritardo,
+        invarianti_non_zero: invarianti,
+        passaggio_da_fare: passaggio,
+        passaggio_iniziato: iniziato,
+        guardia_spenta_vicina: 'guardia_spenta_vicina' in d ? n(d.guardia_spenta_vicina) : null,
+    }
 }
 
 /**
@@ -1667,6 +1691,24 @@ async function leggiSalute(
     return { salute }
 }
 
+const sedi = (n: number) => `${n} ${n === 1 ? 'sede' : 'sedi'}`
+const giorni = (n: number) => `${n} ${n === 1 ? 'giorno' : 'giorni'}`
+
+/**
+ * La frase del passaggio d'anno non fatto. «Entro 7 giorni» è vero solo PRIMA dell'inizio dell'anno nuovo: dopo, l'anno è già
+ * cominciato e la frase deve dirlo. Se la funzione SQL dice quante sedi sono già oltre l'inizio (`iniziato`) si usano le due frasi;
+ * se non lo dice (`null`: la funzione di oggi) ne resta una sola, vera in tutti e due i casi.
+ */
+function fraseDelPassaggio(daFare: number, iniziato: number | null): string {
+    if (iniziato === null) {
+        return `${sedi(daFare)} con il passaggio d’anno da fare (a meno di 7 giorni dall’inizio dell’anno nuovo, o già cominciato)`
+    }
+    const frasi: string[] = []
+    if (iniziato > 0) frasi.push(`${sedi(iniziato)} con l’anno nuovo già cominciato e il passaggio d’anno non fatto`)
+    if (daFare - iniziato > 0) frasi.push(`${sedi(daFare - iniziato)} con il passaggio d’anno da fare entro 7 giorni`)
+    return frasi.join('; ')
+}
+
 /**
  * `anno` — l'anno successivo di ogni sede è stato creato quando doveva? Il tick orario (`anni_tick`) lo crea il giorno
  * stesso di `prepara_successivo_dal`: una sede che lo aspetta da UN giorno o più vuol dire che il job non gira o che per
@@ -1678,9 +1720,27 @@ export async function controlloAnno(supabase: SupabaseClient, adesso: number): P
     return misura('anno', 'degradato', async () => {
         const letto = await leggiSalute(supabase, adesso)
         if ('valutazione' in letto) return letto.valutazione
-        const { sedi_senza_successivo: sedi, in_ritardo_giorni: giorni } = letto.salute
-        if (sedi > 0 && giorni >= 1) {
-            return { esito: 'degradato', dettaglio: `${sedi} sedi senza l’anno successivo, in ritardo fino a ${giorni} giorni` }
+        const { sedi_senza_successivo: senza, in_ritardo_giorni: ritardo, passaggio_da_fare: passaggio, guardia_spenta_vicina: guardia } = letto.salute
+        if (senza > 0 && ritardo >= 1) {
+            return { esito: 'degradato', dettaglio: `${sedi(senza)} senza l’anno successivo, in ritardo fino a ${giorni(ritardo)}` }
+        }
+        // PR 4.9. Il passaggio non fatto a una settimana (o meno) dall'inizio dell'anno nuovo è il più grave: l'anno comincia e le
+        // scritture datate lì verrebbero fermate. Poi la guardia spenta, con l'anno a un mese dalla chiusura o già rimasto `in_chiusura` oltre la `fine`: il tick non cambierebbe lo stato.
+        // Mai `giu` (regola comune dei controlli nuovi): `degradato`, col solo numero. Chiavi assenti: funzione di prima, come prima.
+        if (passaggio === null || guardia === null) {
+            logEvento('rpc', 'info', {
+                operazione: 'health:anno',
+                esito: 'salute-anno-senza-chiavi-4-9',
+                msg: 'salute_anno non porta ancora passaggio_da_fare e guardia_spenta_vicina: migrazione M49b non applicata',
+            })
+        }
+        if (passaggio !== null && passaggio > 0) {
+            // Solo `degradato`: la riga `error` la scrive il giro orario di `anni_tick` (una per sede al giorno). Scriverla qui, a ogni lettura
+            // di /api/health, peggiorerebbe da sola il controllo `tasso-errore`.
+            return { esito: 'degradato', dettaglio: fraseDelPassaggio(passaggio, letto.salute.passaggio_iniziato) }
+        }
+        if (guardia !== null && guardia > 0) {
+            return { esito: 'degradato', dettaglio: `${sedi(guardia)} con l’anno da chiudere, o vicino alla chiusura, e la guardia spenta: lo stato dell’anno non cambia finché non la si accende` }
         }
         return { esito: 'ok', dettaglio: 'anno successivo in regola' }
     })
@@ -1696,7 +1756,7 @@ export async function controlloAnnoInvarianti(supabase: SupabaseClient, adesso: 
         const letto = await leggiSalute(supabase, adesso)
         if ('valutazione' in letto) return letto.valutazione
         const n = letto.salute.invarianti_non_zero
-        if (n > 0) return { esito: 'degradato', dettaglio: `${n} invarianti dell’anno non a zero` }
+        if (n > 0) return { esito: 'degradato', dettaglio: `${n} ${n === 1 ? 'invariante' : 'invarianti'} dell’anno non a zero` }
         return { esito: 'ok', dettaglio: 'invarianti dell’anno a zero' }
     })
 }

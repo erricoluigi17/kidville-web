@@ -104,7 +104,7 @@ beforeEach(() => {
   h.scritture = []
   h.erroriSections = 0
   h.requireDocente.mockResolvedValue({ user: { id: 'ed1', role: 'educator', scuola_id: SEDE_A } })
-  h.requireParentOfStudent.mockResolvedValue({ user: { id: 'gen1', role: 'genitore', scuola_id: null } })
+  h.requireParentOfStudent.mockResolvedValue({ user: { id: 'gen1', role: 'genitore', scuola_id: null }, perLegame: true })
 })
 
 describe('POST /api/primaria/appello — la presenza nasce con la sede della sezione', () => {

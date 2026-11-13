@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
-import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { assertAlunnoScrivibile, resolveScuoleAttive } from '@/lib/auth/scope';
 import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { logScrittura } from '@/lib/audit/scrittura';
@@ -389,7 +389,7 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
         contestoStorico = contesto;
     } else {
         for (const aid of alunnoIds) {
-            const scopeErr = await assertAlunnoInScope(admin, auth.user, aid);
+            const scopeErr = await assertAlunnoScrivibile(admin, auth.user, aid);
             if (scopeErr) return scopeErr;
         }
     }
@@ -781,7 +781,7 @@ export const DELETE = withRoute('diary/entries:DELETE', async (request: NextRequ
         if ('response' in contesto) return contesto.response;
         contestoStorico = contesto;
     } else {
-        const scopeErr = await assertAlunnoInScope(admin, auth.user, q.data.alunno_id);
+        const scopeErr = await assertAlunnoScrivibile(admin, auth.user, q.data.alunno_id);
         if (scopeErr) return scopeErr;
     }
 

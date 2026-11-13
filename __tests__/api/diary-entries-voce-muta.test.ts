@@ -51,6 +51,7 @@ vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: async () => ({
 vi.mock('@/lib/armadietto/richieste', () => ({ riconciliaRichieste: vi.fn() }));
 vi.mock('@/lib/auth/scope', () => ({
     assertAlunnoInScope: async () => null,
+    assertAlunnoScrivibile: async () => null,
     resolveScuoleAttive: async () => ['s1'],
 }));
 vi.mock('@/lib/logging/logger', async (orig) => ({

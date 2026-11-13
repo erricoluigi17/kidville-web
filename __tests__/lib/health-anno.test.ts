@@ -54,7 +54,7 @@ describe('anno · l’anno successivo è stato creato in tempo?', () => {
         expect(await controlloAnno(c, ADESSO)).toMatchObject({
             nome: 'anno',
             esito: 'degradato',
-            dettaglio: '1 sedi senza l’anno successivo, in ritardo fino a 2 giorni',
+            dettaglio: '1 sede senza l’anno successivo, in ritardo fino a 2 giorni',
         })
     })
 
@@ -65,7 +65,7 @@ describe('anno · l’anno successivo è stato creato in tempo?', () => {
 
     it('un solo giorno di ritardo è già degradato (il confine è `>= 1`)', async () => {
         const c = conSalute({ sedi_senza_successivo: 3, in_ritardo_giorni: 1, invarianti_non_zero: 0 })
-        expect(await controlloAnno(c, ADESSO)).toMatchObject({ esito: 'degradato', dettaglio: '3 sedi senza l’anno successivo, in ritardo fino a 1 giorni' })
+        expect(await controlloAnno(c, ADESSO)).toMatchObject({ esito: 'degradato', dettaglio: '3 sedi senza l’anno successivo, in ritardo fino a 1 giorno' })
     })
 
     it('le invarianti non fanno suonare `anno`', async () => {
@@ -139,6 +139,11 @@ describe('anno-invarianti · i dati dell’anno sono a posto? (non accende nessu
         })
     })
 
+    it('una sola invariante: singolare', async () => {
+        const c = conSalute({ sedi_senza_successivo: 0, in_ritardo_giorni: 0, invarianti_non_zero: 1 })
+        expect(await controlloAnnoInvarianti(c, ADESSO)).toMatchObject({ dettaglio: '1 invariante dell’anno non a zero' })
+    })
+
     it('il ritardo dell’anno successivo non lo riguarda', async () => {
         const c = conSalute({ sedi_senza_successivo: 2, in_ritardo_giorni: 9, invarianti_non_zero: 0 })
         expect(await controlloAnnoInvarianti(c, ADESSO)).toMatchObject({ esito: 'ok' })
@@ -175,7 +180,7 @@ describe('i due controlli stanno nei livelli giusti', () => {
     })
 })
 
-describe('i due job dell\'anno: uno sorvegliato dal battito, uno ancora no, e il perché è scritto', () => {
+describe('i due job dell\'anno: tutti e due sorvegliati dal battito', () => {
     it('`anni-tick` è in JOB_CRON con finestra 3 ore e non è più fra i non sorvegliati', () => {
         const voce = JOB_CRON.find((j) => j.nome === 'anni-tick')
         expect(voce).toBeDefined()
@@ -183,11 +188,10 @@ describe('i due job dell\'anno: uno sorvegliato dal battito, uno ancora no, e il
         expect(JOB_CRON_NON_SORVEGLIATI.some((j) => j.nome === 'anni-tick')).toBe(false)
     })
 
-    it('`anno-invarianti` sta in JOB_CRON_NON_SORVEGLIATI con la ragione, fino al primo battito visto', () => {
-        const voce = JOB_CRON_NON_SORVEGLIATI.find((j) => j.nome === 'anno-invarianti')
+    it('`anno-invarianti` è in JOB_CRON con finestra di 26 ore (il battito c\'è dalla 4.8) e non è più fra i non sorvegliati', () => {
+        const voce = JOB_CRON.find((j) => j.nome === 'anno-invarianti')
         expect(voce).toBeDefined()
-        expect(voce!.perche).toMatch(/PR-B/)
-        expect(voce!.perche).toMatch(/JOB_CRON/)
-        expect(JOB_CRON.some((j) => j.nome === 'anno-invarianti')).toBe(false)
+        expect(voce!.finestraMs).toBe(26 * 60 * 60 * 1000)
+        expect(JOB_CRON_NON_SORVEGLIATI.some((j) => j.nome === 'anno-invarianti')).toBe(false)
     })
 })

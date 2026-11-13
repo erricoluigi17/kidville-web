@@ -1,0 +1,177 @@
+# Simulare l'anno intero in Demo (PR 4.9)
+
+> **Da fare SOLO dopo il merge della PR 4.9.** Le migrazioni M49a e M49b le applica l'integrazione al merge: prima, in Demo non c'è
+> niente da simulare. Questo manuale lo segue la chat principale insieme al titolare; l'agente di una sessione parallela non lo esegue.
+> I comandi che scrivono (il tick, il passaggio, il ripristino) li lancia il titolare dall'editor SQL: il freno nega `anno_regole`,
+> `DELETE` e `UPDATE` all'agente, giustamente.
+
+## ⚠️ Prima di cominciare: dillo al titolare
+
+**Demo non serve ad altri collaudi finché la simulazione non è finita e il ripristino non è stato eseguito.** Per qualche giorno Demo
+«viaggia nel tempo»: i suoi anni cambiano stato, i suoi bambini passano di classe, i suoi gettoni si accumulano. Chi sta collaudando
+altro in Demo vede cose che non tornano. Si chiede un sì esplicito, e si scrive la data in cui comincia.
+
+Regole che non si derogano:
+
+- **Non si tocca mai una sede vera.** Il tick e il passaggio con una data nel futuro (`p_oggi`) sono ammessi solo per una sede di prova
+  (`e2e0…`) o per una sede in `anno_regole.sedi_simulazione`. **Demo è già una sede di prova**: il suo id comincia per `e2e00000`, quindi il
+  database la ammette da sé e il titolare non deve scrivere niente in `sedi_simulazione`. Per una sede che non comincia per `e2e00000` e non è
+  in elenco il database rifiuta (`ANNI_TICK_OGGI_NON_AMMESSO`, `PASSAGGIO_OGGI_NON_AMMESSO`): non si cerca un'altra via.
+- **Mai nomi, mai codici fiscali, mai righe di anagrafica** nei risultati: conteggi, stati, codici d'errore.
+- **L'agente non esegue il ripristino.** Lo esegue il titolare dall'editor SQL.
+
+## Che cosa si può simulare in Demo, e che cosa no
+
+La guardia dell'anno (`ANNO_CHIUSO`, `PASSAGGIO_DA_FARE`, il gettone di correzione) **non è per sede**: è un interruttore solo,
+`anno_regole.guardia_attiva`, uguale per tutte le sedi, e un secondo, `anno_regole.guardia_osserva`, per l'osservazione. Oggi in produzione
+`guardia_attiva` è falsa e `guardia_osserva` vera. Dunque:
+
+| Che cosa | In Demo, oggi (guardia spenta, in osservazione) | Per vedere il rifiuto vero |
+|---|---|---|
+| Il tick cambia gli stati degli anni | **Sì, anche a guardia spenta**: per una sede di prova (`e2e00000…`, come Demo) o in `sedi_simulazione` il tick agisce comunque (`anno_stati_aggiorna`: la guardia vale `sede ammessa OR guardia_attiva`) | non serve |
+| Il passaggio d'anno (anteprima, conferma, annullo) con la data scelta | **Sì**, con `p_oggi`, da SQL (vedi il passo 6) | non serve |
+| `ANNO_CHIUSO`, il dialogo «Registra come correzione», il gettone | **No**: la scrittura PASSA e viene **contata** in `anno_guardia_osservazioni` (tabella, operazione, stato dell'anno). Si vede ciò che la guardia *rifiuterebbe*, non il rifiuto | accendere la guardia per **tutte** le sedi: decisione del titolare, prevista entro il 30/06/2027 dopo due settimane di osservazione. **Non si accende per la simulazione** |
+| `PASSAGGIO_DA_FARE` | **No**: confronta l'inizio dell'anno nuovo con l'orologio **vero**, non con `p_oggi` (M49b), e Demo ha l'anno nuovo nel 2027 | l'orologio vero a o dopo l'inizio dell'anno nuovo, senza passaggio (vedi la fine) |
+| L'allarme «sedi con il passaggio d'anno da fare» in `salute_anno()` | **No**: `passaggio_da_fare` **esclude** le sedi `e2e00000…` (Demo) e quelle in `sedi_simulazione`, e vale 0 | idem |
+
+Come si simula la correzione dell'anno chiuso (i passi 11-12) con la guardia spenta: si fa la scrittura sul vecchio anno e si guarda
+che il contatore salga (`SELECT tabella, op, stato, origine, n FROM public.anno_guardia_osservazioni ORDER BY ultima_il DESC LIMIT 10;`).
+Il rifiuto, il dialogo e il gettone li prova il banco automatico (`__tests__/db/anno-gettoni.test.ts`, `anno-intero.test.ts`, `anno-chiusura-scritture.test.ts`),
+non Demo.
+
+## Prerequisiti (si controllano con una lettura, nessuno chiede conferma)
+
+1. Le due migrazioni sono applicate: `SELECT to_regproc('public.anno_stati_aggiorna') IS NOT NULL;` → `true`.
+2. **La guardia non va accesa per la simulazione** (vedi sopra). Si controlla com'è: `SELECT guardia_attiva, guardia_osserva FROM public.anno_regole;`.
+   Con `guardia_attiva` falsa il tick di Demo funziona lo stesso. Solo se il titolare ha già acceso la guardia per tutti (non prima del
+   periodo di osservazione) i passi 5, 11 e 12 daranno il rifiuto vero invece del conteggio, per **tutte** le sedi.
+3. **Demo è già ammessa come sede di prova** (l'id comincia per `e2e00000`): `sedi_simulazione` può restare com'è, vuoto, e il titolare non scrive niente.
+   `sedi_simulazione` serve solo per simulare in una sede che NON comincia per `e2e00000`: allora la scrive lui, e solo quella sede
+   (`UPDATE public.anno_regole SET sedi_simulazione = ARRAY['<SEDE>']::uuid[];`, il segnaposto lo sostituisce lui; qui non c'è l'uuid e non ci deve
+   essere). Il ripristino accetta la sede se comincia per `e2e00000` oppure se è l'unica in elenco; una sede vera fuori elenco, o in un elenco di due, lo ferma.
+4. Le invarianti sono pulite: `SELECT count(*) FROM public.anno_invarianti() WHERE righe <> 0;` → `0`.
+
+## La fotografia di partenza (si salva prima di tutto)
+
+Si salvano **solo conteggi e stati**, in un file `.md` in `docs/collaudo/risultati/` (cartella esclusa da git), mai nomi:
+
+```sql
+-- gli anni di Demo e il loro stato: serve al ripristino (la lista `_stati_iniziali` di ripristino-demo.sql)
+SELECT s.etichetta_breve, a.stato, a.domande_aperte, a.inizio, a.ultimo_giorno_aperto, a.fine, a.id AS anno_sede_id
+  FROM public.anni_sede a JOIN public.anni_scolastici s ON s.id = a.anno_id
+ WHERE a.scuola_id = '<DEMO>' ORDER BY a.inizio;
+
+-- quanto lavoro c'è
+SELECT count(*) FROM public.frequenze   WHERE scuola_id = '<DEMO>';
+SELECT count(*) FROM public.sections    WHERE scuola_id = '<DEMO>';
+SELECT count(*) FROM public.passaggi_anno WHERE scuola_id = '<DEMO>';
+SELECT count(*) FROM public.correzioni_anno_chiuso c
+  JOIN public.anni_sede a ON a.id = c.anno_sede_id WHERE a.scuola_id = '<DEMO>';
+```
+
+E la **data di partenza** (oggi, con l'ora **e il fuso**, per esempio `2026-11-20 09:00:00+01`): serve al ripristino per sapere cosa è stato
+scritto dopo. Il ripristino la rifiuta se è nel futuro o se è più vecchia della nascita di uno degli anni di Demo.
+
+## I passi (le date vengono dalla fotografia: `U` = `ultimo_giorno_aperto` e `F` = `fine` dell'anno corrente di Demo)
+
+Il giorno si passa sempre come `p_oggi`. Il tick è `SELECT public.anni_tick(DATE 'AAAA-MM-GG', '<DEMO>');` dall'editor SQL del titolare.
+**L'ordine è quello vero del calendario**: il tick delle 00:10 di `U + 1` porta il vecchio anno a `in_chiusura`; **poi**, la mattina, la
+segreteria fa il passaggio. Il tick non fa mai il passaggio e non promuove mai a `corrente`.
+
+La colonna «atteso» vale per la guardia **in osservazione** (com'è oggi): le scritture passano e si contano. Se la guardia è già accesa
+per tutti, dove scritto «passa e si conta» su un anno `chiuso` si legge `409 ANNO_CHIUSO`, e su un `in_chiusura` lo staff passa senza gettone.
+
+| # | Quando (`p_oggi`) | Cosa si fa | Cosa deve succedere | Cosa si guarda |
+|---|---|---|---|---|
+| 1 | metà anno | `anni_tick` | niente cambia di stato | `anni_sede`: l'anno corrente resta `corrente` |
+| 2 | un mese prima di `U` | si apre l'anno nuovo alle iscrizioni (Impostazioni di sede › Anno scolastico) | l'anno nuovo è `iscrizioni_aperte`, le classi continuano | schermata segreteria; invarianti `0` |
+| 3 | `U` | `anni_tick` | niente cambia: l'ultimo giorno aperto è ancora `corrente` | stati invariati |
+| 4 | `U + 1` | `anni_tick` | **il vecchio diventa `in_chiusura`** con `domande_aperte` falso; il nuovo resta `iscrizioni_aperte` (nessun anno è `corrente` nell'intervallo fino al passo 6: è l'ordine vero) | stati; una riga in `anni_sede_stati`; invarianti `0` |
+| 5 | `U + 1` | una scrittura dello staff sul vecchio anno, per esempio una presenza dall'appello (è una scrittura di **oggi**, orologio vero: cade nel vecchio anno) | su un anno `in_chiusura` lo staff scrive **senza gettone**: la scrittura passa e viene contata | il contatore in `anno_guardia_osservazioni` sale di 1, nessun gettone creato |
+| 6 | `U + 1` | **il passaggio**: anteprima e decisioni dalla schermata `/admin/students/passaggio`, **conferma da SQL con `p_oggi`** (vedi sotto) | nuovo `corrente`; il vecchio resta `in_chiusura` con `domande_aperte` falso | schermate docente (classi del vecchio anno in sola lettura, «anno che si sta chiudendo»), genitore, segreteria; invarianti `0` |
+| 7 | `U + 1` | `anni_tick` | **non cambia niente**: la conferma ha già mosso gli stati | stati identici al passo 6 |
+| 8 | `U + 1` | **annullare** (SQL, vedi sotto) con una presenza già presa nel nuovo anno | rifiuto `PASSAGGIO_NON_ANNULLABILE` | il codice d'errore, mai la riga |
+| 9 | `F` | `anni_tick` | il vecchio è ancora `in_chiusura` | stati |
+| 10 | `F + 1` | `anni_tick` | il vecchio diventa `chiuso`, il nuovo resta `corrente` | stati; la sola lettura per i docenti è «anno passato» |
+| 11 | `F + 1` | la segreteria scrive sul vecchio anno (una scrittura di **oggi**) | in osservazione: **passa e si conta** con stato `chiuso`. A guardia accesa: `409 ANNO_CHIUSO` col dialogo «Registra come correzione», e col motivo (almeno 8 caratteri) passa e lascia un gettone | il contatore in `anno_guardia_osservazioni` con `stato = 'chiuso'`; con la guardia accesa la riga in `correzioni_anno_chiuso` (solo il conteggio) e il log senza motivo |
+| 12 | `F + 1` | un docente prova a scrivere sul vecchio anno | rifiutato per la classe in sola lettura, nessun dialogo, nessun gettone nuovo (dipende da `controlli_rigidi`: se è spento si legge il contatore, non il rifiuto) | nessun gettone nuovo |
+
+Il passo 8 richiede una presenza **datata nel nuovo anno**: si prende dalla schermata se lascia scegliere una data del nuovo anno. Se non
+lo permette, il passo non si prova in Demo ma nel banco automatico (`__tests__/db/anno-passaggio-conferma.test.ts`, `anno-intero.test.ts`).
+
+### Il passo 6 e il passo 8 da SQL
+
+**Perché da SQL.** Dalla schermata la conferma usa l'orologio **vero**: in Demo darebbe `409 PASSAGGIO_TROPPO_PRESTO` (la data vera è prima di
+`U`), e un `{ "oggi": … }` nel corpo della richiesta dà `400` (la route non accetta campi in più). L'anteprima invece non dipende dal giorno e
+va bene dalla schermata. Le firme: `passaggio_anteprima(p_da_anno_sede, p_a_anno_sede, p_da, p_oggi)`, `passaggio_conferma(p_passaggio, p_da, p_oggi)`,
+`passaggio_annulla(p_passaggio, p_da, p_oggi)`; `p_da` è l'uuid dell'utente che compie il gesto (il tuo, da `utenti`), `p_oggi` la data simulata.
+
+```sql
+-- gli id: l'anno_sede del vecchio e del nuovo (dalla fotografia: colonna anno_sede_id)
+
+-- anteprima (in alternativa alla schermata). Dà indietro {passaggio_id, …}
+SELECT public.passaggio_anteprima('<ANNO_SEDE_VECCHIO>'::uuid, '<ANNO_SEDE_NUOVO>'::uuid, '<UTENTE>'::uuid, DATE 'AAAA-MM-GG');
+
+-- le decisioni sulle righe senza classe o «ritirato dalla tendina» si prendono dalla schermata /admin/students/passaggio
+-- (altrimenti la conferma risponde RIGHE_DA_DECIDERE e dice quante).
+
+-- conferma, con la data simulata U + 1
+SELECT public.passaggio_conferma('<PASSAGGIO>'::uuid, '<UTENTE>'::uuid, DATE 'AAAA-MM-GG');
+
+-- passo 8: l'annullo (rifiutato se nel nuovo anno c'è già una presenza)
+SELECT public.passaggio_annulla('<PASSAGGIO>'::uuid, '<UTENTE>'::uuid, DATE 'AAAA-MM-GG');
+```
+
+Codici d'errore da aspettarsi: `PASSAGGIO_TROPPO_PRESTO` (la data è `U` o prima), `PASSAGGIO_NON_PRONTO` (il nuovo non è `iscrizioni_aperte`, o il
+vecchio non è l'anno attivo), `PASSAGGIO_OGGI_NON_AMMESSO` (la sede non comincia per `e2e00000` e non è in `sedi_simulazione`), `RIGHE_DA_DECIDERE`, `ANTEPRIMA_VECCHIA` (rifai l'anteprima).
+
+### Se il passo 6 non viene fatto
+
+Se si salta dal passo 4 al 9, e poi al 10, il tick porta il vecchio a `chiuso` e il nuovo resta `iscrizioni_aperte`, senza anno `corrente`.
+In Demo **non** compaiono né l'allarme «sedi con il passaggio d'anno da fare» (`salute_anno()` → `passaggio_da_fare` vale 0 per le sedi di prova `e2e00000…`, come Demo, e per quelle in
+`sedi_simulazione`) né `PASSAGGIO_DA_FARE` (confronta l'orologio vero): una presenza datata nel nuovo anno **passa**, mentre una scrittura di **oggi**
+cade nel vecchio anno chiuso e, a guardia accesa, prende `ANNO_CHIUSO`. Lo scenario si guarda negli stati, non nei rifiuti.
+
+Ad ogni passo: `SELECT * FROM public.anno_invarianti() WHERE righe <> 0;` → nessuna riga. Un'invariante rossa ferma la simulazione e
+si apre un difetto: non si prosegue.
+
+## Che cosa questa simulazione non prova, e quando rifarlo
+
+Tutto ciò che dipende dall'orologio **vero** o dall'interruttore **globale** non si prova in Demo con le date simulate: `PASSAGGIO_DA_FARE`, l'allarme
+della salute, il rifiuto `ANNO_CHIUSO` con il dialogo e il gettone, i job notturni che scrivono sul registro con la guardia accesa.
+
+**Da rifare a metà giugno 2027**, con l'orologio vero, nelle due settimane di osservazione che precedono l'accensione (entro il 30/06/2027):
+la guardia è ancora in osservazione e il calendario vero di Demo è vicino ai suoi confini. Per far cadere l'orologio vero **dentro** il periodo
+da provare si sposta il confine fra due anni di Demo con `public.sposta_confine_anno(p_anno_sede, p_nuova_fine)` (sposta la fine del primo e
+l'inizio del successivo; rifiuta `CONFINE_NON_VALIDO` se la nuova fine precede l'`ultimo_giorno_aperto` del primo o l'inizio del successivo
+non precede la sua fine, `ANNO_CHIUSO` se uno dei due è `chiuso`, `CONFINE_CON_RIGHE` se nei giorni che cambiano anno ci sono righe già assegnate).
+Poi si ripetono i passi 5, 6, 11 e 12 **senza** `p_oggi` finto, e il titolare decide se accendere la guardia per tutti.
+
+## Dopo: il ripristino
+
+Il file `docs/superpowers/simulazione/ripristino-demo.sql` è **un blocco solo**: `BEGIN; DO $ripristino$ … $ripristino$; COMMIT;`. Non c'è un secondo invio.
+
+1. Il titolare apre il file nell'editor SQL e legge in cima **che cosa cancella e che cosa no** (gettoni, passaggi e cronologia degli stati
+   dopo la partenza, e gli stati degli anni; **non** le frequenze, le classi, le presenze, i voti, i pagamenti, né gli anni nati dalla simulazione).
+2. Compila i tre punti marcati «DA COMPILARE»: l'uuid di Demo al posto di `<DEMO>`, la data di partenza al posto di `AAAA-MM-GG`, e le righe della
+   fotografia al posto di `('AAAA/AA', 'corrente', false)` (una riga per anno: etichetta, stato, domande aperte).
+3. Lo invia **tutto in una volta**. Il `COMMIT` è già nel file, dopo il blocco: **non** si scrive un secondo `COMMIT;` né un `ROLLBACK;`. Se il
+   blocco si ferma da solo (`RIPRISTINO_SEGNAPOSTO`, `RIPRISTINO_SEDE_NON_DI_PROVA`, `RIPRISTINO_SEDI_NON_UNA`, `RIPRISTINO_SEDE_DIVERSA`, `RIPRISTINO_DATA`, `RIPRISTINO_FOTOGRAFIA`,
+   `RIPRISTINO_CONTEGGI`) l'invio si interrompe lì, il `COMMIT` non parte e **non è cambiato niente**: si corregge ciò che dice il codice e si
+   rinvia. Se l'editor risponde «current transaction is aborted», si invia `ROLLBACK;`. Se l'editor rifiutasse più istruzioni in un invio solo,
+   si tolgono `BEGIN;` e `COMMIT;`: il blocco da solo è già atomico.
+4. Se riesce, l'ultima tabella mostra gli stati finali di Demo, le frequenze da guardare a mano e le invarianti non a zero. **Dopo un passaggio
+   confermato è normale che resti un'invariante** (sul banco di prova l'11 su `alunni`): tornano gli stati degli anni, non i bambini. Si decide a
+   mano se bonificarli: Demo è una sede di prova, ma il titolare può averci messo dati propri.
+5. Se per la simulazione era stata messa una sede in `sedi_simulazione`, la si toglie (`UPDATE public.anno_regole SET sedi_simulazione = '{}'::uuid[];`; per Demo non serve) e, se il titolare aveva cambiato la guardia, la si
+   riporta com'era (con la data nel PRD).
+
+**Che cosa è provato e che cosa no.** Il file è eseguito nel banco automatico (`__tests__/db/anno-ripristino-demo.test.ts`, PGlite), con la stessa
+esecuzione multi-istruzione, su una simulazione vera: si ferma con una sede vera in elenco, con un segnaposto rimasto, con una data fuori posto; riesce
+dopo una conferma vera. **Non è mai stato eseguito dall'editor SQL di Supabase**: che `BEGIN; DO …; COMMIT;` in un invio solo si comporti così lì
+è la prima cosa da guardare alla prima esecuzione, con una fotografia salvata.
+
+## Come si registra l'esito
+
+Un file `docs/collaudo/risultati/simulazione-anno-intero-AAAA-MM-GG.md` (non va in git): per ogni passo, lo stato letto, il codice
+d'errore se c'è stato un rifiuto, il contatore delle osservazioni, le invarianti, e se la schermata ha detto ciò che doveva. Conteggi e codici, mai nomi.

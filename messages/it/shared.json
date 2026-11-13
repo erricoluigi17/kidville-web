@@ -806,8 +806,8 @@
   "errorePeriodoDateIncomplete": "Indica entrambe le date del periodo, oppure nessuna.",
   "errorePeriodiSovrapposti": "Le date si sovrappongono a un altro periodo di questa sede.",
   "errorePeriodoConScrutiniChiusi": "Il periodo ha uno scrutinio chiuso: per spostarne le date va prima riaperto.",
-  "erroreAnnoChiuso": "Anno scolastico chiuso: servono i permessi di correzione.",
-  "errorePassaggioDaFare": "Il passaggio all’anno nuovo non è ancora stato fatto: completalo prima di continuare.",
+  "erroreAnnoChiuso": "Questo anno scolastico è chiuso: non si può modificare.",
+  "errorePassaggioDaFare": "Il passaggio all’anno nuovo non è ancora stato fatto: lo completa la segreteria da Passaggio d’anno.",
   "erroreSezioneDiAltroAnno": "La classe scelta appartiene a un altro anno scolastico.",
   "erroreSezioneDiAltraSede": "La classe scelta appartiene a un’altra sede.",
   "erroreAnnoNonCoerente": "I dati non sono coerenti con l’anno scolastico scelto.",
@@ -868,5 +868,6 @@
   "erroreRigheDaDecidere": "Prima di confermare vanno decise alcune righe: bambini senza la classe nuova o con un avviso ancora aperto.",
   "erroreRigaNonValida": "Questa operazione non è ammessa per questo bambino così com’è ora. Ricarica la pagina e guarda la sua riga.",
   "erroreDocenteNonValido": "Questa persona non può avere la classe: scegli un docente di questa sede.",
-  "erroreAlunnoSenzaIscrizione": "Questo bambino non ha un’iscrizione nell’anno in corso, quindi non si può riportare fra gli iscritti da qui. Se è uscito col passaggio d’anno, usa «Conferma tardiva» nella pagina «Passaggio d’anno». Se invece il passaggio è stato annullato e riconfermato e la «Conferma tardiva» non trova la sua riga, serve una nuova iscrizione."
+  "erroreAlunnoSenzaIscrizione": "Questo bambino non ha un’iscrizione nell’anno in corso, quindi non si può riportare fra gli iscritti da qui. Se è uscito col passaggio d’anno, usa «Conferma tardiva» nella pagina «Passaggio d’anno». Se invece il passaggio è stato annullato e riconfermato e la «Conferma tardiva» non trova la sua riga, serve una nuova iscrizione.",
+  "erroreSezioneInChiusura": "Questa classe è nell’anno che si sta chiudendo: solo la Direzione e la segreteria possono correggerla."
 }

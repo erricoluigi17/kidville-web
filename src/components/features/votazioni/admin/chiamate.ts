@@ -1,5 +1,6 @@
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { erroreDaRisposta } from '@/lib/ui/esito-fetch'
+import { conCorrezioneNelCorpo, type InviaConCorrezione } from '@/lib/ui/correzione-fetch'
 import type {
   DettaglioVotazione,
   DettaglioVotazioneRisposta,
@@ -147,14 +148,17 @@ export async function scrivi(
   corpo: unknown,
   ripiego: string,
   evento: string,
+  /** PR 4.9: la pagina che sa registrare una correzione su un anno chiuso (`useCorrezioneAnno`). */
+  inviaConCorrezione?: InviaConCorrezione,
 ): Promise<EsitoScrittura> {
   try {
-    const res = await fetch(
-      url,
+    const init: RequestInit =
       corpo === undefined
         ? { method: metodo }
-        : { method: metodo, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) },
-    )
+        : { method: metodo, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) }
+    const res = inviaConCorrezione
+      ? await inviaConCorrezione((correzione) => fetch(url, correzione ? conCorrezioneNelCorpo(init, correzione) : init))
+      : await fetch(url, init)
     if (!res.ok) {
       const e = await erroreDaRisposta(res, ripiego)
       logClient({ livello: 'error', evento: 'fetch', messaggio: `${evento}-respinta`, route: ROUTE, stato: res.status })

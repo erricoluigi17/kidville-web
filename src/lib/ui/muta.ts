@@ -1,5 +1,6 @@
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
+import { conCorrezioneNelCorpo, type InviaConCorrezione } from '@/lib/ui/correzione-fetch';
 
 /**
  * Una mutazione che RIPORTA il proprio esito, invece di ingoiarlo.
@@ -56,6 +57,18 @@ export interface OpzioniMuta {
   setErrore: (messaggio: string) => void;
   /** La frase TRADOTTA di ripiego, per quando il server non dice niente di leggibile. */
   fallback: string;
+  /**
+   * PR 4.9: la pagina che sa registrare una CORREZIONE su un anno chiuso (`useCorrezioneAnno`). Se il server risponde 409
+   * `ANNO_CHIUSO` con `correzione_possibile`, il dialogo chiede il motivo e la richiesta riparte con `correzione` nel corpo JSON.
+   * Assente: la mutazione è quella di sempre.
+   */
+  inviaConCorrezione?: InviaConCorrezione;
+  /**
+   * Un successo che HA QUALCOSA DA DIRE: il server ha scritto, ma una parte del lavoro non è riuscita (es. `ricalcolo: 'non-riuscito'`
+   * di `scrutinio-periodi`). Riceve il corpo JSON della risposta riuscita e torna la frase da mostrare (nello stesso posto degli
+   * errori), o `null` se non c'è niente da dire. La mutazione resta `true`: il dato è salvato. Assente: il corpo non si legge.
+   */
+  avvisoDalSuccesso?: (corpo: unknown) => string | null;
 }
 
 /**
@@ -69,12 +82,14 @@ export interface OpzioniMuta {
  */
 export type Muta = (url: string, init: RequestInit, evento: string, contesto?: string) => Promise<boolean>;
 
-export function creaMuta({ route, ricarica, setErrore, fallback }: OpzioniMuta): Muta {
+export function creaMuta({ route, ricarica, setErrore, fallback, inviaConCorrezione, avvisoDalSuccesso }: OpzioniMuta): Muta {
   return async (url, init, evento, contesto) => {
     // Il contesto vive SOLO a schermo: sotto non compare in nessuna delle due `logClient`.
     const conContesto = (messaggio: string) => (contesto ? `${contesto}: ${messaggio}` : messaggio);
     try {
-      const res = await fetch(url, init);
+      const res = inviaConCorrezione
+        ? await inviaConCorrezione((correzione) => fetch(url, correzione ? conCorrezioneNelCorpo(init, correzione) : init))
+        : await fetch(url, init);
       if (!res.ok) {
         logClient({ livello: 'error', evento: 'fetch', messaggio: evento, route, stato: res.status });
         setErrore(conContesto(await messaggioErrore(res, fallback)));
@@ -83,7 +98,7 @@ export function creaMuta({ route, ricarica, setErrore, fallback }: OpzioniMuta):
         ricarica();
         return false;
       }
-      setErrore('');
+      setErrore(avvisoDalSuccesso ? await leggiAvviso(res, avvisoDalSuccesso, route, evento) : '');
       ricarica();
       return true;
     } catch (err) {
@@ -94,4 +109,14 @@ export function creaMuta({ route, ricarica, setErrore, fallback }: OpzioniMuta):
       return false;
     }
   };
+}
+
+/** La frase di un successo che ha qualcosa da dire, o `''`. Un corpo illeggibile non rompe la mutazione (è già riuscita): `warn` col solo nome dell'errore. */
+async function leggiAvviso(res: Response, avviso: (corpo: unknown) => string | null, route: string, evento: string): Promise<string> {
+  try {
+    return avviso(await res.json()) ?? '';
+  } catch (err) {
+    logClient({ livello: 'warn', evento: 'fetch', messaggio: `${evento}: corpo del successo illeggibile (${nomeErrore(err)})`, route });
+    return '';
+  }
 }

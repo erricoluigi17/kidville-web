@@ -13,6 +13,7 @@ import {
     tipoNotificaAvviso, titoloNotificaAvviso, destinatariAvviso, giaAvvisati,
 } from '@/lib/avvisi/notifica-avviso';
 import { assertAvvisoInScope } from '@/lib/auth/scope-avvisi';
+import { assertClasseNomeScrivibile } from '@/lib/auth/scope';
 import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
 import { classiMancantiNellaSede, classiTargetValide } from '@/lib/avvisi/classi-sede';
 import {
@@ -805,7 +806,7 @@ export const DELETE = withRoute('avvisi/[id]:DELETE', async (request: Request, {
         if (!vedeTuttiGliAvvisi(auth.user)) {
             const { data: riga, error: erroreAutore } = await supabase
                 .from('avvisi')
-                .select('author_id')
+                .select('author_id, target_classes')
                 .eq('id', id)
                 .maybeSingle();
             // PostgREST non lancia: senza questo ramo un guasto di lettura
@@ -820,6 +821,15 @@ export const DELETE = withRoute('avvisi/[id]:DELETE', async (request: Request, {
             }
             if (!puoGestireAvviso(auth.user, (riga as { author_id?: string | null } | null)?.author_id)) {
                 return rifiutoNonAutore('avvisi/[id]:DELETE', auth.user, id);
+            }
+            // La cancellazione porta via in CASCADE le risposte dei genitori: su una classe di un anno in
+            // chiusura (o chiuso) è storia, e il docente la legge soltanto. Come PUT/POST (`verificaTargetAvvisoDocente`),
+            // ma qui il target è quello GIÀ salvato. Segreteria/direzione non passano di qui (`vedeTuttiGliAvvisi`).
+            const classiSalvate = (riga as { target_classes?: unknown } | null)?.target_classes;
+            for (const classe of Array.isArray(classiSalvate) ? classiSalvate : []) {
+                if (typeof classe !== 'string' || classe.trim() === '') continue;
+                const sola = await assertClasseNomeScrivibile(supabase, auth.user, classe);
+                if (sola) return sola;
             }
         }
 

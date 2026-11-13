@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { assertAlunnoScrivibile, resolveScuoleAttive } from '@/lib/auth/scope';
 import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { notificaEvento } from '@/lib/notifiche/triggers';
@@ -265,7 +265,7 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
         // collaudo backend (rilievo F1, bloccante).
         // Il lock non l'aveva visto perché cercava l'import a livello di FILE: la
         // GET qui sopra lo scope ce l'aveva, e amnistiava la POST.
-        const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunno_id);
+        const fuoriScope = await assertAlunnoScrivibile(supabase, auth.user, alunno_id);
         if (fuoriScope) return fuoriScope;
 
         // Il record nasce completo di scuola/sezione (fonte: anagrafica alunno):
@@ -574,7 +574,7 @@ export const PATCH = withRoute('attendance/daily:PATCH', async (request: NextReq
 
         // LO SCOPE PRIMA DI TUTTO, e prima di qualunque lettura: dopo un diniego
         // `presenze` non deve nemmeno comparire fra le tabelle toccate.
-        const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunno_id);
+        const fuoriScope = await assertAlunnoScrivibile(supabase, auth.user, alunno_id);
         if (fuoriScope) return fuoriScope;
 
         const { data: prima, error: erroreLettura } = await supabase
@@ -757,7 +757,7 @@ export const DELETE = withRoute('attendance/daily:DELETE', async (request: NextR
         const supabase = await createAdminClient();
 
         // LO SCOPE PRIMA DI TUTTO: dopo un diniego `presenze` non si legge nemmeno.
-        const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunno_id);
+        const fuoriScope = await assertAlunnoScrivibile(supabase, auth.user, alunno_id);
         if (fuoriScope) return fuoriScope;
 
         if (data !== oggiFiscaleISO() && !puoCorreggereStorico(auth.user)) return rispostaAnnullaSoloOggi();

@@ -11,7 +11,7 @@ COSA FERMA (risposta ``deny``):
   · in ``execute_sql``: ``DELETE FROM``, ``DROP`` (anche ``ALTER … DROP``), ``TRUNCATE``,
     ``UPDATE`` senza ``WHERE`` al suo stesso livello, e gli interruttori che spengono la scatola
     nera, i registri o i trigger (``registri.manutenzione``, ``scatola_nera.manutenzione``,
-    ``scatola_nera.senza_storico``, ``anno_chiuso.oblio``, ``anno_scolastico.riempimento``, ``session_replication_role``,
+    ``scatola_nera.senza_storico``, ``anno_chiuso.oblio``, ``anno_passaggio.in_corso``, ``anno_scolastico.riempimento``, ``session_replication_role``,
     ``DISABLE TRIGGER``, e per nome le quattro funzioni dell'oblio ``anno_oblio_attiva``/``spegni``/``scrivi``/``svuota``), e ogni scrittura (``UPDATE``, ``INSERT``, ``MERGE``) su ``anno_regole`` e
     ``anno_tabelle``, le manopole dell'anno scolastico;
   · ciò che non sa leggere (input rotto, stringa o commento non chiuso, errore interno);
@@ -98,6 +98,7 @@ INTERRUTTORI = re.compile(
     r"(?:SET_CONFIG\s*\(\s*(?:E|U&)?'?\s*|\bSET\s+(?:LOCAL\s+|SESSION\s+)?)\"?"
     r"(?:(?:REGISTRI|SCATOLA_NERA)\"?\s*\.\s*\"?(?:MANUTENZIONE|SENZA_STORICO)"
     r"|ANNO_CHIUSO\"?\s*\.\s*\"?OBLIO"
+    r"|ANNO_PASSAGGIO\"?\s*\.\s*\"?IN_CORSO"
     r"|ANNO_SCOLASTICO\"?\s*\.\s*\"?RIEMPIMENTO"
     r"|SESSION_REPLICATION_ROLE)\b"
     r"|\bUPDATE\s+(?:PG_CATALOG\s*\.\s*)?PG_SETTINGS\b"

@@ -42,7 +42,7 @@ function req() {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  h.requireParent.mockResolvedValue({ user: { id: 'p1', role: 'parent' } })
+  h.requireParent.mockResolvedValue({ user: { id: 'p1', role: 'parent' }, perLegame: true })
   h.riconcilia.mockResolvedValue({ aperte: 0, aggiornate: 0, evase: 1 })
 })
 

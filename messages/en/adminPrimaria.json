@@ -187,5 +187,6 @@
   "periodiRipristina": "Put back in the list",
   "periodiArchiviatoBadge": "archived",
   "periodiMostraArchiviati": "Show archived too",
+  "periodiRicalcoloNonRiuscito": "Saved, but the grades were not reassigned to the terms: let support know.",
   "periodiPromemoriaDate": "This year’s term dates are missing: without them, assessments are not linked to a term and a closed term assessment does not protect them."
 }

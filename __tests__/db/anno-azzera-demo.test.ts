@@ -83,9 +83,11 @@ async function fotografa(sede = DEMO): Promise<Fotografia> {
 }
 
 /** `scattata`: l'istante dello scatto che la fotografia dichiara (la PARTENZA dello script); senza, la fotografia va com'è. */
-interface Compilazione { sede?: string; foto?: string; scattata?: string }
+interface Compilazione { sede?: string; foto?: string; scattata?: string; prova?: boolean }
 const compila = (o: Compilazione): string => {
   let sql = AZZERA
+  // L'interruttore della prova a secco è ACCESO per difetto nel file: i test che scrivono davvero lo spengono, come fa il titolare.
+  if (!o.prova) sql = sql.replace('c_prova_a_secco constant boolean := true;', 'c_prova_a_secco constant boolean := false;')
   if (o.sede) sql = sql.replace("'<DEMO>'", `'${o.sede}'`)
   let foto = o.foto
   if (foto && o.scattata) foto = JSON.stringify({ ...JSON.parse(foto), scattata_il: o.scattata })
@@ -815,6 +817,62 @@ describe('azzera-anno-nuovo-demo.sql · le date degli anni (O7)', () => {
       await fermato(compila({ sede: DEMO, foto: JSON.stringify(senzaDate) }), 'AZZERA_FOTOGRAFIA', dal)
       await fermato(compila({ sede: DEMO, foto: JSON.stringify(senzaPartenza) }), 'AZZERA_FOTOGRAFIA', dal)
       await fermato(compila({ sede: DEMO, foto: JSON.stringify({ ...j, date: { ...j.date, fine: 'ieri' } }) }), 'AZZERA_FOTOGRAFIA', dal)
+    })
+  })
+})
+
+describe('azzera-anno-nuovo-demo.sql · la prova a secco (B-n1)', () => {
+  const nuovaDomanda = () =>
+    una<string>(b.db, `INSERT INTO public.enrollment_submissions (scuola_id, anno_id, data, status) VALUES ($1, $2, '{}'::jsonb, 'pending') RETURNING id`, [DEMO, annoNuovoId])
+  const messaggio = async (sql: string): Promise<string> => {
+    let m = ''
+    await b.db.exec('SAVEPOINT prova')
+    await b.db.exec(sql).catch((e: Error) => { m = e.message })
+    await b.db.exec('ROLLBACK TO SAVEPOINT prova')
+    await b.db.exec('RELEASE SAVEPOINT prova')
+    return m
+  }
+
+  it('il file com’è (interruttore acceso) non scrive niente e porta il riassunto nel messaggio dell’eccezione', async () => {
+    await inRollback(b.db, async () => {
+      const dal = await adesso()
+      const f = await fotografa()
+      const D = await nuovaDomanda()
+      const prima = { q: await quadro(dal), c: await configurazione() }
+      const m = await messaggio(compila({ sede: DEMO, foto: f.fotografia!, prova: true }))
+      expect(m).toContain('AZZERA_PROVA_A_SECCO')
+      expect(m, 'una voce per riga').toContain('\n')
+      expect(m, 'gli uuid delle domande tolte').toContain(`domanda tolta · ${D}`)
+      expect(m, 'i conteggi per voce').toMatch(/domande del modulo pubblico · tolte 1/)
+      expect({ q: await quadro(dal), c: await configurazione() }, 'niente è cambiato').toEqual(prima)
+      expect(await conta(`SELECT 1 FROM public.enrollment_submissions WHERE id = $1`, [D])).toBe(1)
+    })
+  })
+
+  it('dopo un’esecuzione vera, una prova nella stessa connessione non mostra l’esito vecchio', async () => {
+    await inRollback(b.db, async () => {
+      const f = await fotografa()
+      const D1 = await nuovaDomanda()
+      await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! }), 'vera'))
+      expect(await conta(`SELECT 1 FROM public.enrollment_submissions WHERE id = $1`, [D1]), 'l’esecuzione vera l’ha tolta').toBe(0)
+      const D2 = await nuovaDomanda()
+      const m = await messaggio(compila({ sede: DEMO, foto: f.fotografia!, prova: true }))
+      expect(m).toContain(`domanda tolta · ${D2}`)
+      expect(m, 'niente dell’esecuzione di prima').not.toContain(D1)
+    })
+  })
+
+  it('con l’interruttore acceso non si arriva mai a scrivere, nemmeno col COMMIT in fondo al file', async () => {
+    await inRollback(b.db, async () => {
+      const f = await fotografa()
+      const D = await nuovaDomanda()
+      const sql = compila({ sede: DEMO, foto: f.fotografia!, prova: true })
+      expect(sql).toMatch(/c_prova_a_secco\s+constant boolean := true;/)
+      await b.db.exec('SAVEPOINT p2')
+      await expect(b.db.exec(sql)).rejects.toThrow('AZZERA_PROVA_A_SECCO')
+      await b.db.exec('ROLLBACK TO SAVEPOINT p2')
+      await b.db.exec('RELEASE SAVEPOINT p2')
+      expect(await conta(`SELECT 1 FROM public.enrollment_submissions WHERE id = $1`, [D])).toBe(1)
     })
   })
 })

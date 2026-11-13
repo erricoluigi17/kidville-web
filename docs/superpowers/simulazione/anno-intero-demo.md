@@ -185,15 +185,19 @@ secondo dopo il primo; l'utente inesperto che parte da zero), si usano due file 
 - `fotografa-anno-nuovo-demo.sql`: **sola lettura**, si esegue **prima** dei collaudi. Restituisce `sede_di_prova` (deve dire `true`), `anni_candidati`
   (deve dire `1`) e la `fotografia`, un testo JSON da copiare. L'istante dello scatto sta dentro la fotografia (`scattata_il`, versione 2): è la partenza, non va annotato né scritto.
 - `azzera-anno-nuovo-demo.sql`: lo esegue il titolare **dopo** il ripristino (mai prima: se l'anno nuovo è ancora `corrente`, o restano passaggi,
-  si ferma con `AZZERA_PRIMA_IL_RIPRISTINO`). Si compilano due punti: l'uuid di Demo al posto di `<DEMO>` e la
+  si ferma con `AZZERA_PRIMA_IL_RIPRISTINO`). Si compilano due punti (l'interruttore è un terzo gesto: vedi sotto): l'uuid di Demo al posto di `<DEMO>` e la
   fotografia al posto di `<FOTOGRAFIA>` (dentro `$foto$ … $foto$`). Si invia **tutto in una volta**; il `COMMIT` è già nel file.
 
-**Prova a secco (sempre il primo passo).** Prima dell'uso vero, il titolare invia lo stesso file con `ROLLBACK;` al posto di `COMMIT;` (l'ultima
-riga prima della tabella finale), subito dopo aver scattato la fotografia: lo script gira per intero sul database vero, mostra la tabella finale e
-poi annulla tutto. Alla prima esecuzione, subito dopo la fotografia, non c'è ancora niente di nato dopo la partenza: la tabella deve dire tutti
-zeri e nessuna riga lasciata, ed è la prova che il file è accettato dall'editor e che ogni colonna esiste davvero.
+**Prova a secco (sempre il primo passo).** Nel file c'è un interruttore, `c_prova_a_secco`, **acceso per difetto**. Con l'interruttore acceso il file
+fa tutto e poi si ferma con l'errore `AZZERA_PROVA_A_SECCO`: nel **messaggio** dell'errore c'è il riassunto (una voce per riga: quante righe avrebbe
+tolto, rimesso, lasciato; gli uuid delle domande che toglierebbe; gli uuid delle righe lasciate; le invarianti non a zero). L'errore annulla ogni cosa,
+quindi non cambia niente, e il `COMMIT;` in fondo non viene raggiunto (se l'editor lo invia lo stesso, è un `ROLLBACK`). Per scrivere davvero si
+mette `false`: un gesto in più, nel verso giusto. **Che cosa dimostra:** che il file è accettato dall'editor, che la sede e la fotografia sono
+quelle giuste e che ogni colonna nominata esiste. **Che cosa non dimostra:** subito dopo la fotografia non c'è ancora niente di nato dopo la
+partenza, quindi il riassunto è fatto di zeri e il passo che toglie gli anni nati nel collaudo non gira. Quello si vede solo rifacendo la prova
+**dopo** un collaudo, prima di spegnere l'interruttore.
 
-**Ordine.** fotografia → (prova a secco) → collaudo → `ripristino-demo.sql` → `azzera-anno-nuovo-demo.sql` → (se serve) collaudo successivo. La fotografia si rifà solo se
+**Ordine.** fotografia → prova a secco → collaudo → `ripristino-demo.sql` → prova a secco di nuovo (ora vede davvero che cosa c'è da togliere) → `azzera-anno-nuovo-demo.sql` con `c_prova_a_secco := false` → (se serve) collaudo successivo. La fotografia si rifà solo se
 l'anno nuovo viene preparato di nuovo a mano; per il collaudo successivo vale la stessa.
 
 **Che cosa fa.** Solo nella Demo e solo righe nate dopo la partenza: toglie le frequenze dell'anno nuovo (con le spunte), le voci di pagamento, le
@@ -211,6 +215,7 @@ dice, per tabella, quante righe sono state tolte, rimesse, lasciate, poi gli uui
 | `AZZERA_DATA` | lo scatto della fotografia è nel futuro, o non torna con i suoi conteggi (le righe «di prima» non sono quante la fotografia dice) |
 | `AZZERA_ANNO_NUOVO_NON_UNO` | la sede non ha **un solo** anno `in_preparazione` o `iscrizioni_aperte` nato prima della partenza (una data troppo vecchia finisce qui) |
 | `AZZERA_PRIMA_IL_RIPRISTINO` | l'anno nuovo è già `corrente`, oppure restano passaggi dopo la partenza |
+| `AZZERA_PROVA_A_SECCO` | l'interruttore `c_prova_a_secco` è acceso (lo è per difetto): il messaggio porta il riassunto, non è stato scritto niente. Per scrivere davvero si mette `false` |
 | `AZZERA_FREQUENZA_SPARITA` | una frequenza dell'anno di partenza della fotografia non esiste più: non si può rimetterla, si ferma tutto |
 | `AZZERA_ANNI_NATI_USATI` | a un anno nato nel collaudo punta ancora altro, di **qualunque** tabella (sezioni, frequenze, domande, voci di pagamento, presenze, valutazioni…): il messaggio dice i conteggi per tabella, non si tocca niente. Cosa fare: guardare quelle righe (sono dati del collaudo datati nell'anno nato col viaggio nel tempo) e toglierle a mano, poi rilanciare |
 | `AZZERA_FOTOGRAFIA` | la fotografia è della versione 1 o non ha `scattata_il` (si rifà con `fotografa-anno-nuovo-demo.sql`), non ha la forma attesa (anche le quattro date dei due anni), è di un altro anno, o contiene righe di un altro anno |

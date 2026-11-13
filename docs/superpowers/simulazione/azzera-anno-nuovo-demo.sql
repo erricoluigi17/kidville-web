@@ -46,8 +46,10 @@
 -- istruzioni (DELETE, UPDATE), giustamente. Il file è provato sul banco di prova automatico (PGlite, mai su Demo né su produzione):
 -- `__tests__/db/anno-azzera-demo.test.ts`. NON è stato eseguito sull'editor di Supabase: vedi il manuale `anno-intero-demo.md`.
 --
--- PROVA A SECCO. La prima volta (e ogni volta che c'è un dubbio) lo stesso file si invia con `ROLLBACK;` al posto di `COMMIT;`: fa tutto,
--- mostra la tabella finale (che cosa avrebbe tolto, rimesso, lasciato) e poi annulla ogni cosa.
+-- PROVA A SECCO. L'interruttore `c_prova_a_secco` (punto ③) è ACCESO per difetto: il file fa tutto, poi si ferma con l'errore
+-- `AZZERA_PROVA_A_SECCO` e nel MESSAGGIO c'è il riassunto (che cosa avrebbe tolto, rimesso, lasciato, una voce per riga). L'errore annulla ogni
+-- cosa, e il `COMMIT;` in fondo al file non viene raggiunto (se l'editor lo invia lo stesso, diventa un ROLLBACK). Per scrivere davvero si
+-- mette `false`. Subito dopo la fotografia la prova NON esercita il passo 6g (gli anni nati nel collaudo): quello lo vede solo dopo un collaudo.
 --
 -- COME SI USA. Si compila in due punti (cerca «DA COMPILARE»: la sede e la fotografia; la PARTENZA la dà la fotografia, `scattata_il`), si invia TUTTO in una volta sola: BEGIN, la funzione di appoggio, il
 -- blocco DO e COMMIT stanno nella STESSA richiesta. Il blocco si ferma da solo con un errore `AZZERA_…`: la richiesta si interrompe lì,
@@ -64,6 +66,7 @@
 --                                 voci, presenze, valutazioni…; chiavi su una o più colonne, con o senza `scuola_id`): il messaggio dice i conteggi
 --                                 per tabella; non si tocca niente;
 --   · AZZERA_FREQUENZA_SPARITA    una frequenza dell'anno di partenza della fotografia non esiste più: non si può rimetterla, si ferma tutto;
+--   · AZZERA_PROVA_A_SECCO       l'interruttore c_prova_a_secco è acceso (per difetto): nel messaggio c'è il riassunto, e non si scrive niente;
 --   · AZZERA_FOTOGRAFIA           la fotografia non è della versione 2 con `scattata_il` (si rifà), non è fatta come deve, o parla di un anno che non è quello trovato;
 --   · AZZERA_CONTEGGI             dopo il lavoro i conti non tornano (restano righe dopo la partenza che non sono nell'elenco delle
 --                                 «lasciate», o la configurazione non coincide con la fotografia). Si annulla tutto.
@@ -173,6 +176,10 @@ DECLARE
   -- ② DA COMPILARE · la FOTOGRAFIA: il testo JSON che ha restituito `fotografa-anno-nuovo-demo.sql`, incollato al posto di <FOTOGRAFIA>.
   --    La PARTENZA non si scrive: la dà la fotografia stessa (`scattata_il`, l'istante in cui l'hai scattata). Ciò che è nato prima non si tocca.
   c_fotografia  constant text := $foto$<FOTOGRAFIA>$foto$;
+  -- ③ L'INTERRUTTORE · la PROVA A SECCO. È ACCESO per difetto: il blocco fa tutto, poi si ferma con `AZZERA_PROVA_A_SECCO` e nel messaggio mette il
+  --    riassunto (una voce per riga: che cosa avrebbe tolto, rimesso, lasciato), e l'eccezione annulla ogni cosa. Per scrivere davvero si cambia
+  --    in `false`: un gesto in più, nel verso giusto.
+  c_prova_a_secco constant boolean := true;
 
   v_sede        uuid;
   v_dal         timestamptz;
@@ -199,6 +206,7 @@ DECLARE
   fk            record;
   v_part        jsonb;      -- l'anno di partenza (corrente) della fotografia, con le sue frequenze
   v_par         uuid;       -- anni_sede.id dell'anno di partenza
+  v_msg         text;       -- il riassunto della prova a secco
 BEGIN
   -- ── 0 · I segnaposto: sede, data e fotografia devono essere vere ───────────────────────────
   BEGIN
@@ -698,6 +706,18 @@ BEGIN
 
   SELECT count(*) INTO v_inv FROM public.anno_invarianti() WHERE righe <> 0;
   RAISE NOTICE 'dopo: anno nuovo % com''era alla fotografia, % invarianti non a zero', v_etichetta, v_inv;
+
+  -- ── 10 · La PROVA A SECCO: il messaggio di un'eccezione è l'unica cosa che l'editor mostra di sicuro, e l'eccezione annulla tutto ──
+  IF c_prova_a_secco THEN
+    SELECT string_agg(riga, E'\n' ORDER BY ord) INTO v_msg FROM (
+      SELECT zx.ordine AS ord, zx.voce || ' · tolte ' || zx.tolte || ' · rimesse ' || zx.rimesse || ' · lasciate ' || zx.lasciate AS riga FROM pg_temp._azzera_esito zx
+      UNION ALL
+      SELECT 1000 + row_number() OVER (ORDER BY zl.tabella, zl.id), 'lasciata · ' || zl.tabella || ' · ' || zl.id::text FROM pg_temp._azzera_lasciate zl
+      UNION ALL
+      SELECT 2000 + row_number() OVER (ORDER BY zi.invariante), 'invariante ' || zi.invariante || ' · ' || zi.tabella || ' · righe ' || zi.righe
+        FROM public.anno_invarianti() zi WHERE zi.righe <> 0) zt;
+    RAISE EXCEPTION E'AZZERA_PROVA_A_SECCO: prova a secco, non è stato scritto niente. Per scrivere davvero metti c_prova_a_secco a false.\n%', coalesce(v_msg, '(niente da fare)');
+  END IF;
 END
 $azzera$;
 

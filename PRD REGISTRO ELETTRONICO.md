@@ -1,3 +1,10 @@
+## 🔎 Changelog — Collaudo dell'anno scolastico, lotto 4: area di tocco dei pulsanti IT/EN della lingua — 2026-11-13 (ramo `claude/anno-agente1-lotto4`, dalla testa del lotto 3)
+
+- **Difetto.** I pulsanti «Italiano»/«English» del `LanguageSwitcher` (login, profilo genitore, nuova password, cancellazione account) erano alti 24 px: sotto i 44 px di area di tocco minima del progetto (misurato in produzione, Chrome non autenticato, 390 e 320 px).
+- **Correzione.** Ogni pulsante ha un pseudo-elemento alto 44 px fissi (`before:h-11`), centrato in verticale e fuori dal flusso: l'area di tocco non dipende dal font e la pill a vista non cresce (gruppo 32 px, pulsanti 24 px, identici a prima).
+- **Misura 390/320 px, prima → dopo:** area di tocco 24 → 44 px su entrambi i pulsanti; pill, posizione del logo (y 66/70) e scorrimento orizzontale invariati. Il lock `login-pill-lingua-sotto-safe-area` e `--kv-testa-login` (36 px riservati sotto la pill) restano validi: l'altezza a vista non cambia; il pseudo-elemento sporge al massimo di 2 px sulla fascia del logo, che non è interattivo.
+- **Test:** `LanguageSwitcher-area-di-tocco.test.tsx` (il contratto di classi: visto rosso prima; jsdom non calcola il layout, la misura vera sta sopra). Nessun log da aggiungere. Nessuna migrazione.
+
 ## 🔎 Changelog — Collaudo dell'anno scolastico, «Passaggio d'anno» su un anno in preparazione — 2026-11-13 (ramo `claude/anno-agente1-passaggio-testo`)
 
 - **Etichetta falsa trovata sull'iPhone.** Sul 2027/28 «in preparazione» (iscrizioni non ancora aperte) la pagina «Passaggio d'anno» diceva «scegli quell'anno dal selettore in alto», ma quell'anno era già scelto: non diceva perché non c'era il pulsante per calcolare l'anteprima.

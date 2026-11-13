@@ -54,6 +54,23 @@ describe('LogoutMenuButton: l\'uscita passa dalla conferma', () => {
   })
 })
 
+describe('l\'ordine dei pulsanti: «Annulla» per primo, nel DOM e a vista (jsdom non calcola il layout: si prova il contratto)', () => {
+  it('«Annulla» precede «Esci» nel DOM e il contenitore non inverte né riordina niente', () => {
+    render(<LogoutMenuButton />)
+    fireEvent.click(screen.getByRole('button', { name: /^Esci$/i }))
+    const dialogo = screen.getByRole('dialog')
+    const bottoni = within(dialogo).getAllByRole('button')
+    expect(bottoni.map((b) => b.textContent)).toEqual(['Annulla', 'Esci'])
+    const contenitore = bottoni[0].parentElement as HTMLElement
+    expect(bottoni[1].parentElement).toBe(contenitore)
+    const classi = [contenitore, ...bottoni].map((e) => e.className).join(' ')
+    // `flex-col-reverse` metteva «Esci» SOPRA «Annulla» sotto i 400px, mentre il focus parte da «Annulla».
+    expect(classi).not.toMatch(/reverse|\border-/)
+    expect(contenitore.className).toMatch(/\bflex-col\b/)
+    expect(contenitore.className).toMatch(/min-\[400px\]:flex-row\b/)
+  })
+})
+
 describe('UserMenu (barra della segreteria): stessa conferma', () => {
   it('il menuitem «Esci» apre la conferma e non esce; «Esci» del dialogo esce', async () => {
     render(<UserMenu ruoloLabel="Segreteria" />)

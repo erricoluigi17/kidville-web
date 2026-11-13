@@ -11,6 +11,8 @@ import { Modal } from '@/components/ui/Modal';
 // sessione locale (`signOut({ scope: 'local' })`). Se cambiasse, vanno cambiati INSIEME scope e chiave
 // `uscitaConfermaTitolo` (it/en in `shared.json`).
 // «Annulla» è il PRIMO controllo del dialogo, quindi il predefinito: `Modal` mette il focus sul primo.
+// Ordine DOM e ordine a vista coincidono (niente `flex-col-reverse`): sotto i 400px «Annulla» sta SOPRA «Esci», dove
+// parte anche il focus; da 400px in su sono affiancati, «Annulla» a sinistra.
 // Esc o un tocco fuori chiudono senza uscire (`Modal`). Aree di tocco da 44px.
 export function ConfermaUscita({
   open,
@@ -41,7 +43,7 @@ export function ConfermaUscita({
         <h2 id={titoloId} className="font-barlow text-xl font-extrabold uppercase text-kidville-green">
           {t('uscitaConfermaTitolo')}
         </h2>
-        <div className="mt-5 flex flex-col-reverse gap-2 min-[400px]:flex-row min-[400px]:justify-end">
+        <div className="mt-5 flex flex-col gap-2 min-[400px]:flex-row min-[400px]:justify-end">
           <button
             type="button"
             onClick={onAnnulla}

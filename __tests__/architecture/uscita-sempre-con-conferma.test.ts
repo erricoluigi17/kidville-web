@@ -1,17 +1,20 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 // Chi esce per una SCELTA dell'utente deve passare da `ConfermaUscita`: un tocco sbagliato su «Esci» (successo nel
-// collaudo del 13/11, foglio in scorrimento) chiude la sessione. Il lock NON prova a capire il corpo di un
-// `onClick` (cieco su `{async () => {…}}`, su `onClick={doLogout}`, su `.then(doLogout)`): cerca OGNI riferimento a
-// `doLogout`, a `@/lib/auth/logout` e a `auth.signOut` in tutto `src/`, fuori dai commenti, e lo ammette solo in
-// un elenco chiuso di file. Eccezioni dichiarate:
+// collaudo del 13/11, foglio in scorrimento) chiude la sessione. Il lock legge i file con l'AST di TypeScript, non con
+// espressioni regolari: commenti e stringhe li gestisce il parser (un `/*` dentro una stringa non nasconde codice, un
+// commento che nomina `doLogout` non fa scattare niente). Cerca OGNI riferimento a `doLogout`, a
+// `@/lib/auth/logout` (import statico o dinamico) e a `.signOut` in tutto `src/`, e lo ammette solo in un elenco
+// chiuso di file. Eccezioni dichiarate:
 //  · `lib/auth/logout.ts`: dove `doLogout` e `signOut` vivono;
 //  · `BiometricGate`: è l'ultima via d'uscita quando la biometria non passa, non deve diventare un vicolo cieco;
 //  · `CambiaPasswordCard`: l'uscita lì è l'effetto obbligato del cambio password, non una scelta.
-// I chiamanti ammessi «con conferma» devono avere `<ConfermaUscita` (con l'angolo: un import non basta) e
-// `onConferma=`, e `doLogout` deve comparire SOLO come argomento di quel `onConferma`/da un suo handler.
+// I chiamanti ammessi «con conferma» devono avere un elemento JSX `<ConfermaUscita onConferma=…>` (un import non basta)
+// e ogni riferimento a `doLogout`/`signOut` deve stare DENTRO quell'`onConferma`, direttamente o attraverso una
+// funzione con nome (`const onLogout = …`) i cui usi stanno tutti, a loro volta, dentro l'`onConferma`.
 const ECCEZIONI = [
   'src/lib/auth/logout.ts',
   'src/components/providers/BiometricGate.tsx',
@@ -22,6 +25,7 @@ const CON_CONFERMA_ATTESI = [
   'src/components/ui/UserMenu.tsx',
   'src/app/(dashboard)/parent/profilo/page.tsx',
 ]
+const MODULO_LOGOUT = '@/lib/auth/logout'
 
 function elenca(dir: string, out: string[] = []): string[] {
   for (const n of readdirSync(dir)) {
@@ -32,33 +36,102 @@ function elenca(dir: string, out: string[] = []): string[] {
   return out
 }
 
-// Il sorgente senza i commenti (di riga e di blocco): i commenti nominano `doLogout` a parole.
-export function senzaCommenti(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .map((r) => r.replace(/(^|\s)\/\/.*$/, '$1'))
-    .join('\n')
+function parse(percorso: string, src: string): ts.SourceFile {
+  return ts.createSourceFile(percorso, src, ts.ScriptTarget.Latest, true, /\.tsx$/.test(percorso) ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
 }
 
-const RIFERIMENTO = /\bdoLogout\b|@\/lib\/auth\/logout|\bauth\s*\.\s*signOut\b|\.signOut\s*\(/
+function visita(n: ts.Node, f: (x: ts.Node) => void): void {
+  f(n)
+  ts.forEachChild(n, (c) => visita(c, f))
+}
+
+/** `doLogout` come identificatore, `.signOut` come proprietà, o la stringa del modulo (import statico o dinamico). */
+function eRiferimentoUscita(n: ts.Node): boolean {
+  if (ts.isIdentifier(n)) {
+    if (n.text === 'doLogout') return true
+    if (n.text === 'signOut' && n.parent && ts.isPropertyAccessExpression(n.parent) && n.parent.name === n) return true
+  }
+  if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) && n.text === MODULO_LOGOUT) return true
+  return false
+}
+
+/** I riferimenti all'uscita in un sorgente (nodi), senza contare commenti né testo di stringhe qualunque. */
+function riferimenti(sf: ts.SourceFile): ts.Node[] {
+  const r: ts.Node[] = []
+  visita(sf, (n) => {
+    if (eRiferimentoUscita(n)) r.push(n)
+  })
+  return r
+}
 
 /** Classifica i sorgenti: chi riferisce l'uscita fuori dalle eccezioni. Esportata per provare il lock sul rosso. */
 export function chiamanti(sorgenti: Record<string, string>): string[] {
   return Object.keys(sorgenti)
     .filter((p) => !ECCEZIONI.includes(p))
-    .filter((p) => RIFERIMENTO.test(senzaCommenti(sorgenti[p])))
+    .filter((p) => riferimenti(parse(p, sorgenti[p])).length > 0)
 }
 
-/** Violazioni di un chiamante: niente `<ConfermaUscita`/`onConferma=`, o `doLogout` usato fuori da quel contesto. */
+function dentroOnConferma(n: ts.Node): boolean {
+  for (let c: ts.Node | undefined = n; c; c = c.parent) {
+    if (ts.isJsxAttribute(c) && ts.isIdentifier(c.name) && c.name.text === 'onConferma') {
+      const tag = c.parent?.parent
+      if (tag && (ts.isJsxOpeningElement(tag) || ts.isJsxSelfClosingElement(tag)) && tag.tagName.getText() === 'ConfermaUscita') return true
+    }
+  }
+  return false
+}
+
+/** Il nome della funzione/variabile che racchiude `n` (la più vicina con un nome), o `null` se anonima. */
+function nomeContenitore(n: ts.Node): string | null {
+  for (let c: ts.Node | undefined = n.parent; c; c = c.parent) {
+    if (ts.isFunctionDeclaration(c) && c.name) return c.name.text
+    if (ts.isVariableDeclaration(c) && ts.isIdentifier(c.name)) return c.name.text
+    if (ts.isJsxAttribute(c)) return null
+  }
+  return null
+}
+
+/** Violazioni di un chiamante ammesso: niente `<ConfermaUscita onConferma=…>`, o un riferimento all'uscita fuori da quel percorso. */
 export function violazioni(percorso: string, src: string): string[] {
-  const s = senzaCommenti(src)
+  const sf = parse(percorso, src)
   const v: string[] = []
-  if (!/<ConfermaUscita\b/.test(s)) v.push(`${percorso}: manca <ConfermaUscita (un import non basta)`)
-  if (!/\bonConferma\s*=/.test(s)) v.push(`${percorso}: manca onConferma=`)
-  // `doLogout` va chiamato solo da un handler che NON è un onClick/onPress/onSelect diretto di un elemento.
-  const diretto = /\bon(Click|Press|Select|PointerUp|TouchEnd|MouseDown|KeyDown)\s*=\s*\{(?:(?!\bonConferma\b)[\s\S])*?\bdoLogout\b/
-  if (diretto.test(s)) v.push(`${percorso}: doLogout dentro un gestore diretto (senza conferma)`)
+  let haConferma = false
+  visita(sf, (n) => {
+    if ((ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) && n.tagName.getText() === 'ConfermaUscita') {
+      if (n.attributes.properties.some((a) => ts.isJsxAttribute(a) && ts.isIdentifier(a.name) && a.name.text === 'onConferma')) haConferma = true
+    }
+  })
+  if (!haConferma) v.push(`${percorso}: manca <ConfermaUscita onConferma=…> (un import non basta)`)
+
+  // Usi di un nome (funzione intermedia) in tutto il file, esclusa la sua dichiarazione.
+  const usiDi = (nome: string): ts.Identifier[] => {
+    const u: ts.Identifier[] = []
+    visita(sf, (n) => {
+      if (!ts.isIdentifier(n) || n.text !== nome) return
+      const p = n.parent
+      if ((ts.isVariableDeclaration(p) || ts.isFunctionDeclaration(p)) && p.name === n) return
+      if (ts.isImportSpecifier(p)) return
+      u.push(n)
+    })
+    return u
+  }
+  const ammesso = (n: ts.Node, visti: Set<string>): boolean => {
+    if (dentroOnConferma(n)) return true
+    const nome = nomeContenitore(n)
+    if (!nome || visti.has(nome)) return false
+    visti.add(nome)
+    const usi = usiDi(nome)
+    return usi.length > 0 && usi.every((u) => ammesso(u, visti))
+  }
+  for (const r of riferimenti(sf)) {
+    // L'import della funzione non è un uso; la stringa del modulo sta solo nell'import.
+    if (ts.isStringLiteral(r) && ts.isImportDeclaration(r.parent)) continue
+    if (ts.isIdentifier(r) && ts.isImportSpecifier(r.parent)) continue
+    if (!ammesso(r, new Set())) {
+      const { line } = sf.getLineAndCharacterOfPosition(r.getStart())
+      v.push(`${percorso}:${line + 1}: «${r.getText()}» fuori dal percorso di conferma (onConferma)`)
+    }
+  }
   return v
 }
 
@@ -72,7 +145,7 @@ describe('ogni uscita scelta dall\'utente passa dalla conferma', () => {
     expect(trovati.sort()).toEqual([...CON_CONFERMA_ATTESI].sort())
   })
 
-  it.each(CON_CONFERMA_ATTESI)('%s ha <ConfermaUscita, onConferma= e nessun doLogout diretto', (p) => {
+  it.each(CON_CONFERMA_ATTESI)('%s ha <ConfermaUscita onConferma=…> e l\'uscita solo da lì', (p) => {
     expect(violazioni(p, tutti[p])).toEqual([])
   })
 
@@ -81,7 +154,7 @@ describe('ogni uscita scelta dall\'utente passa dalla conferma', () => {
   })
 })
 
-// PROVA DEL ROSSO, nel test stesso: tre forme rotte apposta devono essere viste dal lock. Se una passasse, il lock
+// PROVA DEL ROSSO, nel test stesso: le forme rotte apposta devono essere viste dal lock. Se una passasse, il lock
 // sarebbe di nuovo cieco su quella forma.
 describe('il lock vede le forme rotte (prova del rosso)', () => {
   const buono = `import { ConfermaUscita } from '@/components/ui/ConfermaUscita'
@@ -91,6 +164,10 @@ export function X() { return <><button onClick={() => setC(true)}>Esci</button><
   it('il caso buono non ha violazioni', () => {
     expect(violazioni('x.tsx', buono)).toEqual([])
   })
+  it('un handler con nome usato SOLO da onConferma è ammesso', () => {
+    const ok = `import { ConfermaUscita } from '@/components/ui/ConfermaUscita'\nimport { doLogout } from '@/lib/auth/logout'\nexport function X() { const onLogout = async () => { await doLogout() }; return <ConfermaUscita open onConferma={onLogout} /> }`
+    expect(violazioni('x.tsx', ok)).toEqual([])
+  })
   it('variante 1: onClick={doLogout} senza parentesi', () => {
     const rotto = `import { doLogout } from '@/lib/auth/logout'\nexport const X = () => <button onClick={doLogout}>Esci</button>`
     expect(chiamanti({ 'x.tsx': rotto })).toEqual(['x.tsx'])
@@ -99,7 +176,7 @@ export function X() { return <><button onClick={() => setC(true)}>Esci</button><
   it('variante 2: onClick={async () => { await doLogout() }} con le graffe', () => {
     const rotto = `import { ConfermaUscita } from '@/components/ui/ConfermaUscita'\nimport { doLogout } from '@/lib/auth/logout'\nexport const X = () => <><ConfermaUscita open onConferma={() => {}} /><button onClick={async () => { await doLogout() }}>Esci</button></>`
     expect(chiamanti({ 'x.tsx': rotto })).toEqual(['x.tsx'])
-    expect(violazioni('x.tsx', rotto).some((m) => m.includes('gestore diretto'))).toBe(true)
+    expect(violazioni('x.tsx', rotto).some((m) => m.includes('fuori dal percorso di conferma'))).toBe(true)
   })
   it('variante 3: import di ConfermaUscita senza uso', () => {
     const rotto = `import { ConfermaUscita } from '@/components/ui/ConfermaUscita'\nimport { doLogout } from '@/lib/auth/logout'\nexport const X = () => <button onClick={() => void doLogout()}>Esci</button>`
@@ -109,8 +186,23 @@ export function X() { return <><button onClick={() => setC(true)}>Esci</button><
     const rotto = `export const X = () => <button onClick={() => supabase.auth.signOut()}>Esci</button>`
     expect(chiamanti({ 'x.tsx': rotto })).toEqual(['x.tsx'])
   })
-  it('un commento che nomina doLogout non fa scattare il lock', () => {
-    expect(chiamanti({ 'x.tsx': '// usa doLogout() dopo la conferma\nexport const X = 1' })).toEqual([])
+  it('variante 5 (nuova): chiamante INDIRETTO — onLogout() usato anche da onClick, dentro un file ammesso', () => {
+    const rotto = `import { ConfermaUscita } from '@/components/ui/ConfermaUscita'\nimport { doLogout } from '@/lib/auth/logout'\nexport function X() { const onLogout = async () => { await doLogout() }; return <><button onClick={onLogout}>Esci</button><ConfermaUscita open onConferma={onLogout} /></> }`
+    expect(violazioni('x.tsx', rotto).some((m) => m.includes('fuori dal percorso di conferma'))).toBe(true)
+  })
+  it('variante 5b: handler con nome usato SOLO da onClick, con una conferma che non lo usa', () => {
+    const rotto = `import { ConfermaUscita } from '@/components/ui/ConfermaUscita'\nimport { doLogout } from '@/lib/auth/logout'\nexport function X() { const onLogout = () => doLogout(); return <><button onClick={onLogout}>Esci</button><ConfermaUscita open onConferma={() => {}} /></> }`
+    expect(violazioni('x.tsx', rotto).length).toBeGreaterThan(0)
+  })
+  it('variante 6 (nuova): una stringa con `/*` non nasconde il codice che la segue', () => {
+    const rotto = `const a = '/*'\nexport const X = () => <button onClick={() => supabase.auth.signOut()}>Esci</button>\nconst b = '*/'`
+    expect(chiamanti({ 'x.tsx': rotto })).toEqual(['x.tsx'])
+  })
+  it('un import dinamico del modulo viene visto', () => {
+    expect(chiamanti({ 'x.tsx': `export const X = async () => { const m = await import('@/lib/auth/logout'); await m.doLogout() }` })).toEqual(['x.tsx'])
+  })
+  it('un commento o una stringa che nominano doLogout non fanno scattare il lock', () => {
+    expect(chiamanti({ 'x.tsx': '// usa doLogout() dopo la conferma\n/* doLogout */\nexport const X = "doLogout"' })).toEqual([])
   })
 })
 
@@ -118,13 +210,24 @@ export function X() { return <><button onClick={() => setC(true)}>Esci</button><
 // dell'uscita non deve chiudere sessioni (né `auth.admin.signOut` né una uscita globale): toglie solo i cookie di
 // questo browser. Il client passa `scope: 'local'` (vedi `__tests__/lib/logout.test.ts`).
 describe('l\'uscita non tocca le altre sessioni', () => {
-  const route = senzaCommenti(readFileSync('src/app/api/auth/logout/route.ts', 'utf8'))
+  const route = parse('route.ts', readFileSync('src/app/api/auth/logout/route.ts', 'utf8'))
   it('POST /api/auth/logout non chiama nessun signOut', () => {
-    expect(route).not.toMatch(/signOut|admin\./)
+    const nomi: string[] = []
+    visita(route, (n) => {
+      if (ts.isIdentifier(n) && (n.text === 'signOut' || n.text === 'admin')) nomi.push(n.text)
+    })
+    expect(nomi).toEqual([])
   })
   it('doLogout chiama signOut con scope local e mai senza', () => {
-    const src = senzaCommenti(readFileSync('src/lib/auth/logout.ts', 'utf8'))
-    expect(src).toContain("signOut({ scope: 'local' })")
-    expect(src).not.toMatch(/signOut\(\s*\)/)
+    const sf = parse('logout.ts', readFileSync('src/lib/auth/logout.ts', 'utf8'))
+    const chiamate: ts.CallExpression[] = []
+    visita(sf, (n) => {
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'signOut') chiamate.push(n)
+    })
+    expect(chiamate).toHaveLength(1)
+    const arg = chiamate[0].arguments[0]
+    expect(arg && ts.isObjectLiteralExpression(arg)).toBe(true)
+    const scope = (arg as ts.ObjectLiteralExpression).properties.find((p) => ts.isPropertyAssignment(p) && p.name.getText() === 'scope') as ts.PropertyAssignment | undefined
+    expect(scope && ts.isStringLiteral(scope.initializer) && scope.initializer.text).toBe('local')
   })
 })

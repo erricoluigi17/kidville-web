@@ -70,7 +70,8 @@ function segnala(passo: string, errore: unknown): void {
       route: '/logout',
     });
   } catch {
-    // Il logger non rompe mai l'uscita (regola 9): qui si può solo tacere.
+    // Regola 9 di AGENTS.md: il logger è fail-open e non rompe mai l'uscita. Se è il logger a lanciare non c'è
+    // niente di più da scrivere dove registrarlo: questo catch è l'unico `catch` vuoto voluto del file.
   }
 }
 

@@ -28,7 +28,7 @@ const FOTOGRAFA = fs.readFileSync(path.join(DIR, 'fotografa-anno-nuovo-demo.sql'
 const RIPRISTINO = fs.readFileSync(path.join(DIR, 'ripristino-demo.sql'), 'utf8')
 
 const id = (n: number) => `33333333-3333-4333-8333-3333333333${String(n).padStart(2, '0')}`
-const AL = { a: id(1), b: id(2), c: id(3) }
+const AL = { a: id(1), b: id(2), c: id(3), d: id(4), e: id(5) }
 
 let b: BancoPassaggio
 let annoVecchio: string
@@ -57,6 +57,9 @@ beforeAll(async () => {
   sezioneVecchia = await una<string>(b.db,
     `INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1, $2, 'Girasoli', 'infanzia', 'infanzia') RETURNING id`, [DEMO, annoVecchioId])
   for (const a of Object.values(AL)) await q(`INSERT INTO public.alunni (id, scuola_id, stato, section_id) VALUES ($1, $2, 'iscritto', $3)`, [a, DEMO, sezioneVecchia])
+
+  // E aveva già detto «no» PRIMA della partenza (con un motivo): dopo l'azzeramento il suo «no» resta. D non risponderà mai.
+  await q(`UPDATE public.frequenze SET non_rinnova_il = now(), non_rinnova_motivo = 'trasloco' WHERE alunno_id = $1 AND anno_sede_id = $2`, [AL.e, annoVecchio])
 
   // L'anno nuovo prima dei collaudi: listino, moduli, posti, una sezione, una domanda e una voce di pagamento (tutto PRIMA della partenza).
   await q(`SELECT public.anno_listino_quota_imposta($1, 'quota_conferma', NULL, 100, NULL)`, [annoNuovo])
@@ -179,6 +182,10 @@ async function collaudo(conTick = false): Promise<Collaudo> {
   const oggi = await una<string>(b.db, `SELECT (ultimo_giorno_aperto + 1)::text FROM public.anni_sede WHERE id = $1`, [annoVecchio])
   await q(`SELECT public.passaggio_anteprima($1::uuid, $2::uuid, $3::uuid, $4::date)`, [annoVecchio, annoNuovo, UTENTE, oggi])
   if (conTick) {
+    // la conferma del passaggio: chi non ha risposto (D) e chi ha detto «no» (C, E) escono: la loro frequenza dell'anno in corso diventa `uscito`
+    const passaggio = await una<string>(b.db, `SELECT id FROM public.passaggi_anno WHERE a_anno_sede_id = $1 AND stato = 'anteprima'`, [annoNuovo])
+    await q(`SELECT public.passaggio_conferma($1::uuid, $2::uuid, $3::date)`, [passaggio, UTENTE, oggi])
+    expect(await conta(`SELECT 1 FROM public.frequenze WHERE anno_sede_id = $1 AND stato = 'uscito'`, [annoVecchio]), 'la conferma ha fatto uscire dei bambini').toBeGreaterThanOrEqual(2)
     // il viaggio nel tempo: il 01/09/2027 il `prepara_successivo_dal` del 2027/28 scatta e il tick crea il 2028/29 (con le copie di listino, moduli e posti)
     await q(`SELECT public.anni_tick('2027-09-02'::date, $1::uuid)`, [DEMO])
   }
@@ -207,6 +214,9 @@ describe('fotografa-anno-nuovo-demo.sql · sola lettura', () => {
       expect(j.listino).toHaveLength(2)
       expect(j.moduli).toHaveLength(3)
       expect(j.posti).toHaveLength(2)
+      expect(j.partenza.etichetta).toBe('2026/27')
+      expect(j.partenza.frequenze).toHaveLength(5)
+      expect(JSON.stringify(j.partenza)).not.toMatch(/nome|cognome|codice_fiscale/)
       expect(j.conteggi).toEqual({ frequenze: 0, pagamenti: 1, sezioni: 1, domande: 1 })
       expect(FOTOGRAFA).not.toMatch(/\b(INSERT|UPDATE|DELETE|TRUNCATE|DROP|ALTER)\b/i)
     })
@@ -228,6 +238,7 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
       const foto = JSON.parse(f.fotografia!)
       const stati = await statiDemo()
       const prima = await quadro(dal)
+      const invariantiPrima = await conta(`SELECT 1 FROM public.anno_invarianti() WHERE righe <> 0`)
       const configPrima = await configurazione()
       expect(configPrima).toEqual({ listino: foto.listino, moduli: foto.moduli, posti: foto.posti })
 
@@ -239,7 +250,7 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
       expect(await conta(`SELECT 1 FROM public.listino_voci l JOIN public.anni_sede a ON a.id = l.anno_sede_id JOIN public.anni_scolastici y ON y.id = a.anno_id WHERE a.scuola_id = $1 AND y.anno_inizio = 2028`, [DEMO]), 'con le copie di listino').toBeGreaterThan(0)
       expect(await configurazione()).not.toEqual(configPrima)
       expect(await conta(`SELECT 1 FROM public.frequenze WHERE anno_sede_id = $1`, [annoNuovo])).toBeGreaterThan(0)
-      expect(await conta(`SELECT 1 FROM public.frequenze WHERE anno_sede_id = $1 AND non_rinnova_il IS NOT NULL`, [annoVecchio])).toBe(1)
+      expect(await conta(`SELECT 1 FROM public.frequenze WHERE anno_sede_id = $1 AND non_rinnova_il IS NOT NULL`, [annoVecchio]), 'i «no» di C e di E').toBe(2)
       expect(await conta(`SELECT 1 FROM public.sections WHERE scuola_id = $1 AND anno_id = $2`, [DEMO, annoNuovoId])).toBeGreaterThan(1)
       expect(await conta(`SELECT 1 FROM public.passaggi_anno WHERE scuola_id = $1`, [DEMO])).toBe(1)
 
@@ -253,8 +264,17 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
       // niente di ciò che è nato dopo la partenza
       expect(await conta(`SELECT 1 FROM public.frequenze WHERE anno_sede_id = $1`, [annoNuovo]), 'zero frequenze dell’anno nuovo').toBe(0)
       expect(await conta(`SELECT 1 FROM public.frequenze_moduli m JOIN public.frequenze f ON f.id = m.frequenza_id WHERE f.anno_sede_id = $1`, [annoNuovo])).toBe(0)
-      expect(await conta(`SELECT 1 FROM public.frequenze WHERE scuola_id = $1 AND non_rinnova_il IS NOT NULL`, [DEMO]), 'i «no» sono tornati vuoti').toBe(0)
-      expect(await conta(`SELECT 1 FROM public.frequenze WHERE scuola_id = $1 AND non_rinnova_motivo IS NOT NULL`, [DEMO])).toBe(0)
+      expect(await conta(`SELECT 1 FROM public.frequenze WHERE scuola_id = $1 AND non_rinnova_il IS NOT NULL`, [DEMO]), 'resta solo il «no» di prima della partenza (E)').toBe(1)
+      expect(await conta(`SELECT 1 FROM public.frequenze WHERE alunno_id = $1 AND non_rinnova_motivo = 'trasloco'`, [AL.e])).toBe(1)
+      // i bambini usciti col passaggio sono tornati com'erano, e la scheda dell'alunno coincide con la frequenza
+      expect(await conta(`SELECT 1 FROM public.frequenze WHERE anno_sede_id = $1 AND stato = 'uscito'`, [annoVecchio]), 'nessun bambino uscito nell’anno in corso').toBe(0)
+      expect(await conta(`SELECT 1 FROM public.frequenze f JOIN public.alunni al ON al.id = f.alunno_id WHERE f.anno_sede_id = $1 AND al.archiviato_il IS NOT NULL`, [annoVecchio]), 'nessuna scheda archiviata').toBe(0)
+      // le invarianti sono a zero, salvo UNA riga voluta: l'alunno con la voce incassata resta «in arrivo» senza più la frequenza, ed è
+      // elencato come «lasciata» (lo decide il titolare); la 11-ter lo conta, e nient'altro
+      const rosse = (await b.db.query<{ invariante: string; righe: number }>(`SELECT invariante, righe FROM public.anno_invarianti() WHERE righe <> 0`)).rows
+      expect(rosse.map((r) => `${r.invariante}:${r.righe}`), 'le invarianti: solo l’alunno lasciato').toEqual(['11:1'])
+      expect(await conta(`SELECT 1 FROM public.alunni al WHERE al.stato = 'in_arrivo' AND NOT EXISTS (SELECT 1 FROM public.frequenze f JOIN public.anni_sede s ON s.id = f.anno_sede_id WHERE f.alunno_id = al.id AND f.stato IN ('in_attesa', 'iscritto') AND s.stato::text IN ('in_preparazione', 'iscrizioni_aperte')) AND al.id <> $1`, [c.alunnoConIncasso]), 'nessun altro alunno senza arrivo').toBe(0)
+      expect(invariantiPrima, 'prima del collaudo le invarianti erano a zero').toBe(0)
       expect(await conta(`SELECT 1 FROM public.pagamenti WHERE scuola_id = $1 AND anno_id = $2 AND creato_il >= $3::timestamptz`, [DEMO, annoNuovoId, dal]), 'resta solo la voce incassata').toBe(1)
       expect(await conta(`SELECT 1 FROM public.pagamenti WHERE id = $1`, [c.pagamentoIncassato])).toBe(1)
       expect(await conta(`SELECT 1 FROM public.enrollment_submissions WHERE scuola_id = $1 AND anno_id = $2 AND created_at >= $3::timestamptz`, [DEMO, annoNuovoId, dal])).toBe(0)
@@ -282,7 +302,7 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
       expect(Number(riga('alunni').tolte)).toBe(1)
       expect(Number(riga('alunni').lasciate)).toBe(1)
       expect(Number(riga('domande').tolte)).toBe(2)
-      expect(Number(riga('«no»').rimesse)).toBe(1)
+      expect(Number(riga("frequenze dell'anno di partenza rimesse").rimesse), 'C, D ed E').toBe(3)
       expect(ultimo.map((r) => r.voce)).toContain(`lasciata · pagamenti · ${c.pagamentoIncassato}`)
       expect(ultimo.map((r) => r.voce)).toContain(`lasciata · alunni · ${c.alunnoConIncasso}`)
       expect(ultimo.some((r) => r.voce === 'invarianti non a zero')).toBe(true)
@@ -472,6 +492,39 @@ describe('azzera-anno-nuovo-demo.sql · il blocco si ferma da solo, e non cambia
         CREATE TRIGGER prova_rimetti_sezione AFTER DELETE ON public.sections FOR EACH ROW WHEN (OLD.name NOT LIKE '% bis') EXECUTE FUNCTION public.prova_rimetti_sezione();
       `)
       await fermato(compila({ sede: DEMO, dal, foto: f.fotografia! }), 'AZZERA_CONTEGGI', dal)
+    })
+  })
+})
+
+describe('azzera-anno-nuovo-demo.sql · le frequenze dell’anno di partenza', () => {
+  it('una frequenza della fotografia che non esiste più → AZZERA_FREQUENZA_SPARITA, e non cambia niente', async () => {
+    await inRollback(b.db, async () => {
+      const dal = await adesso()
+      const f = await fotografa()
+      const j = JSON.parse(f.fotografia!)
+      j.partenza.frequenze.push({ id: id(99), stato: 'iscritto', data_uscita: null, non_rinnova_il: null, non_rinnova_motivo: null })
+      const stati = await statiDemo()
+      await collaudo(true)
+      await ripristina(dal, stati)
+      await fermato(compila({ sede: DEMO, dal, foto: JSON.stringify(j) }), 'AZZERA_FREQUENZA_SPARITA', dal)
+    })
+  })
+
+  it('una frequenza dell’anno di partenza nata dopo la partenza si toglie (e il suo alunno, se non ha altro)', async () => {
+    await inRollback(b.db, async () => {
+      const dal = await adesso()
+      const f = await fotografa()
+      const stati = await statiDemo()
+      await collaudo(true)
+      await b.db.query(`INSERT INTO public.alunni (id, scuola_id, stato) VALUES ($1, $2, 'iscritto')`, [id(60), DEMO])
+      // l'inserimento dell'alunno in un anno corrente fa nascere da sé la frequenza (specchio inverso)
+      const nata = await una<string>(b.db, `SELECT id FROM public.frequenze WHERE anno_sede_id = $1 AND alunno_id = $2`, [annoVecchio, id(60)])
+      await ripristina(dal, stati)
+      const risultati = await b.db.exec(dentro(compila({ sede: DEMO, dal, foto: f.fotografia! })))
+      expect(await conta(`SELECT 1 FROM public.frequenze WHERE id = $1`, [nata]), 'tolta').toBe(0)
+      expect(await conta(`SELECT 1 FROM public.alunni WHERE id = $1`, [id(60)]), 'e il suo alunno').toBe(0)
+      const ultimo = risultati.at(-1)!.rows as { voce: string; tolte: string }[]
+      expect(Number(ultimo.find((r) => r.voce.startsWith('frequenze nate dopo la partenza'))!.tolte)).toBe(1)
     })
   })
 })

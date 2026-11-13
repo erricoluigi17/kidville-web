@@ -12,7 +12,7 @@
 --                     `anni_candidati` non è 1 la colonna è vuota: non si parte.
 -- Annota anche l'ORA in cui l'hai eseguita, con il fuso (per esempio 2026-11-20 09:00:00+01): è la PARTENZA (punto ③).
 --
--- CHE COSA CONTIENE: lo stato e le «domande aperte» dell'anno nuovo, le righe di listino, di moduli richiesti e di posti autorizzati
+-- CHE COSA CONTIENE: le frequenze dell'anno corrente (uuid, stato, date, codice del «no»), lo stato e le «domande aperte» dell'anno nuovo, le righe di listino, di moduli richiesti e di posti autorizzati
 -- (con i loro uuid, uguali a come sono ora), e i conteggi di partenza (frequenze, voci di pagamento, sezioni, domande). Nessun nome,
 -- nessun codice fiscale, nessun dato di un bambino: sono configurazione e numeri.
 -- ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -41,6 +41,17 @@ SELECT
         'listino', (SELECT coalesce(jsonb_agg(to_jsonb(l) ORDER BY l.id), '[]'::jsonb) FROM public.listino_voci l WHERE l.anno_sede_id = c.id),
         'moduli',  (SELECT coalesce(jsonb_agg(to_jsonb(m) ORDER BY m.id), '[]'::jsonb) FROM public.moduli_richiesti m WHERE m.anno_sede_id = c.id),
         'posti',   (SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.id), '[]'::jsonb) FROM public.posti_autorizzati p WHERE p.anno_sede_id = c.id),
+        -- L'anno di PARTENZA (quello `corrente`): per ogni sua frequenza solo uuid, stato, date e il codice del «no». Il passaggio confermato
+        -- fa uscire chi non ha risposto e chi ha detto «no»: l'azzeramento li rimette com'erano. Niente nomi, niente testo libero.
+        'partenza', (SELECT jsonb_build_object(
+            'etichetta', y.etichetta_breve,
+            'stato', p.stato,
+            'frequenze', (SELECT coalesce(jsonb_agg(jsonb_build_object(
+                                'id', f.id, 'stato', f.stato, 'data_uscita', f.data_uscita,
+                                'non_rinnova_il', f.non_rinnova_il, 'non_rinnova_motivo', f.non_rinnova_motivo) ORDER BY f.id), '[]'::jsonb)
+                            FROM public.frequenze f WHERE f.anno_sede_id = p.id))
+                       FROM public.anni_sede p JOIN public.anni_scolastici y ON y.id = p.anno_id
+                      WHERE p.scuola_id = c.scuola_id AND p.stato = 'corrente' LIMIT 1),
         'conteggi', jsonb_build_object(
           'frequenze', (SELECT count(*) FROM public.frequenze f WHERE f.anno_sede_id = c.id),
           'pagamenti', (SELECT count(*) FROM public.pagamenti g WHERE g.scuola_id = c.scuola_id AND g.anno_id = c.anno_id),

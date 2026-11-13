@@ -20,9 +20,13 @@
 -- │    · gli ANNI nati durante il collaudo dopo l'anno nuovo (il viaggio nel tempo fa nascere il    │
 -- │      2028/29 al tick), con listino, moduli, posti e storia degli stati; la riga globale       │
 -- │      dell'anno solo se non la punta più nessuno. Se altro è attaccato a quell'anno, si ferma; │
--- │    · i «no» (`non_rinnova_il`, `non_rinnova_motivo`) scritti dopo la partenza sulle frequenze  │
--- │      dell'anno corrente: tornano vuoti.                                                        │
--- │  E RIMETTE, dalla fotografia, lo stato dell'anno nuovo, le «domande aperte», il listino, i     │
+-- │    · le frequenze nate dopo la partenza nell'anno di PARTENZA (il corrente), se non hanno       │
+-- │      legami; altrimenti restano e si elencano.                                                 │
+-- │  E RIMETTE, dalla fotografia, le frequenze dell'anno di PARTENZA (il corrente): stato, data di │
+-- │  uscita e «no». La conferma del passaggio fa uscire chi non ha risposto e chi ha detto «no», e │
+-- │  il ripristino non le ritocca: le rimette questo file, DOPO il ripristino (quando l'anno di    │
+-- │  partenza è di nuovo corrente), e lo specchio riallinea la scheda dell'alunno. Un «no» scritto │
+-- │  PRIMA della partenza resta. E rimette lo stato dell'anno nuovo, le «domande aperte», il listino, i     │
 -- │  moduli richiesti e i posti autorizzati, riga per riga (con gli stessi uuid).                  │
 -- │                                                                                                │
 -- │  CHE COSA NON TOCCA MAI:                                                                       │
@@ -45,9 +49,10 @@
 --   · AZZERA_SEDE_NON_DI_PROVA    la sede non comincia per `e2e00000` e non è l'unica in `anno_regole.sedi_simulazione`;
 --   · AZZERA_DATA                 la data è nel futuro, oppure non torna con i conteggi della fotografia (troppo vecchia o troppo tarda);
 --   · AZZERA_ANNO_NUOVO_NON_UNO   la sede non ha UN SOLO anno `in_preparazione` o `iscrizioni_aperte` nato prima della partenza;
---   · AZZERA_PRIMA_IL_RIPRISTINO  l'anno nuovo è già `corrente`, oppure restano passaggi dopo la partenza: si esegue prima il ripristino;
+--   · AZZERA_PRIMA_IL_RIPRISTINO  l'anno nuovo è già `corrente`, l'anno di partenza non è tornato `corrente`, oppure restano passaggi dopo la partenza: si esegue prima il ripristino;
 --   · AZZERA_ANNI_NATI_USATI      a un anno nato nel collaudo (dopo l'anno nuovo) puntano ancora righe (sezioni, frequenze, domande, voci…):
 --                                 il messaggio dice i conteggi per tabella; non si tocca niente;
+--   · AZZERA_FREQUENZA_SPARITA    una frequenza dell'anno di partenza della fotografia non esiste più: non si può rimetterla, si ferma tutto;
 --   · AZZERA_FOTOGRAFIA           la fotografia non è fatta come deve, o parla di un anno che non è quello trovato;
 --   · AZZERA_CONTEGGI             dopo il lavoro i conti non tornano (restano righe dopo la partenza che non sono nell'elenco delle
 --                                 «lasciate», o la configurazione non coincide con la fotografia). Si annulla tutto.
@@ -129,6 +134,8 @@ DECLARE
   v_nati_anni   uuid[];     -- i loro anni_scolastici.id
   v_usi         text;
   fk            record;
+  v_part        jsonb;      -- l'anno di partenza (corrente) della fotografia, con le sue frequenze
+  v_par         uuid;       -- anni_sede.id dell'anno di partenza
 BEGIN
   -- ── 0 · I segnaposto: sede, data e fotografia devono essere vere ───────────────────────────
   BEGIN
@@ -176,6 +183,19 @@ BEGIN
     RAISE EXCEPTION 'AZZERA_FOTOGRAFIA: la fotografia non ha la forma attesa (etichetta, stato, domande_aperte, listino, moduli, posti, conteggi)';
   END IF;
   v_etichetta := v_foto->>'etichetta';
+  v_part := CASE WHEN jsonb_typeof(v_foto->'partenza') = 'object' THEN v_foto->'partenza' END;
+  IF v_foto ? 'partenza' AND jsonb_typeof(v_foto->'partenza') NOT IN ('object', 'null') THEN
+    RAISE EXCEPTION 'AZZERA_FOTOGRAFIA: la parte «partenza» della fotografia non ha la forma attesa';
+  END IF;
+  IF v_part IS NOT NULL THEN
+    IF jsonb_typeof(v_part->'etichetta') IS DISTINCT FROM 'string' OR (v_part->>'etichetta') !~ '^[0-9]{4}/[0-9]{2}$'
+       OR jsonb_typeof(v_part->'frequenze') IS DISTINCT FROM 'array'
+       OR EXISTS (SELECT 1 FROM jsonb_array_elements(v_part->'frequenze') e
+                   WHERE jsonb_typeof(e) <> 'object' OR e->>'id' !~ '^[0-9a-f-]{36}$'
+                      OR (e->>'stato') NOT IN ('in_attesa', 'iscritto', 'ritirato', 'trasferito', 'uscito')) THEN
+      RAISE EXCEPTION 'AZZERA_FOTOGRAFIA: le frequenze dell''anno di partenza non hanno la forma attesa';
+    END IF;
+  END IF;
 
   -- ── 3 · L'anno nuovo: l'unico anno della sede in preparazione o con le iscrizioni aperte, nato prima della partenza ──
   SELECT coalesce(array_agg(a.id), ARRAY[]::uuid[]) INTO v_cand
@@ -201,6 +221,23 @@ BEGIN
   SELECT count(*) INTO v_n FROM public.passaggi_anno p WHERE p.scuola_id = v_sede AND p.creato_il >= v_dal;
   IF v_n > 0 THEN
     RAISE EXCEPTION 'AZZERA_PRIMA_IL_RIPRISTINO: restano % passaggi dopo la partenza: si esegue prima ripristino-demo.sql', v_n;
+  END IF;
+
+  -- L'anno di partenza: dopo il ripristino è di nuovo `corrente`, e tutte le sue frequenze della fotografia esistono ancora.
+  IF v_part IS NOT NULL THEN
+    SELECT a.id INTO v_par FROM public.anni_sede a JOIN public.anni_scolastici y ON y.id = a.anno_id
+     WHERE a.scuola_id = v_sede AND y.etichetta_breve = v_part->>'etichetta';
+    IF v_par IS NULL THEN
+      RAISE EXCEPTION 'AZZERA_FOTOGRAFIA: l''anno di partenza % della fotografia non esiste in questa sede', v_part->>'etichetta';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.anni_sede a WHERE a.id = v_par AND a.stato = 'corrente') THEN
+      RAISE EXCEPTION 'AZZERA_PRIMA_IL_RIPRISTINO: l''anno di partenza % non è tornato corrente: si esegue prima ripristino-demo.sql', v_part->>'etichetta';
+    END IF;
+    SELECT count(*) INTO v_n FROM jsonb_to_recordset(v_part->'frequenze') AS x(id uuid)
+     WHERE NOT EXISTS (SELECT 1 FROM public.frequenze f WHERE f.id = x.id AND f.anno_sede_id = v_par);
+    IF v_n > 0 THEN
+      RAISE EXCEPTION 'AZZERA_FREQUENZA_SPARITA: % frequenze dell''anno di partenza della fotografia non ci sono più (o sono di un altro anno)', v_n;
+    END IF;
   END IF;
 
   -- Ogni riga di configurazione della fotografia è di QUESTO anno (altrimenti la fotografia è di un'altra sede o di un altro anno).
@@ -253,12 +290,31 @@ BEGIN
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
   INSERT INTO _azzera_esito (voce, tolte) VALUES ('frequenze dell''anno nuovo', v_tolte), ('spunte dei moduli (a cascata)', v_n);
 
-  -- 6b · i «no» scritti dopo la partenza sulle frequenze dell'anno corrente
-  UPDATE public.frequenze f SET non_rinnova_il = NULL, non_rinnova_motivo = NULL
-   WHERE f.scuola_id = v_sede AND f.non_rinnova_il >= v_dal
-     AND f.anno_sede_id IN (SELECT a.id FROM public.anni_sede a WHERE a.scuola_id = v_sede AND a.stato = 'corrente');
-  GET DIAGNOSTICS v_rimesse = ROW_COUNT;
-  INSERT INTO _azzera_esito (voce, rimesse) VALUES ('«no» dell''anno corrente tornati vuoti', v_rimesse);
+  -- 6a bis · le frequenze dell'anno di PARTENZA nate dopo la partenza (un bambino registrato nell'anno in corso durante il collaudo):
+  --          si tolgono come le altre righe nate dopo, se non hanno legami; altrimenti restano e si elencano
+  IF v_par IS NOT NULL THEN
+    INSERT INTO _azzera_cand (tabella, id) SELECT 'frequenze', f.id FROM public.frequenze f WHERE f.anno_sede_id = v_par AND f.creata_il >= v_dal;
+    PERFORM pg_temp.azzera_blocca('frequenze', ARRAY['frequenze_moduli'], 'continua_da');
+    DELETE FROM public.frequenze f WHERE f.id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'frequenze' AND NOT k.bloccata);
+    GET DIAGNOSTICS v_tolte = ROW_COUNT;
+    INSERT INTO _azzera_lasciate SELECT k.tabella, k.id FROM _azzera_cand k WHERE k.tabella = 'frequenze' AND k.bloccata;
+    GET DIAGNOSTICS v_lasciate = ROW_COUNT;
+    INSERT INTO _azzera_esito (voce, tolte, lasciate) VALUES ('frequenze nate dopo la partenza nell''anno di partenza (lasciate: con legami)', v_tolte, v_lasciate);
+  END IF;
+
+  -- 6b · le frequenze dell'anno di PARTENZA com'erano nella fotografia: stato, data di uscita e «no» (il passaggio confermato fa uscire chi non
+  --      ha risposto e chi ha detto «no»; un «no» registrato PRIMA della partenza resta). L'anno è di nuovo `corrente`, e lo specchio verso la
+  --      scheda dell'alunno riallinea `alunni`.
+  v_rimesse := 0;
+  IF v_part IS NOT NULL THEN
+    UPDATE public.frequenze f
+       SET stato = x.stato, data_uscita = x.data_uscita, non_rinnova_il = x.non_rinnova_il, non_rinnova_motivo = x.non_rinnova_motivo
+      FROM jsonb_to_recordset(v_part->'frequenze') AS x(id uuid, stato text, data_uscita date, non_rinnova_il timestamptz, non_rinnova_motivo text)
+     WHERE f.id = x.id AND f.anno_sede_id = v_par
+       AND (f.stato, f.data_uscita, f.non_rinnova_il, f.non_rinnova_motivo) IS DISTINCT FROM (x.stato, x.data_uscita, x.non_rinnova_il, x.non_rinnova_motivo);
+    GET DIAGNOSTICS v_rimesse = ROW_COUNT;
+  END IF;
+  INSERT INTO _azzera_esito (voce, rimesse) VALUES ('frequenze dell''anno di partenza rimesse come nella fotografia', v_rimesse);
 
   -- 6c · le voci di pagamento dell'anno nuovo nate dopo la partenza; resta quella con un incasso, una fattura o un movimento collegato
   INSERT INTO _azzera_cand (tabella, id, bloccata)
@@ -420,11 +476,18 @@ BEGIN
   IF v_n <> 0 THEN
     RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % frequenze dell''anno nuovo dopo la partenza', v_n;
   END IF;
-  SELECT count(*) INTO v_n FROM public.frequenze f
-   WHERE f.scuola_id = v_sede AND f.non_rinnova_il >= v_dal
-     AND f.anno_sede_id IN (SELECT a.id FROM public.anni_sede a WHERE a.scuola_id = v_sede AND a.stato = 'corrente');
-  IF v_n <> 0 THEN
-    RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % «no» scritti dopo la partenza', v_n;
+  IF v_part IS NOT NULL THEN
+    SELECT count(*) INTO v_n FROM jsonb_to_recordset(v_part->'frequenze') AS x(id uuid, stato text, data_uscita date, non_rinnova_il timestamptz, non_rinnova_motivo text)
+      JOIN public.frequenze f ON f.id = x.id
+     WHERE (f.stato, f.data_uscita, f.non_rinnova_il, f.non_rinnova_motivo) IS DISTINCT FROM (x.stato, x.data_uscita, x.non_rinnova_il, x.non_rinnova_motivo);
+    IF v_n <> 0 THEN
+      RAISE EXCEPTION 'AZZERA_CONTEGGI: % frequenze dell''anno di partenza non coincidono con la fotografia', v_n;
+    END IF;
+    SELECT count(*) INTO v_n FROM public.frequenze f WHERE f.anno_sede_id = v_par AND f.creata_il >= v_dal;
+    SELECT count(*) INTO v_tot FROM _azzera_lasciate WHERE tabella = 'frequenze';
+    IF v_n <> v_tot THEN
+      RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % frequenze dell''anno di partenza nate dopo la partenza, ma le lasciate sono %', v_n, v_tot;
+    END IF;
   END IF;
   SELECT count(*) INTO v_n FROM public.pagamenti g WHERE g.scuola_id = v_sede AND g.anno_id = v_anno_id AND g.creato_il >= v_dal;
   SELECT count(*) INTO v_tot FROM _azzera_lasciate WHERE tabella = 'pagamenti';

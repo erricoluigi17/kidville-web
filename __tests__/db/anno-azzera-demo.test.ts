@@ -143,7 +143,7 @@ const frequenzaVecchia = (alunno: string) =>
 
 interface Collaudo { domandaAccolta: string; alunnoNuovo: string; alunnoConIncasso: string; pagamentoIncassato: string }
 /** La parte A: ciò che fanno gli agenti di collaudo nella Demo, con le funzioni vere del database. */
-async function collaudo(): Promise<Collaudo> {
+async function collaudo(conTick = false): Promise<Collaudo> {
   const q = (sql: string, p: unknown[] = []) => b.db.query(sql, p)
   await q(`SELECT public.anno_apri_iscrizioni($1, $2)`, [annoNuovo, UTENTE])
   await q(`SELECT public.anno_listino_quota_imposta($1, 'quota_conferma', NULL, 150, NULL)`, [annoNuovo])
@@ -178,6 +178,10 @@ async function collaudo(): Promise<Collaudo> {
   // l'anteprima del passaggio
   const oggi = await una<string>(b.db, `SELECT (ultimo_giorno_aperto + 1)::text FROM public.anni_sede WHERE id = $1`, [annoVecchio])
   await q(`SELECT public.passaggio_anteprima($1::uuid, $2::uuid, $3::uuid, $4::date)`, [annoVecchio, annoNuovo, UTENTE, oggi])
+  if (conTick) {
+    // il viaggio nel tempo: il 01/09/2027 il `prepara_successivo_dal` del 2027/28 scatta e il tick crea il 2028/29 (con le copie di listino, moduli e posti)
+    await q(`SELECT public.anni_tick('2027-09-02'::date, $1::uuid)`, [DEMO])
+  }
   return { domandaAccolta: domanda, alunnoNuovo: nuovo, alunnoConIncasso: conIncasso, pagamentoIncassato: incassata }
 }
 
@@ -227,8 +231,12 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
       const configPrima = await configurazione()
       expect(configPrima).toEqual({ listino: foto.listino, moduli: foto.moduli, posti: foto.posti })
 
-      const c = await collaudo()
-      // il collaudo ha cambiato davvero le cose
+      const anniPrima = await una<string>(b.db, `SELECT string_agg(id::text, ',' ORDER BY id) FROM public.anni_sede WHERE scuola_id = $1`, [DEMO])
+      const globaliPrima = await una<string>(b.db, `SELECT string_agg(id::text, ',' ORDER BY id) FROM public.anni_scolastici`)
+      const c = await collaudo(true)
+      // il collaudo ha cambiato davvero le cose, compreso un anno in più nel selettore
+      expect(await una<string>(b.db, `SELECT string_agg(id::text, ',' ORDER BY id) FROM public.anni_sede WHERE scuola_id = $1`, [DEMO]), 'il tick ha creato il 2028/29').not.toBe(anniPrima)
+      expect(await conta(`SELECT 1 FROM public.listino_voci l JOIN public.anni_sede a ON a.id = l.anno_sede_id JOIN public.anni_scolastici y ON y.id = a.anno_id WHERE a.scuola_id = $1 AND y.anno_inizio = 2028`, [DEMO]), 'con le copie di listino').toBeGreaterThan(0)
       expect(await configurazione()).not.toEqual(configPrima)
       expect(await conta(`SELECT 1 FROM public.frequenze WHERE anno_sede_id = $1`, [annoNuovo])).toBeGreaterThan(0)
       expect(await conta(`SELECT 1 FROM public.frequenze WHERE anno_sede_id = $1 AND non_rinnova_il IS NOT NULL`, [annoVecchio])).toBe(1)
@@ -258,6 +266,10 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
       // lo stato
       expect(await statiDemo()).toEqual(stati)
       expect(await conta(`SELECT 1 FROM public.anni_sede_stati WHERE anno_sede_id = $1 AND dal >= $2::timestamptz`, [annoNuovo, dal])).toBe(0)
+      // gli anni sono quelli di prima: il 2028/29 nato nel collaudo è sparito, con la sua configurazione e la riga globale
+      expect(await una<string>(b.db, `SELECT string_agg(id::text, ',' ORDER BY id) FROM public.anni_sede WHERE scuola_id = $1`, [DEMO]), 'gli anni della Demo sono quelli di prima').toBe(anniPrima)
+      expect(await una<string>(b.db, `SELECT string_agg(id::text, ',' ORDER BY id) FROM public.anni_scolastici`), 'la riga globale del 2028/29 è sparita').toBe(globaliPrima)
+      expect(await conta(`SELECT 1 FROM public.listino_voci l WHERE NOT EXISTS (SELECT 1 FROM public.anni_sede a WHERE a.id = l.anno_sede_id)`)).toBe(0)
       // nient'altro si è mosso
       expect(await quadro(dal), 'le altre sedi e le righe di prima della partenza sono identiche').toEqual(prima)
 
@@ -428,6 +440,20 @@ describe('azzera-anno-nuovo-demo.sql · il blocco si ferma da solo, e non cambia
       await fermato(comp(con({ conteggi: { frequenze: 0 } })), 'AZZERA_FOTOGRAFIA', dal)
       await fermato(comp(con({ posti: j.posti.map((p: object) => ({ ...p, anno_sede_id: annoVecchio })) })), 'AZZERA_FOTOGRAFIA', dal)
       await fermato(comp('{}'), 'AZZERA_FOTOGRAFIA', dal)
+    })
+  })
+
+  it('un anno nato nel collaudo che qualcuno usa (una sezione) → AZZERA_ANNI_NATI_USATI, con i conteggi, e non cambia niente', async () => {
+    await inRollback(b.db, async () => {
+      const dal = await adesso()
+      const f = await fotografa()
+      const stati = await statiDemo()
+      await collaudo(true)
+      await ripristina(dal, stati)
+      const nato = await b.db.query<{ anno_id: string }>(`SELECT s.anno_id FROM public.anni_sede s JOIN public.anni_scolastici y ON y.id = s.anno_id WHERE s.scuola_id = $1 AND y.anno_inizio = 2028`, [DEMO])
+      await b.db.query(`INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1, $2, 'Sezione del 2028', 'infanzia', 'infanzia')`, [DEMO, nato.rows[0].anno_id])
+      await fermato(compila({ sede: DEMO, dal, foto: f.fotografia! }), 'AZZERA_ANNI_NATI_USATI', dal)
+      await expect(b.db.exec(compila({ sede: DEMO, dal, foto: f.fotografia! }))).rejects.toThrow(/sections=1/)
     })
   })
 

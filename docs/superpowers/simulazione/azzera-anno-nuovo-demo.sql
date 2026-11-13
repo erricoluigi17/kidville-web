@@ -17,6 +17,9 @@
 -- │    · le sezioni dell'anno nuovo nate dopo la partenza (l'apertura delle iscrizioni le copia),  │
 -- │      con le copie che si portano dietro (docenti, materie, orario, campanelle…), se nessuno   │
 -- │      le usa ancora;                                                                            │
+-- │    · gli ANNI nati durante il collaudo dopo l'anno nuovo (il viaggio nel tempo fa nascere il    │
+-- │      2028/29 al tick), con listino, moduli, posti e storia degli stati; la riga globale       │
+-- │      dell'anno solo se non la punta più nessuno. Se altro è attaccato a quell'anno, si ferma; │
 -- │    · i «no» (`non_rinnova_il`, `non_rinnova_motivo`) scritti dopo la partenza sulle frequenze  │
 -- │      dell'anno corrente: tornano vuoti.                                                        │
 -- │  E RIMETTE, dalla fotografia, lo stato dell'anno nuovo, le «domande aperte», il listino, i     │
@@ -43,6 +46,8 @@
 --   · AZZERA_DATA                 la data è nel futuro, oppure non torna con i conteggi della fotografia (troppo vecchia o troppo tarda);
 --   · AZZERA_ANNO_NUOVO_NON_UNO   la sede non ha UN SOLO anno `in_preparazione` o `iscrizioni_aperte` nato prima della partenza;
 --   · AZZERA_PRIMA_IL_RIPRISTINO  l'anno nuovo è già `corrente`, oppure restano passaggi dopo la partenza: si esegue prima il ripristino;
+--   · AZZERA_ANNI_NATI_USATI      a un anno nato nel collaudo (dopo l'anno nuovo) puntano ancora righe (sezioni, frequenze, domande, voci…):
+--                                 il messaggio dice i conteggi per tabella; non si tocca niente;
 --   · AZZERA_FOTOGRAFIA           la fotografia non è fatta come deve, o parla di un anno che non è quello trovato;
 --   · AZZERA_CONTEGGI             dopo il lavoro i conti non tornano (restano righe dopo la partenza che non sono nell'elenco delle
 --                                 «lasciate», o la configurazione non coincide con la fotografia). Si annulla tutto.
@@ -120,6 +125,10 @@ DECLARE
   v_inv         integer;
   v_cron        integer;
   v_giusto      boolean;
+  v_nati        uuid[];     -- anni_sede.id degli anni nati durante il collaudo (il 2028/29 del tick)
+  v_nati_anni   uuid[];     -- i loro anni_scolastici.id
+  v_usi         text;
+  fk            record;
 BEGIN
   -- ── 0 · I segnaposto: sede, data e fotografia devono essere vere ───────────────────────────
   BEGIN
@@ -297,6 +306,60 @@ BEGIN
   GET DIAGNOSTICS v_lasciate = ROW_COUNT;
   INSERT INTO _azzera_esito (voce, tolte, lasciate) VALUES ('sezioni dell''anno nuovo (lasciate: ancora usate)', v_tolte, v_lasciate);
 
+  -- 6g · gli anni nati DURANTE il collaudo, successivi all'anno nuovo (il viaggio nel tempo fa nascere al tick il 2028/29, in preparazione,
+  --      con le copie di listino, moduli e posti). Se a un anno così punta altro (sezioni, frequenze, domande, voci…) il blocco si ferma
+  --      con i conteggi per tabella e non tocca niente. Le chiavi esterne si leggono dal database, non da un elenco scritto qui.
+  SELECT coalesce(array_agg(a.id), ARRAY[]::uuid[]), coalesce(array_agg(a.anno_id), ARRAY[]::uuid[]) INTO v_nati, v_nati_anni
+    FROM public.anni_sede a
+   WHERE a.scuola_id = v_sede AND a.creato_il >= v_dal AND a.id <> v_anno
+     AND a.inizio > (SELECT n.inizio FROM public.anni_sede n WHERE n.id = v_anno);
+  IF cardinality(v_nati) > 0 THEN
+    v_usi := '';
+    FOR fk IN
+      SELECT quote_ident(ns.nspname) || '.' || quote_ident(cl.relname) AS da, cl.relname AS nome, at.attname AS colonna, ct.relname = 'anni_sede' AS verso_sede
+        FROM pg_constraint c
+        JOIN pg_class cl ON cl.oid = c.conrelid
+        JOIN pg_namespace ns ON ns.oid = cl.relnamespace
+        JOIN pg_class ct ON ct.oid = c.confrelid
+        JOIN pg_attribute at ON at.attrelid = c.conrelid AND at.attnum = c.conkey[1]
+       WHERE c.contype = 'f' AND cardinality(c.conkey) = 1 AND ct.relname IN ('anni_sede', 'anni_scolastici')
+         AND c.conrelid <> c.confrelid AND ns.nspname = 'public'
+         AND cl.relname NOT IN ('listino_voci', 'moduli_richiesti', 'posti_autorizzati', 'anni_sede_stati', 'anni_sede')
+         AND (ct.relname = 'anni_sede'
+              OR EXISTS (SELECT 1 FROM pg_attribute sc WHERE sc.attrelid = c.conrelid AND sc.attname = 'scuola_id' AND NOT sc.attisdropped))
+       ORDER BY 2, 3
+    LOOP
+      IF fk.verso_sede THEN
+        EXECUTE format('SELECT count(*) FROM %s x WHERE x.%I = ANY ($1)', fk.da, fk.colonna) INTO v_n USING v_nati;
+      ELSE
+        EXECUTE format('SELECT count(*) FROM %s x WHERE x.scuola_id = $1 AND x.%I = ANY ($2)', fk.da, fk.colonna) INTO v_n USING v_sede, v_nati_anni;
+      END IF;
+      IF v_n > 0 THEN
+        v_usi := v_usi || CASE WHEN v_usi = '' THEN '' ELSE ', ' END || fk.nome || '=' || v_n;
+      END IF;
+    END LOOP;
+    IF v_usi <> '' THEN
+      RAISE EXCEPTION 'AZZERA_ANNI_NATI_USATI: % anni nati nel collaudo hanno ancora righe attaccate (%): si guardano a mano', cardinality(v_nati), v_usi;
+    END IF;
+    SELECT (SELECT count(*) FROM public.listino_voci x WHERE x.anno_sede_id = ANY (v_nati))
+         + (SELECT count(*) FROM public.moduli_richiesti x WHERE x.anno_sede_id = ANY (v_nati))
+         + (SELECT count(*) FROM public.posti_autorizzati x WHERE x.anno_sede_id = ANY (v_nati))
+         + (SELECT count(*) FROM public.anni_sede_stati x WHERE x.anno_sede_id = ANY (v_nati))
+      INTO v_n;
+    -- listino, moduli, posti e storia degli stati vanno via a cascata con l'anno
+    DELETE FROM public.anni_sede a WHERE a.id = ANY (v_nati) AND a.scuola_id = v_sede;
+    GET DIAGNOSTICS v_tolte = ROW_COUNT;
+    INSERT INTO _azzera_esito (voce, tolte) VALUES ('anni nati nel collaudo', v_tolte), ('righe di listino, moduli, posti e storia di quegli anni (a cascata)', v_n);
+    -- La riga GLOBALE dell'anno (`anni_scolastici`) si toglie solo se non la punta più nessuno (un'altra sede può già averla).
+    INSERT INTO _azzera_cand (tabella, id) SELECT 'anni_scolastici', y.id FROM public.anni_scolastici y WHERE y.id = ANY (v_nati_anni);
+    PERFORM pg_temp.azzera_blocca('anni_scolastici', ARRAY[]::text[]);
+    DELETE FROM public.anni_scolastici y WHERE y.id IN (SELECT k.id FROM _azzera_cand k WHERE k.tabella = 'anni_scolastici' AND NOT k.bloccata);
+    GET DIAGNOSTICS v_tolte = ROW_COUNT;
+    INSERT INTO _azzera_lasciate SELECT k.tabella, k.id FROM _azzera_cand k WHERE k.tabella = 'anni_scolastici' AND k.bloccata;
+    GET DIAGNOSTICS v_lasciate = ROW_COUNT;
+    INSERT INTO _azzera_esito (voce, tolte, lasciate) VALUES ('righe globali degli anni nati (lasciate: usate da altre sedi)', v_tolte, v_lasciate);
+  END IF;
+
   -- ── 7 · LO STATO dell'anno nuovo, come nella fotografia; la cronologia degli stati scritta dopo la partenza va via ──
   UPDATE public.anni_sede a SET stato = v_foto->>'stato', domande_aperte = (v_foto->>'domande_aperte')::boolean
    WHERE a.id = v_anno AND a.scuola_id = v_sede;
@@ -387,6 +450,11 @@ BEGIN
    WHERE a.id = v_anno AND (a.stato IS DISTINCT FROM v_foto->>'stato' OR a.domande_aperte IS DISTINCT FROM (v_foto->>'domande_aperte')::boolean);
   IF v_n <> 0 THEN
     RAISE EXCEPTION 'AZZERA_CONTEGGI: lo stato dell''anno nuovo non coincide con la fotografia';
+  END IF;
+  SELECT count(*) INTO v_n FROM public.anni_sede a
+   WHERE a.scuola_id = v_sede AND a.creato_il >= v_dal AND a.inizio > (SELECT n.inizio FROM public.anni_sede n WHERE n.id = v_anno);
+  IF v_n <> 0 THEN
+    RAISE EXCEPTION 'AZZERA_CONTEGGI: restano % anni nati dopo la partenza', v_n;
   END IF;
   SELECT count(*) INTO v_n FROM public.anni_sede_stati s WHERE s.anno_sede_id = v_anno AND s.dal >= v_dal;
   IF v_n <> 0 THEN

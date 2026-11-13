@@ -193,7 +193,7 @@ l'anno nuovo viene preparato di nuovo a mano; per il collaudo successivo vale la
 
 **Che cosa fa.** Solo nella Demo e solo righe nate dopo la partenza: toglie le frequenze dell'anno nuovo (con le spunte), le voci di pagamento, le
 domande del modulo pubblico, gli alunni nati dopo la partenza, le sezioni dell'anno nuovo con le loro copie; rimette a vuoto i «no» dell'anno corrente;
-rimette stato, domande aperte, listino, moduli e posti **come nella fotografia, con gli stessi uuid**. Ciò che ha un legame **resta e si elenca per
+toglie gli **anni nati durante il collaudo** (con il viaggio nel tempo il tick fa nascere il 2028/29: senza questo passo il selettore ne mostrerebbe tre); rimette stato, domande aperte, listino, moduli e posti **come nella fotografia, con gli stessi uuid**. Ciò che ha un legame **resta e si elenca per
 uuid** (una voce con incasso, fattura o movimento; un alunno con righe altrove; una sezione ancora usata): le decide il titolare. L'ultima tabella
 dice, per tabella, quante righe sono state tolte, rimesse, lasciate, poi gli uuid delle lasciate e le invarianti non a zero.
 
@@ -206,11 +206,12 @@ dice, per tabella, quante righe sono state tolte, rimesse, lasciate, poi gli uui
 | `AZZERA_DATA` | la data è nel futuro, o non torna con i conteggi della fotografia (le righe «di prima» non sono quante la fotografia dice) |
 | `AZZERA_ANNO_NUOVO_NON_UNO` | la sede non ha **un solo** anno `in_preparazione` o `iscrizioni_aperte` nato prima della partenza (una data troppo vecchia finisce qui) |
 | `AZZERA_PRIMA_IL_RIPRISTINO` | l'anno nuovo è già `corrente`, oppure restano passaggi dopo la partenza |
+| `AZZERA_ANNI_NATI_USATI` | a un anno nato nel collaudo punta ancora altro (sezioni, frequenze, domande, voci…): il messaggio dice i conteggi per tabella, non si tocca niente |
 | `AZZERA_FOTOGRAFIA` | la fotografia non ha la forma attesa, è di un altro anno, o contiene righe di un altro anno |
 | `AZZERA_CONTEGGI` | dopo il lavoro restano righe nate dopo la partenza che non sono tra le «lasciate», o la configurazione non coincide con la fotografia |
 
 **Che cosa non rimette.** Le spunte dei moduli di frequenze nate prima della partenza se un modulo è stato cambiato; i genitori creati accogliendo una
-domanda (restano, e il loro alunno con loro); gli anni nati durante il collaudo.
+domanda (restano, e il loro alunno con loro).
 
 **Provato e no.** `__tests__/db/anno-azzera-demo.test.ts` (PGlite, stessa esecuzione multi-istruzione): un caso per codice più il caso principale, con
 l'impronta md5 delle righe di prima e delle altre sedi. **Mai eseguito dall'editor SQL di Supabase**: alla prima esecuzione si guarda che

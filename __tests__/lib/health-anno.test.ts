@@ -54,7 +54,7 @@ describe('anno · l’anno successivo è stato creato in tempo?', () => {
         expect(await controlloAnno(c, ADESSO)).toMatchObject({
             nome: 'anno',
             esito: 'degradato',
-            dettaglio: '1 sedi senza l’anno successivo, in ritardo fino a 2 giorni',
+            dettaglio: '1 sede senza l’anno successivo, in ritardo fino a 2 giorni',
         })
     })
 

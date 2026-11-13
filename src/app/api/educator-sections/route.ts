@@ -46,16 +46,19 @@ interface SezioneEsposta {
     /** Nome della sede: serve alle etichette «nome — sede» quando le sedi sono >1. */
     scuolaNome: string;
     school_type: string | null;
-    /** `true` per una classe di un anno `in_chiusura` o `chiuso`: si apre, non si scrive (il server rifiuta comunque). */
-    solaLettura: boolean;
+    /** `true` per una classe di un anno `in_chiusura` o `chiuso`: si apre, non si scrive (il server rifiuta comunque). Solo con `passati=1`. */
+    solaLettura?: boolean;
     /** `anni_scolastici.id` e `etichetta_breve` («2026/27»): solo quando la funzione dell'anno esiste (DB migrato). */
-    annoId: string | null;
-    annoEtichetta: string | null;
+    annoId?: string | null;
+    annoEtichetta?: string | null;
     /** `corrente`, `in_chiusura` o `chiuso`: distingue «Anno che si sta chiudendo» da «Anno passato». */
-    annoStato: string | null;
+    annoStato?: string | null;
+    /** Primo e ultimo giorno dell'anno di quella sede (`anni_sede`): il giorno da cui parte l'appello in sola lettura e la frase «arrivano con l'inizio dell'anno». */
+    annoInizio?: string | null;
+    annoFine?: string | null;
 }
 
-interface InfoAnno { annoId: string | null; etichetta: string | null; stato: string | null }
+interface InfoAnno { annoId: string | null; etichetta: string | null; stato: string | null; inizio: string | null; fine: string | null }
 
 interface RigaSezione {
     id: string;
@@ -117,15 +120,16 @@ async function infoAnnoDelleSezioni(
     if (annoIds.length === 0) return info;
     const [anni, sedi] = await Promise.all([
         supabase.from('anni_scolastici').select('id, etichetta_breve').in('id', annoIds),
-        supabase.from('anni_sede').select('anno_id, scuola_id, stato').in('anno_id', annoIds).in('scuola_id', [...new Set(righe.map((s) => s.scuola_id))]),
+        supabase.from('anni_sede').select('anno_id, scuola_id, stato, inizio, fine').in('anno_id', annoIds).in('scuola_id', [...new Set(righe.map((s) => s.scuola_id))]),
     ]);
     if (anni.error) logEvento('db', 'warn', { operazione: 'educator-sections:GET', esito: 'anni-non-letti' }, anni.error);
     if (sedi.error) logEvento('db', 'warn', { operazione: 'educator-sections:GET', esito: 'stati-anno-non-letti' }, sedi.error);
     const etichette = new Map(((anni.data ?? []) as unknown as { id: string; etichetta_breve: string | null }[]).map((r) => [r.id, r.etichetta_breve]));
-    const stati = new Map(((sedi.data ?? []) as unknown as { anno_id: string; scuola_id: string; stato: string | null }[]).map((r) => [`${r.scuola_id}|${r.anno_id}`, r.stato]));
+    const periodi = new Map(((sedi.data ?? []) as unknown as { anno_id: string; scuola_id: string; stato: string | null; inizio: string | null; fine: string | null }[]).map((r) => [`${r.scuola_id}|${r.anno_id}`, r]));
     for (const s of righe) {
         const annoId = annoDi.get(s.id) ?? null;
-        info.set(s.id, { annoId, etichetta: annoId ? (etichette.get(annoId) ?? null) : null, stato: annoId ? (stati.get(`${s.scuola_id}|${annoId}`) ?? null) : null });
+        const periodo = annoId ? periodi.get(`${s.scuola_id}|${annoId}`) : undefined;
+        info.set(s.id, { annoId, etichetta: annoId ? (etichette.get(annoId) ?? null) : null, stato: periodo?.stato ?? null, inizio: periodo?.inizio ?? null, fine: periodo?.fine ?? null });
     }
     return info;
 }
@@ -278,7 +282,10 @@ export const GET = withRoute('educator-sections:GET', async (request: NextReques
 
         const anno = await resolveAnnoLetturaElenco(request, supabase, auth.user, plessi);
         if (anno instanceof NextResponse) return anno;
-        const candidate = await sezioniDeiPlessi(supabase, plessi, anno);
+        // `passati=1` per un docente: si legge UNA volta l'elenco di tutti gli anni (poi filtrato dalla funzione dell'anno);
+        // senza il parametro la lettura è quella di sempre, di un anno solo, e nessuna lettura in più sull'anno.
+        const conPassati = !isManager && q.data.passati === '1';
+        const candidate = await sezioniDeiPlessi(supabase, plessi, conPassati ? null : anno);
         if (candidate === null) {
             return NextResponse.json({ sectionNames: [], sections: [], role: normalizedRole });
         }
@@ -296,16 +303,13 @@ export const GET = withRoute('educator-sections:GET', async (request: NextReques
             // resta l'anno in corso, come prima.
             const esito = await sezioniVisibiliConEsito(supabase, userId);
             const visibili = esito.ok ? esito.sezioni : [];
-            conAnni = esito.ok && esito.conAnni === true;
+            conAnni = conPassati && esito.ok && esito.conAnni === true;
             solaLettura = new Map(visibili.map((v) => [v.sectionId, v.solaLettura]));
-            let base = candidate;
-            if (q.data.passati === '1' && visibili.length > 0) {
-                const tutte = await sezioniDeiPlessi(supabase, plessi, null);
-                if (tutte !== null) base = tutte;
-            }
-            righe = base.filter((s) => solaLettura.has(s.id));
+            righe = candidate.filter((s) => solaLettura.has(s.id));
             if (righe.length === 0) {
-                righe = await sezioniDaiMediaTaggati(supabase, userId, plessi, candidate);
+                // L'euristica dei media resta dentro l'anno in corso, come prima del lotto 6.
+                const delAnno = conPassati ? await sezioniDeiPlessi(supabase, plessi, anno) : candidate;
+                righe = await sezioniDaiMediaTaggati(supabase, userId, plessi, delAnno ?? []);
             }
         }
 
@@ -318,14 +322,19 @@ export const GET = withRoute('educator-sections:GET', async (request: NextReques
                 scuolaId: s.scuola_id,
                 scuolaNome: nomiSedi.get(s.scuola_id) ?? '',
                 school_type: s.school_type ?? null,
-                solaLettura: solaLettura.get(s.id) === true,
-                annoId: anni.get(s.id)?.annoId ?? null,
-                annoEtichetta: anni.get(s.id)?.etichetta ?? null,
-                annoStato: anni.get(s.id)?.stato ?? null,
+                // I campi di L6-1 escono SOLO con `passati=1`: senza, la risposta è quella di prima del lotto 6.
+                ...(conPassati ? {
+                    solaLettura: solaLettura.get(s.id) === true,
+                    annoId: anni.get(s.id)?.annoId ?? null,
+                    annoEtichetta: anni.get(s.id)?.etichetta ?? null,
+                    annoStato: anni.get(s.id)?.stato ?? null,
+                    annoInizio: anni.get(s.id)?.inizio ?? null,
+                    annoFine: anni.get(s.id)?.fine ?? null,
+                } : {}),
             }))
             // Ordine stabile: prima le classi scrivibili (l'anno in corso), poi quelle di sola lettura; dentro, per nome, e a
             // parità di nome per sede (le omonime di sedi diverse escono sempre nello stesso ordine) e per anno, il più recente prima.
-            .sort((a, b) => Number(a.solaLettura) - Number(b.solaLettura)
+            .sort((a, b) => Number(a.solaLettura === true) - Number(b.solaLettura === true)
                 || a.name.localeCompare(b.name) || a.scuolaNome.localeCompare(b.scuolaNome)
                 || (b.annoEtichetta ?? '').localeCompare(a.annoEtichetta ?? ''));
 

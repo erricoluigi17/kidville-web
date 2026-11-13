@@ -17,6 +17,7 @@ import { oggiRoma, puoCorreggereStorico } from '@/lib/storici/retroattivita';
 import { appartenenzeNelGiorno } from '@/lib/storici/alunni-giorno';
 import { rispostaErroreStorico } from '@/lib/storici/http';
 import { leggiTutte } from '@/lib/storici/db';
+import { docenteVedeLaSezione, rosterDellAnnoDellaSezione } from '@/lib/sezioni/roster-anno';
 
 // Singolo alunno per id.
 const getByIdQuerySchema = z.object({
@@ -167,6 +168,25 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
         try { idsStorici = [...new Set((await appartenenzeNelGiorno(admin, { scuole: plessi, sectionIds: classe.sectionIds, giorno: date })).map(a => a.alunno_id))]; }
         catch (error) { logEvento('registro', 'error', { operazione: 'diary/students:GET', esito: 'appartenenze-non-lette' }, error); return rispostaErroreStorico(error, 'diary/students:GET'); }
         if (!idsStorici.length) return NextResponse.json([]);
+    }
+    // Una classe di un anno PASSATO (sola lettura del docente, L6-1): i bambini sono quelli dell'ANNO di quella classe
+    // (`frequenze`), non quelli che `alunni.section_id` indica oggi — dopo la ricopia di settembre punta alla classe nuova.
+    // Con la funzione dell'anno assente (DB E2E non migrato) `rosterDellAnnoDellaSezione` dà `null`: lettura di sempre.
+    if (!idsStorici && q.data.sectionId && classe.sectionIds.length === 1) {
+        try {
+            const delloAnno = await rosterDellAnnoDellaSezione(admin, q.data.sectionId);
+            if (delloAnno !== null) {
+                // Il docente la vede solo se è fra le sue (`sezioni_visibili_docente`); lo staff la vede già dal proprio gate.
+                if (!puoCorreggereStorico(auth.user) && !(await docenteVedeLaSezione(admin, auth.user.id, q.data.sectionId))) {
+                    return NextResponse.json([]);
+                }
+                if (!delloAnno.length) return NextResponse.json([]);
+                idsStorici = delloAnno;
+            }
+        } catch (error) {
+            logEvento('registro', 'error', { operazione: 'diary/students:GET', esito: 'roster-anno-non-letto' }, error);
+            return NextResponse.json({ error: 'Lettura dei bambini non riuscita' }, { status: 500 });
+        }
     }
     // La lettura storica usa gli UUID del roster; la lettura ordinaria resta
     // agganciata alla sezione e alla sede attuali, come prima.

@@ -60,9 +60,9 @@ const dbBase = (): DBFinto => ({
     { id: ANNO_CHIUSO, etichetta_breve: '2025/26' },
   ],
   anni_sede: [
-    { id: 'b0000000-0000-4000-8000-000000000027', anno_id: ANNO_NUOVO, scuola_id: SEDE_A, stato: 'corrente' },
-    { id: 'b0000000-0000-4000-8000-000000000026', anno_id: ANNO_VECCHIO, scuola_id: SEDE_A, stato: 'in_chiusura' },
-    { id: 'b0000000-0000-4000-8000-000000000025', anno_id: ANNO_CHIUSO, scuola_id: SEDE_A, stato: 'chiuso' },
+    { id: 'b0000000-0000-4000-8000-000000000027', anno_id: ANNO_NUOVO, scuola_id: SEDE_A, stato: 'corrente', inizio: '2027-09-01', fine: '2028-08-31' },
+    { id: 'b0000000-0000-4000-8000-000000000026', anno_id: ANNO_VECCHIO, scuola_id: SEDE_A, stato: 'in_chiusura', inizio: '2026-09-01', fine: '2027-08-31' },
+    { id: 'b0000000-0000-4000-8000-000000000025', anno_id: ANNO_CHIUSO, scuola_id: SEDE_A, stato: 'chiuso', inizio: '2025-09-01', fine: '2026-08-31' },
   ],
   galleria_media_v2: [],
   alunni: [],
@@ -77,7 +77,7 @@ function richiesta(qs = ''): NextRequest {
   } as unknown as NextRequest
 }
 
-interface Sez { id: string; name: string; solaLettura: boolean; annoEtichetta: string | null; annoStato: string | null }
+interface Sez { id: string; name: string; solaLettura?: boolean; annoEtichetta?: string | null; annoStato?: string | null; annoInizio?: string | null; annoFine?: string | null }
 const sezioni = async (res: Response): Promise<Sez[]> => (await res.json()).sections
 
 const tutteVisibili = () => ({
@@ -107,18 +107,63 @@ describe('GET /api/educator-sections?passati=1 — le classi degli anni passati,
     ])
   })
 
-  it('senza `passati` resta la sola classe dell\u2019anno in corso, com\u2019è sempre stato', async () => {
-    const j = await sezioni(await GET(richiesta()))
-    expect(j.map((s) => [s.id, s.solaLettura, s.annoEtichetta])).toEqual([[SEC_NUOVA, false, '2027/28']])
+  it('porta anche il primo e l\u2019ultimo giorno dell\u2019anno di ogni classe (serve all\u2019appello in sola lettura)', async () => {
+    const j = await sezioni(await GET(richiesta('passati=1')))
+    expect(j.map((s) => [s.id, s.annoInizio, s.annoFine])).toEqual([
+      [SEC_NUOVA, '2027-09-01', '2028-08-31'],
+      [SEC_VECCHIA, '2026-09-01', '2027-08-31'],
+      [SEC_CHIUSA, '2025-09-01', '2026-08-31'],
+    ])
   })
 
-  it('senza `passati` non c\u2019è la lettura in più delle sezioni senza filtro d\u2019anno (le pagine che scrivono non cambiano)', async () => {
-    await GET(richiesta())
-    const senza = h.tabelle.filter((x) => x === 'sections').length
-    h.tabelle.length = 0
+  it('senza `passati`: la risposta è IDENTICA a prima del lotto 6 (stessi campi) e nessuna lettura sull\u2019anno', async () => {
+    const res = await GET(richiesta())
+    const j = await sezioni(res)
+    expect(j.map((s) => Object.keys(s).sort())).toEqual([['id', 'name', 'school_type', 'scuolaId', 'scuolaNome'].sort()])
+    expect(j.map((s) => s.id)).toEqual([SEC_NUOVA])
+    // TUTTE le letture, nell'ordine, come prima del lotto 6 (misurate sulla route di allora): non solo `sections`.
+    expect(h.tabelle).toEqual(['utenti', 'anni_sede', 'sections', 'schools'])
+  })
+
+  it('con `passati=1` le letture sull\u2019anno ci sono, e la lista delle sezioni si legge UNA volta (senza filtro d\u2019anno), più una per gli anni', async () => {
     await GET(richiesta('passati=1'))
-    // con `passati=1`: la sola lettura in più, senza filtro d anno (le etichette si leggono in entrambi i casi)
-    expect(h.tabelle.filter((x) => x === 'sections').length).toBe(senza + 1)
+    expect(h.tabelle).toContain('anni_scolastici')
+    expect(h.tabelle).toContain('anni_sede')
+    expect(h.tabelle.filter((x) => x === 'sections')).toHaveLength(2)
+  })
+
+  it('una sezione NON assegnata al docente (c\u2019è nel DB, non nella funzione) non esce nemmeno con `passati=1`', async () => {
+    const ALTRA = 'aaaa1111-0000-4000-8000-0000000000a9'
+    h.db.sections.push({ id: ALTRA, scuola_id: SEDE_A, name: 'Altra classe', school_type: 'infanzia', anno_id: ANNO_VECCHIO })
+    const j = await sezioni(await GET(richiesta('passati=1')))
+    expect(j.map((s) => s.id)).not.toContain(ALTRA)
+    expect(j).toHaveLength(3)
+  })
+
+  it('un anno `in_preparazione` (futuro) non esce: la funzione non lo dà, e la route non lo rimette', async () => {
+    const FUTURA = 'aaaa1111-0000-4000-8000-0000000000b1'
+    const ANNO_FUTURO = 'a0000000-0000-4000-8000-000000000028'
+    h.db.sections.push({ id: FUTURA, scuola_id: SEDE_A, name: 'TEST Infanzia', school_type: 'infanzia', anno_id: ANNO_FUTURO })
+    h.db.anni_scolastici.push({ id: ANNO_FUTURO, etichetta_breve: '2028/29' })
+    h.db.anni_sede.push({ id: 'b0000000-0000-4000-8000-000000000028', anno_id: ANNO_FUTURO, scuola_id: SEDE_A, stato: 'in_preparazione', inizio: '2028-09-01', fine: '2029-08-31' })
+    h.db.utenti_sezioni.push({ utente_id: ID_DOCENTE, section_id: FUTURA })
+    const j = await sezioni(await GET(richiesta('passati=1')))
+    expect(j.map((s) => s.id)).not.toContain(FUTURA)
+  })
+
+  it('un guasto della funzione DIVERSO da «assente» (qui un errore del server): nessuna classe, mai «tutte scrivibili»', async () => {
+    h.rpcVisibili = () => ({ data: null, error: { code: 'XX000', message: 'guasto' } })
+    const j = await sezioni(await GET(richiesta('passati=1')))
+    expect(j).toEqual([])
+  })
+
+  it('ramo manager con `passati=1`: la risposta è quella di sempre (tutte le classi dell\u2019anno in corso, nessun campo nuovo)', async () => {
+    h.requireDocente.mockResolvedValue({ user: { id: ID_DOCENTE, role: 'admin', scuola_id: SEDE_A } })
+    h.db.utenti = [{ id: ID_DOCENTE, ruolo: 'admin', role: 'admin', scuola_id: SEDE_A }]
+    h.db.utenti_scuole = [{ utente_id: ID_DOCENTE, scuola_id: SEDE_A }]
+    const j = await sezioni(await GET(richiesta('passati=1')))
+    expect(j.map((s) => s.id)).toEqual([SEC_NUOVA])
+    expect(Object.keys(j[0]).sort()).toEqual(['id', 'name', 'school_type', 'scuolaId', 'scuolaNome'])
   })
 
   it('ripiego sul DB non migrato (funzione dell\u2019anno assente): tutte scrivibili, anno ignoto, `anno_id` mai letto', async () => {

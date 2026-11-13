@@ -24,6 +24,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 import { fetchEsitoFigli, invalidaFigliCache, useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { ChildSwitcher } from '@/components/features/parent/ChildSwitcher';
 
 const USCITO = 'a0000000-0000-4000-8000-000000000001';
 const ATTIVO = 'a0000000-0000-4000-8000-000000000002';
@@ -31,6 +32,8 @@ const P = 'p0000000-0000-4000-8000-000000000001';
 
 let letture: number;
 let dopoPassaggio: boolean;
+/** La rete NON è tornata: la rilettura rifiuta. */
+let reteAssente: boolean;
 const fetchMock = vi.fn();
 
 function Sonda() {
@@ -43,12 +46,14 @@ beforeEach(() => {
   invalidaFigliCache();
   letture = 0;
   dopoPassaggio = false;
+  reteAssente = false;
   window.localStorage.clear();
   window.localStorage.setItem('kv_user_id', P);
   fetchMock.mockImplementation((url: unknown) => {
     const u = String(url);
     if (u.includes('/api/parent/students')) {
       letture += 1;
+      if (reteAssente) return Promise.reject(new TypeError('Failed to fetch'));
       const data = dopoPassaggio
         ? [{ id: ATTIVO, nome: 'B', cognome: 'C', classe_sezione: 'X' }]
         : [{ id: USCITO, nome: 'A', cognome: 'C', classe_sezione: 'X' }, { id: ATTIVO, nome: 'B', cognome: 'C', classe_sezione: 'X' }];
@@ -61,9 +66,20 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  // `document.hidden` era ridefinito dal test e restava così per i file che girano dopo nello stesso worker.
+  delete (document as unknown as { hidden?: boolean }).hidden;
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
+
+async function riprendiApp() {
+  const nascondi = (hidden: boolean) => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+    document.dispatchEvent(new Event('visibilitychange'));
+  };
+  await act(async () => { nascondi(true); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 1100)); nascondi(false); });
+}
 
 describe('elenco figli — si rilegge (L6-4)', () => {
   it('fra due letture ravvicinate la richiesta è UNA sola (la deduplica resta)', async () => {
@@ -97,5 +113,40 @@ describe('elenco figli — si rilegge (L6-4)', () => {
 
     await waitFor(() => expect(screen.getByTestId('sonda').textContent).toBe(`${ATTIVO}|${ATTIVO}`));
     expect(window.localStorage.getItem('kv_student_id')).toBe(ATTIVO);
+  });
+
+  it('🔴 ripresa con la rete ancora assente: il genitore tiene l’elenco di prima (identità)', async () => {
+    window.localStorage.setItem('kv_student_id', USCITO);
+    render(<Sonda />);
+    await waitFor(() => expect(screen.getByTestId('sonda').textContent).toBe(`${USCITO}|${USCITO},${ATTIVO}`));
+    const lettureIniziali = letture;
+
+    reteAssente = true;
+    await riprendiApp();
+    await waitFor(() => expect(letture).toBeGreaterThan(lettureIniziali)); // la rilettura è partita, ed è fallita
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(screen.getByTestId('sonda').textContent).toBe(`${USCITO}|${USCITO},${ATTIVO}`);
+  });
+
+  it('🔴 ripresa con la rete ancora assente: il SELETTORE dei figli resta con due figli', async () => {
+    window.localStorage.setItem('kv_student_id', USCITO);
+    render(<ChildSwitcher />);
+    await waitFor(() => expect(screen.getAllByRole('tab')).toHaveLength(2));
+    const lettureIniziali = letture;
+
+    reteAssente = true;
+    await riprendiApp();
+    await waitFor(() => expect(letture).toBeGreaterThan(lettureIniziali));
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(screen.getAllByRole('tab')).toHaveLength(2);
+  });
+
+  it('la rete torna: la lettura riuscita SOSTITUISCE l’elenco di prima', async () => {
+    window.localStorage.setItem('kv_student_id', USCITO);
+    render(<ChildSwitcher />);
+    await waitFor(() => expect(screen.getAllByRole('tab')).toHaveLength(2));
+    dopoPassaggio = true;
+    await riprendiApp();
+    await waitFor(() => expect(screen.queryAllByRole('tab')).toHaveLength(0)); // un solo figlio: nessun selettore
   });
 });

@@ -12,6 +12,7 @@
   "completo": "Complete",
   "mancanti": "{n, plural, one {# missing} other {# missing}}",
   "sezioneCon": "Section {sezione}",
+  "giornoDaVedere": "Day to view",
   "giornoPrecedente": "Previous day",
   "giornoSuccessivo": "Next day",
   "mesePrecedente": "Previous month",

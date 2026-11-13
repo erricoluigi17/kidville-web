@@ -275,6 +275,8 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId, solaLettura = 
     // di esso rettificare il ritardo di martedì voleva dire tornare su «Oggi» e
     // navigare la data all'indietro.
     const [correzione, setCorrezione] = useState<{ alunnoId: string; giorno: string } | null>(null);
+    // Cambiando classe la correzione aperta sulla vecchia non resta a schermo (potrebbe finire su una classe di sola lettura).
+    useEffect(() => { setCorrezione(null); }, [sectionId, sezione]);
     const [erroreOrario, setErroreOrario] = useState<string | null>(null);
 
     const apriCorrezione = (alunnoId: string, giorno: string) => {
@@ -623,7 +625,7 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId, solaLettura = 
                 STESSI dell'appello del giorno — nessun secondo modo di fare lo stesso
                 gesto. Quali campi mostrare lo dice `orariAmmessi`, la stessa tabella di
                 verità del 422 del server. */}
-            {correzione && (() => {
+            {!solaLettura && correzione && (() => {
                 const st = students.find(x => x.student_id === correzione.alunnoId);
                 const riga = st?.byDate[correzione.giorno];
                 if (!st || !riga) return null;

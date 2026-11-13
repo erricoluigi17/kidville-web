@@ -11,7 +11,9 @@ import { AppelloGiornaliero } from '@/components/features/teacher/attendance/App
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
-import { fetchEducatorSections, nomeConAnno, sezioniDallaRisposta, type SezioneDocente } from '@/lib/sezioni/educator-sections-cache';
+import { fetchEducatorSections, nomeConAnno, scadiEducatorSections, sezioniDallaRisposta, type SezioneDocente } from '@/lib/sezioni/educator-sections-cache';
+import { useRipresaApp } from '@/lib/auth/use-parent-identity';
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { COLONNA_DOCENTE, COLONNA_DOCENTE_LARGA } from '@/lib/ui/larghezza-pagina';
 
 type Tab = 'oggi' | 'mese';
@@ -58,8 +60,14 @@ function TeacherAttendanceContent() {
     // Una classe di un anno passato si apre in SOLA LETTURA; la scritta dice di quale anno (§4.10).
     const solaLettura = corrente?.solaLettura === true;
     // La classe nuova, ancora vuota prima della ricopia delle schede (1° settembre), quando il docente ha anche una classe passata.
-    const inAttesaDeiBambini = corrente?.annoStato === 'corrente' && availableSections.some((s) => s.solaLettura === true);
+    // Solo PRIMA dell'inizio dell'anno di quella classe: a novembre una classe corrente vuota è un'anagrafica da sistemare, non
+    // «arrivano con l'inizio dell'anno» (che nasconderebbe il problema vero).
+    const inAttesaDeiBambini = corrente?.annoStato === 'corrente' && !!corrente.annoInizio && oggiFiscaleISO() < corrente.annoInizio;
     const etichettaSezione = (s: SezioneDocente) => nomeConAnno(s, (nome, anno) => t('sezioneConAnno', { nome, anno }));
+
+    // Alla ripresa dell'app l'elenco delle classi si rilegge (stessa scadenza dei figli del genitore, L6-4): un docente con l'app
+    // aperta a cavallo del passaggio d'anno non vede la classe nuova finché non ricarica. Senza rete resta l'elenco di prima.
+    const ripresa = useRipresaApp(scadiEducatorSections);
 
     useEffect(() => {
         if (!teacherId) return;
@@ -69,11 +77,12 @@ function TeacherAttendanceContent() {
                 // `sections` (con l'id) e la vecchia `sectionNames` (senza).
                 const secs = sezioniDallaRisposta(d);
                 setAvailableSections(secs);
-                if (secs.length > 0) setSezioneScelta((prev) => prev || chiave(secs[0]));
+                // La scelta resta se la classe c'è ancora nell'elenco riletto; altrimenti si riparte dalla prima.
+                if (secs.length > 0) setSezioneScelta((prev) => (prev && secs.some((s) => chiave(s) === prev) ? prev : chiave(secs[0])));
             })
             .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `presenze-sezioni-docente-non-caricate: ${nomeErrore(err)}`, route: '/teacher/attendance' }))
             .finally(() => setSectionsLoaded(true));
-    }, [teacherId]);
+    }, [teacherId, ripresa]);
 
     const direction = TABS.findIndex(t => t.id === activeTab) - TABS.findIndex(t => t.id === prevTab);
 
@@ -166,7 +175,7 @@ function TeacherAttendanceContent() {
                             animate="center"
                             exit="exit"
                         >
-                            {activeTab === 'oggi' && <AppelloGiornaliero sezione={sezione} sectionId={sectionId} griglia solaLettura={solaLettura} inAttesaDeiBambini={inAttesaDeiBambini} />}
+                            {activeTab === 'oggi' && <AppelloGiornaliero key={sezioneScelta} sezione={sezione} sectionId={sectionId} griglia solaLettura={solaLettura} inAttesaDeiBambini={inAttesaDeiBambini} annoInizio={corrente?.annoInizio} annoFine={corrente?.annoFine} />}
 
                             {activeTab === 'mese' && (
                                 <div className="overflow-x-auto rounded-3xl border border-kidville-line bg-white p-4 shadow-sm">

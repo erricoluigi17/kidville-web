@@ -12,6 +12,7 @@
   "completo": "Completo",
   "mancanti": "{n, plural, one {# mancante} other {# mancanti}}",
   "sezioneCon": "Sezione {sezione}",
+  "giornoDaVedere": "Giorno da vedere",
   "giornoPrecedente": "Giorno precedente",
   "giornoSuccessivo": "Giorno successivo",
   "mesePrecedente": "Mese precedente",

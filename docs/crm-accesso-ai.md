@@ -33,9 +33,9 @@ Gli errori con codice hanno in genere la forma `{error, codice}`. Per le decisio
 
 Query obbligatoria `sede`, `dal` e `al` nel formato `AAAA-MM-GG`, `nascita` nel formato `AAAA-MM`. Le date sono civili, nel fuso di Roma, con estremi inclusi. `al` deve essere uguale o successivo a `dal`, al massimo 31 giorni dopo.
 
-**200** — `{sede, gradi, etaCoperta, troncato, slot: [{inizio, fine}]}`. `gradi` può contenere `nido`, `infanzia` e `primaria` e indica la fascia d’età: l’assistente può dirla alla famiglia, ma non propone né assegna una classe, che sceglie la segreteria durante la visita. Per offrire la visita, il CRM verifica che la sede offra il servizio per quella fascia; oggi lo ricava dalle sezioni dell’anno scolastico attivo (vedi «Prima di aprire alle sedi vere»). Il risultato non conferma l’ammissione. Se la sede non offre il servizio, `etaCoperta` è `false` e `slot` è vuoto. Con copertura l’elenco può comunque essere vuoto. Gli orari hanno almeno due ore di anticipo, sono ordinati per inizio e fine e arrivano in ISO. Al massimo 60 coppie. Se `troncato` è `true`, restringi l’intervallo per vedere gli altri orari.
+**200** — `{sede, gradi, etaCoperta, troncato, slot: [{inizio, fine}]}`. `gradi` può contenere `nido`, `infanzia` e `primaria` e indica la fascia d’età: l’assistente può dirla alla famiglia, ma non propone né assegna una classe, che sceglie la segreteria durante la visita. Per offrire la visita, il CRM verifica che la sede offra il servizio per quella fascia, leggendo l’elenco fisso dei servizi della sede, che non dipende dalle sezioni né dall’anno scolastico (vedi «Servizi offerti dalla sede»). Il risultato non conferma l’ammissione. Se la sede non offre il servizio, `etaCoperta` è `false` e `slot` è vuoto. Con copertura l’elenco può comunque essere vuoto. Gli orari hanno almeno due ore di anticipo, sono ordinati per inizio e fine e arrivano in ISO. Al massimo 60 coppie. Se `troncato` è `true`, restringi l’intervallo per vedere gli altri orari.
 
-**Errori** — quelli comuni, incluso `400` per date, intervallo o parametri non ammessi. Il messaggio non riporta il nome dei parametri sconosciuti. Se occorre verificare la copertura e manca l’anno attivo della sede, la risposta è `500 CRM_OPERAZIONE_NON_RIUSCITA`. Se mancano la funzione o le tabelle di calendario necessarie, la risposta è `503 CRM_NON_INSTALLATO`.
+**Errori** — quelli comuni, incluso `400` per date, intervallo o parametri non ammessi. Il messaggio non riporta il nome dei parametri sconosciuti. Se mancano le tabelle di calendario o l’elenco dei servizi della sede, la risposta è `503 CRM_NON_INSTALLATO`.
 
 ```sh
 curl --get "$BASE_URL/api/crm/ai/slot" \
@@ -64,7 +64,7 @@ Invia l’header `Idempotency-Key` con un identificativo nuovo per ogni tentativ
 | 422 | `CHIAVE_RIUSATA` | La chiave è già associata a un corpo diverso. Usa una nuova chiave se è davvero un altro tentativo. |
 | 422 | `CONTATTO_OBBLIGATORIO` | Il telefono non è utilizzabile. |
 
-Si applicano anche gli errori comuni e gli esiti tecnici della verifica dell’anno attivo descritti per `/slot`. La coppia con fine non successiva all’inizio e una chiave di idempotenza assente o fuori formato danno `400`. Quando la richiesta arriva al riconoscimento della famiglia, si applica la stessa regola dei recapiti di E1, compreso il `500` per le schede ambigue o per un nuovo numero senza spazio.
+Si applicano anche gli errori comuni e gli esiti tecnici della lettura dei servizi della sede descritti per `/slot`. La coppia con fine non successiva all’inizio e una chiave di idempotenza assente o fuori formato danno `400`. Quando la richiesta arriva al riconoscimento della famiglia, si applica la stessa regola dei recapiti di E1, compreso il `500` per le schede ambigue o per un nuovo numero senza spazio.
 
 ```sh
 curl -X POST "$BASE_URL/api/crm/ai/prenota" \
@@ -166,11 +166,23 @@ Le risposte delle sette API escludono nomi di famiglie, bambini e personale, ema
 
 Il middleware riconosce l’indirizzo delle API AI e le passa al controllo della chiave senza usare una sessione web o rinnovare i cookie. Il controllo dell’interruttore, della chiave e del limite viene prima della lettura del corpo. Il registro tecnico `app_log` usa operazione, esito, stato, identificativi tecnici e tempo della richiesta. I rifiuti anonimi del controllo sono registrati al massimo una volta al minuto per istanza. A interruttore spento il rifiuto non scrive nel database. Il wrapper delle API, il limitatore e il trasporto verso il database evitano di registrare URL con query, corpi, header inviati dal client, token, impronte o errori grezzi. Anche un guasto di rete produce una descrizione tecnica e un codice, quando disponibile. Per ritrovare la richiesta si usa l’`x-request-id` generato dal server.
 
+## Servizi offerti dalla sede
+
+Decisione del titolare (13/11/2026). La visita si rifiuta per età (`etaCoperta: false` in `/slot`, `422 ETA_NON_COPERTA` in `/prenota`) solo se la sede non offre il servizio per nessuna delle fasce d’età del bambino. L’elenco dei servizi è fisso, sta nella tabella `crm_servizi_sede` (una riga per sede e servizio) e non dipende da sezioni, posti o anno scolastico:
+
+| Sede | Servizi |
+|---|---|
+| Giugliano | nido, infanzia, primaria |
+| Aversa | nido, infanzia |
+| Cesa | nido, infanzia, primaria |
+| Demo (prove) | nido, infanzia, primaria |
+
+Una sede senza righe non offre nessun servizio: la richiesta passa a una persona. Le fasce d’età sono calcolate dal solo mese di nascita (`src/lib/crm/ai/eta.ts`): nido dai 6 mesi di vita e fino ai 2 anni compiuti entro il 31 dicembre dell’anno di ingresso, infanzia da 3 a 5 anni con l’anticipo per i nati entro aprile, primaria da 6 a 10 anni con lo stesso anticipo. L’assistente può dire la fascia, mai la classe. I valori iniziali li inserisce la migrazione `20261113100000_crm_servizi_sede.sql`; per ora si cambiano con un intervento sul database, non c’è ancora una pagina nelle impostazioni del CRM.
+
 ## Prima di aprire alle sedi vere
 
 Punti noti, rimandati a dopo il collaudo sulla sola Demo.
 
-- **Servizio offerto dalla sede.** La scelta del titolare è che la visita si rifiuti per età solo se la sede non offre proprio quel servizio (nido, infanzia, primaria). Oggi il CRM non ha un dato di sede che lo dica: `posti_autorizzati` e `sections` dipendono dall'anno. `/slot` e `/prenota` leggono quindi le sezioni dell'anno attivo, e una sede che offre il servizio ma non ha ancora aperto le sezioni di quest'anno riceve `etaCoperta: false` o `422 ETA_NON_COPERTA`. Serve un elenco dei servizi per sede (per esempio nelle impostazioni della sede, con le tre sedi vere compilate) oppure la decisione di titolare di accettare le sezioni di qualunque anno come prova che il servizio c'è.
 - **Schede esistenti.** «Registra contatto» (E1) e la prenotazione scrivono su schede già esistenti quando riconoscono la famiglia da telefono o email: salvano un nuovo recapito nel primo campo libero. Da riesaminare con la segreteria prima di aprire alle sedi vere.
 - **Ambiguità.** Due schede con lo stesso numero, o un terzo numero senza campo libero, tornano come errore generico `500 CRM_OPERAZIONE_NON_RIUSCITA`: l'assistente non può distinguere la causa e la verifica spetta alla segreteria.
 - **Blocco in lettura delle disponibilità.** Durante una prenotazione le funzioni SQL bloccano in lettura le disponibilità di tutte le sedi; con più sedi attive e molte richieste insieme può rallentare le prenotazioni delle altre. Da misurare prima di aprire alle tre sedi.

@@ -679,6 +679,9 @@ describe('azzera-anno-nuovo-demo.sql · quello che nasce accogliendo una domanda
       expect(voci).toContain(`lasciata · crm_schede · ${S}`)
       expect(voci).toContain(`lasciata · alunni · ${Y}`)
       expect(voci).toContain(`lasciata · enrollment_submissions · ${D3}`)
+      // O3: le domande tolte non lasciano copia (la scatola nera non le vede): l'esito ne dice gli uuid, non solo il numero
+      expect(voci).toContain(`domanda tolta · ${D}`)
+      expect(voci.filter((v) => v.startsWith('domanda tolta · ')), 'solo quella tolta, non quella trattenuta dal CRM').toEqual([`domanda tolta · ${D}`])
     })
   })
 })

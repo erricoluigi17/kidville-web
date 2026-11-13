@@ -319,7 +319,8 @@ BEGIN
   -- 6c · le voci di pagamento dell'anno nuovo nate dopo la partenza; resta quella con un incasso, una fattura o un movimento collegato
   INSERT INTO _azzera_cand (tabella, id, bloccata)
     SELECT 'pagamenti', g.id,
-           (coalesce(g.importo_pagato, 0) <> 0 OR g.data_incasso IS NOT NULL OR g.fattura_id IS NOT NULL OR coalesce(g.stato, 'da_pagare') <> 'da_pagare')
+           (coalesce(g.importo_pagato, 0) <> 0 OR g.data_incasso IS NOT NULL
+            OR g.fattura_aruba_id IS NOT NULL OR g.fattura_stato IS NOT NULL OR g.fattura_emessa_il IS NOT NULL OR coalesce(g.stato, 'da_pagare') <> 'da_pagare')
       FROM public.pagamenti g
      WHERE g.scuola_id = v_sede AND g.anno_id = v_anno_id AND g.creato_il >= v_dal;
   PERFORM pg_temp.azzera_blocca('pagamenti', ARRAY['pagamenti_quote', 'solleciti', 'fatture_coda'], 'parent_payment_id');

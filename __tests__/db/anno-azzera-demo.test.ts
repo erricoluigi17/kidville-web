@@ -40,8 +40,6 @@ let sezioneVecchia: string
 beforeAll(async () => {
   b = await creaBancoPassaggio({ fino: 'M49b' })
   const q = (sql: string, p: unknown[] = []) => b.db.query(sql, p)
-  // In produzione `alunni.creato_il` c'è; il banco no.
-  await b.db.exec(`ALTER TABLE public.alunni ADD COLUMN IF NOT EXISTS creato_il timestamptz NOT NULL DEFAULT now()`)
   // In produzione la voce punta all'alunno (nessuna azione alla cancellazione): il banco no, e senza la chiave una voce incassata non
   // tratterrebbe il suo alunno. NOT VALID: la chiave vale per le righe nuove, il banco del passaggio ha voci con alunni di prova.
   await b.db.exec(`ALTER TABLE public.pagamenti ADD CONSTRAINT pagamenti_alunno_id_fkey FOREIGN KEY (alunno_id) REFERENCES public.alunni(id) NOT VALID`)

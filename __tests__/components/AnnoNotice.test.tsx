@@ -173,6 +173,15 @@ describe('AnnoNotice', () => {
     const avviso = screen.getByRole('status')
     const blocco = screen.getByText('Stai guardando il 2027/28 (iscrizioni aperte)').closest('div') as HTMLElement
     expect(blocco.parentElement).toBe(avviso)
+    expect(avviso.className.split(/\s+/)).toContain('flex-wrap') // senza, il pulsante non va a capo
+    // Le due aree di tocco sono pulsanti figli diretti dell'avviso, alti min 44px per costruzione: stanno su
+    // righe/colonne proprie e non si sovrappongono (nessuna estensione `after:-inset` che dipende dal font).
+    for (const nome of [/^Perché\?$/, /torna all.anno in corso/i]) {
+      const b = screen.getByRole('button', { name: nome })
+      expect(b.parentElement).toBe(avviso)
+      expect(b.className.split(/\s+/)).toContain('min-h-[44px]')
+      expect(b.className).not.toMatch(/after:|-inset-/)
+    }
     const cls = blocco.className.split(/\s+/)
     expect(cls).toContain('basis-full')
     expect(cls).not.toContain('flex-1') // solo `min-[640px]:flex-1`

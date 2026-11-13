@@ -131,5 +131,8 @@
   "avvisoNotificheDocenteAttivazione": "Turning on…",
   "avvisoNotificheDocenteErroreDefinitivo": "They could not be turned on for this phone.",
   "avvisoNotificheDocenteAggiornaApp": "This version of the app cannot receive notifications: update it from the store and reopen Kidville.",
-  "avvisoNotificheDocenteUsaApp": "Notifications cannot be turned on from a browser: on a computer shared with other people they would reach whoever sits down after you. To receive them, install the Kidville app on your phone and sign in there."
+  "avvisoNotificheDocenteUsaApp": "Notifications cannot be turned on from a browser: on a computer shared with other people they would reach whoever sits down after you. To receive them, install the Kidville app on your phone and sign in there.",
+  "annoInChiusura": "Year that is closing",
+  "annoPassato": "Past year",
+  "soloLetturaAiuto": "View only."
 }

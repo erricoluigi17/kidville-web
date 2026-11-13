@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { SEDE_A, SEDE_B, NOME_SEDE_A, NOME_SEDE_B } from '../fixtures/sedi'
+import itTeacherNav from '../../messages/it/teacherNav.json'
 
 // =============================================================================
 // W3-A — home docente: le chip sono SEZIONI, non stringhe.
@@ -179,5 +180,30 @@ describe('Home docente — chip di sezione con identità', () => {
 
     expect(await screen.findByRole('button', { name: OMONIMA })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: `${OMONIMA} — ${NOME_SEDE_A}` })).toBeNull()
+  })
+})
+
+describe('Home docente — le classi degli anni passati, in sola lettura (L6-1)', () => {
+  const NUOVA = { id: SEC_A, name: 'TEST Infanzia', scuolaId: SEDE_A, scuolaNome: NOME_SEDE_A, school_type: 'infanzia', solaLettura: false, annoEtichetta: '2027/28', annoStato: 'corrente' }
+  const VECCHIA = { id: SEC_B, name: 'TEST Infanzia', scuolaId: SEDE_A, scuolaNome: NOME_SEDE_A, school_type: 'infanzia', solaLettura: true, annoEtichetta: '2026/27', annoStato: 'in_chiusura' }
+
+  it('chiede anche le classi passate e le chip portano l’anno accanto al nome', async () => {
+    h.sezioni = [NUOVA, VECCHIA]
+    render(<TeacherDashboardPage />)
+    expect(await screen.findByRole('button', { name: 'TEST Infanzia · 2027/28' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'TEST Infanzia · 2026/27' })).toBeInTheDocument()
+    expect(chiamateA('/api/educator-sections').every((u) => u.includes('passati=1'))).toBe(true)
+    expect(document.querySelector('[data-sola-lettura]')).toBeNull()
+  })
+
+  it('sulla classe `in_chiusura`: la scritta c’è, e sparisce ciò che scrive (appello, scorciatoie, agenda)', async () => {
+    h.sezioni = [NUOVA, VECCHIA]
+    render(<TeacherDashboardPage />)
+    await screen.findByRole('button', { name: 'TEST Infanzia · 2026/27' })
+    expect(screen.getByText(itTeacherNav.appelloTitolo)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'TEST Infanzia · 2026/27' }))
+    await waitFor(() => expect(document.querySelector('[data-sola-lettura]')).not.toBeNull())
+    expect(document.querySelector('[data-sola-lettura]')?.textContent).toContain(itTeacherNav.annoInChiusura)
+    expect(screen.queryByText(itTeacherNav.appelloTitolo)).toBeNull()
   })
 })

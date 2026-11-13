@@ -229,6 +229,25 @@ describe('fotografa-anno-nuovo-demo.sql · sola lettura', () => {
     })
   })
 
+  it('con due righe in anno_regole la fotografia si ferma come lo script di azzeramento, anche se la sede è in elenco (O-r6-1)', async () => {
+    await inRollback(b.db, async () => {
+      const sql = FOTOGRAFA.replace("'<DEMO>'", `'${SEDE_SIM}'`)
+      const esito = async (savepoint: string) => {
+        await b.db.exec(`SAVEPOINT ${savepoint}`)
+        const r = await b.db.query(sql).then((x) => `righe: ${x.rows.length}`, (e: Error) => e.message)
+        await b.db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`)
+        await b.db.exec(`RELEASE SAVEPOINT ${savepoint}`)
+        return r
+      }
+      expect(await esito('una'), 'una sola riga, sede unica in elenco: passa').toBe('righe: 1')
+      // in produzione il CHECK `anno_regole_una_riga` impedisce la seconda riga: lo si toglie solo qui, dentro il rollback
+      await b.db.query(`ALTER TABLE public.anno_regole DROP CONSTRAINT anno_regole_una_riga`)
+      await b.db.query(`INSERT INTO public.anno_regole (id) VALUES (false)`)
+      await b.db.query(`UPDATE public.anno_regole SET sedi_simulazione = ARRAY[$1]::uuid[]`, [SEDE_SIM])
+      expect(await esito('due')).toMatch(/FOTOGRAFIA_SEDE_NON_DI_PROVA/)
+    })
+  })
+
   it('una sede che non comincia per e2e00000 e non è in elenco: la fotografia si ferma con FOTOGRAFIA_SEDE_NON_DI_PROVA e non restituisce righe (O-r5-1)', async () => {
     await inRollback(b.db, async () => {
       await b.db.exec('SAVEPOINT vera')

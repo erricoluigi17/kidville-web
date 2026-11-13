@@ -35,8 +35,9 @@ SELECT
   -- (Una SELECT non ha RAISE: l'errore è il cast di quel testo a boolean, e il codice sta nel messaggio. Il testo viene da una sottoquery per non
   -- farlo valutare al planner anche quando la sede è di prova.)
   CASE WHEN ((SELECT id::text FROM sede) LIKE 'e2e00000%'
-    OR EXISTS (SELECT 1 FROM public.anno_regole g
-                WHERE cardinality(g.sedi_simulazione) = 1 AND g.sedi_simulazione[1] = (SELECT id FROM sede))) THEN true
+    OR ((SELECT count(*) FROM public.anno_regole) = 1  -- la stessa regola dello script di azzeramento: UNA sola riga in anno_regole
+        AND EXISTS (SELECT 1 FROM public.anno_regole g
+                     WHERE cardinality(g.sedi_simulazione) = 1 AND g.sedi_simulazione[1] = (SELECT id FROM sede)))) THEN true
     ELSE (SELECT 'FOTOGRAFIA_SEDE_NON_DI_PROVA: la sede non comincia per e2e00000 e non è l''unica in anno_regole.sedi_simulazione; la fotografia è solo per la Demo' FROM sede)::boolean
   END AS sede_di_prova,
   (SELECT count(*) FROM candidati) AS anni_candidati,

@@ -127,14 +127,40 @@ describe('AnnoNotice', () => {
     expect(cls.some((c) => /truncate|line-clamp|overflow-hidden/.test(c))).toBe(false)
   })
 
-  it('non si può chiudere: l\'unico pulsante è «Torna all\'anno in corso»', () => {
+  it('non si può chiudere: i soli pulsanti sono «Torna all\'anno in corso» e «Perché?» (che apre un testo, non chiude l\'avviso)', () => {
     monta()
     fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))
     const avviso = screen.getByRole('status')
     const pulsanti = Array.from(avviso.querySelectorAll('button'))
-    expect(pulsanti).toHaveLength(1)
-    expect(pulsanti[0]).toHaveTextContent(/torna all.anno in corso/i)
+    expect(pulsanti.map((b) => b.textContent)).toEqual(['Perché?', 'Torna all’anno in corso'])
     expect(screen.queryByRole('button', { name: /chiudi|nascondi|ok/i })).toBeNull()
+  })
+
+  it('schermo stretto: la riga corta dice anno e stato, il testo lungo sta dietro «Perché?» e si apre e si chiude', () => {
+    monta()
+    fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))
+    const avviso = screen.getByRole('status')
+    // La versione corta c'è e, per CSS, è l'unica visibile sotto i 640px; quella lunga è `hidden` fino a 640px.
+    const corta = screen.getByText('Stai guardando il 2027/28 (iscrizioni aperte)')
+    expect(corta.className).toContain('min-[640px]:hidden')
+    const lunga = screen.getByText(/^Stai lavorando sul 2027\/28/)
+    expect(lunga.className).toContain('hidden')
+    expect(lunga.className).toContain('min-[640px]:inline')
+
+    const perche = screen.getByRole('button', { name: 'Perché?' })
+    expect(perche.className).toContain('min-[640px]:hidden')
+    expect(perche).toHaveAttribute('aria-expanded', 'false')
+    expect(avviso.querySelectorAll('#kv-anno-avviso-perche')).toHaveLength(0)
+
+    fireEvent.click(perche)
+    expect(perche).toHaveAttribute('aria-expanded', 'true')
+    expect(avviso.querySelector('#kv-anno-avviso-perche')).toHaveTextContent(/le nuove classi, le votazioni/)
+
+    fireEvent.click(perche)
+    expect(perche).toHaveAttribute('aria-expanded', 'false')
+    expect(avviso.querySelectorAll('#kv-anno-avviso-perche')).toHaveLength(0)
+    // «Torna» resta sempre al suo posto, aperto o chiuso il «Perché?»
+    expect(screen.getByRole('button', { name: /torna all.anno in corso/i })).toBeInTheDocument()
   })
 
   it('«Torna all\'anno in corso» toglie l\'avviso e cancella il cookie', () => {

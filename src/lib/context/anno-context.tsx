@@ -275,6 +275,7 @@ export function AnnoNotice() {
   const visibile = useVedeAnno();
   const t = useTranslations('shared');
   const testoStato = useTestoStatoAnno();
+  const [perche, setPerche] = useState(false);
   if (!ctx || !visibile || !ctx.effettivo) return null;
   const { effettivo } = ctx;
   // PR 4.9: l'anno che si sta guardando è `in_chiusura` o `chiuso` (anche se è l'anno attivo): una riga fissa, in flusso, che lo dice.
@@ -294,9 +295,30 @@ export function AnnoNotice() {
     <div
       role="status"
       data-kv-anno-avviso
-      className="sticky top-[var(--kv-appbar-h)] z-30 flex flex-wrap tablet:top-16 items-center justify-between gap-3 border-b border-kidville-line bg-kidville-yellow-soft px-4 py-2.5 font-maven text-[14px] text-kidville-ink"
+      className="sticky top-[var(--kv-appbar-h)] z-30 flex flex-wrap tablet:top-16 items-center justify-between gap-x-3 gap-y-1 border-b border-kidville-line bg-kidville-yellow-soft px-4 py-2 font-maven text-[14px] text-kidville-ink min-[640px]:py-2.5"
     >
-      <p>{t('annoAvvisoTesto', { anno: effettivo.etichettaBreve, stato })}</p>
+      {/* Sotto i 640px (telefono) una riga sola: l'anno guardato, il suo stato e il pulsante per tornare;
+          il testo lungo sta dietro «Perché?». Da 640px in su l'avviso è quello intero di sempre. */}
+      <div className="min-w-0 flex-1">
+        <p>
+          <span className="min-[640px]:hidden">{t('annoAvvisoBreve', { anno: effettivo.etichettaBreve, stato })}</span>
+          <span className="hidden min-[640px]:inline">{t('annoAvvisoTesto', { anno: effettivo.etichettaBreve, stato })}</span>
+          <button
+            type="button"
+            onClick={() => setPerche((v) => !v)}
+            aria-expanded={perche}
+            aria-controls="kv-anno-avviso-perche"
+            className="relative ml-2 font-bold underline min-[640px]:hidden after:absolute after:-inset-x-2 after:-inset-y-3 after:content-['']"
+          >
+            {t('annoAvvisoPerche')}
+          </button>
+        </p>
+        {perche && (
+          <p id="kv-anno-avviso-perche" className="mt-1 text-[13px] min-[640px]:hidden">
+            {t('annoAvvisoTesto', { anno: effettivo.etichettaBreve, stato })}
+          </p>
+        )}
+      </div>
       <button
         type="button"
         onClick={ctx.usaAttivo}

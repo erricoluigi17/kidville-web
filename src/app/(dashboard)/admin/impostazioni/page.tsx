@@ -181,7 +181,7 @@ function Inner() {
                                         key={v.id}
                                         onClick={() => vai(v.id)}
                                         aria-pressed={sezione === v.id}
-                                        className={`font-maven inline-flex items-center gap-1.5 rounded-pill px-3 py-2 text-sm whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-kidville-green focus-visible:ring-offset-1 ${
+                                        className={`font-maven inline-flex min-h-[44px] items-center gap-1.5 rounded-pill px-3 py-2 text-sm whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-kidville-green focus-visible:ring-offset-1 ${
                                             sezione === v.id
                                                 ? 'bg-kidville-green text-kidville-yellow'
                                                 : 'bg-kidville-white text-kidville-ink/70 ring-[1.5px] ring-inset ring-kidville-line hover:text-kidville-green hover:ring-kidville-green/50'

@@ -1,3 +1,10 @@
+## 🔎 Changelog — Collaudo dell'anno scolastico dall'interfaccia, lotto 2 — 2026-11-13 (ramo `claude/anno-agente1-lotto2`, sopra il lotto 1)
+
+- **D1 — l'avviso fisso dell'anno non in corso occupava ~155 pt su 844 a 390 di larghezza.** Sotto i 640px diventa una riga sola («Stai lavorando sul 2027/28 · in preparazione») con «Perché?» (apre il testo lungo) e «Torna all'anno in corso»; sopra i 640px resta com'era. Chiavi nuove `annoAvvisoBreve` e `annoAvvisoPerche` (it/en, `shared.json`). Test: `AnnoNotice.test.tsx` (riga stretta e toggle).
+- **Schede di Impostazioni in una riga che scorre (telefono): area di tocco 36px → 44px** (`min-h-[44px]`), il dito ne sbagliava una vicina. Lock: `__tests__/architecture/impostazioni-schede-area-di-tocco.test.ts`.
+
+Nessun log da aggiungere (solo interfaccia). Nessuna migrazione.
+
 ## 🔎 Changelog — Collaudo dell'anno scolastico dall'interfaccia, lotto 1 — 2026-11-13 (ramo `claude/anno-agente1-b963c0`, sopra `631c9fac`)
 
 Primo giro in sola lettura sulla Demo (Chrome 1280 e 390, iPhone 16e), due difetti corretti:

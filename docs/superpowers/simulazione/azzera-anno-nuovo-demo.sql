@@ -27,7 +27,14 @@
 -- │  il ripristino non le ritocca: le rimette questo file, DOPO il ripristino (quando l'anno di    │
 -- │  partenza è di nuovo corrente), e lo specchio riallinea la scheda dell'alunno. Un «no» scritto │
 -- │  PRIMA della partenza resta. E rimette lo stato dell'anno nuovo, le «domande aperte», il listino, i     │
--- │  moduli richiesti e i posti autorizzati, riga per riga (con gli stessi uuid).                  │
+-- │  moduli richiesti e i posti autorizzati, riga per riga (con gli stessi uuid), e le QUATTRO DATE │
+-- │  dei due anni (inizio, fine, ultimo giorno aperto, «prepara il successivo dal»): un confine    │
+-- │  spostato nel collaudo con `sposta_confine_anno` torna dov'era.                                │
+-- │                                                                                                │
+-- │  Una sezione o una voce a cui è attaccato qualcosa anche al SECONDO livello (una valutazione    │
+-- │  sulla materia, un incasso sulla quota, il menù della mensa) RESTA e si elenca: toglierla       │
+-- │  farebbe fallire il lavoro o scollegherebbe quella riga in silenzio. Le domande tolte si        │
+-- │  elencano per uuid nell'esito (non hanno copia nella scatola nera).                            │
 -- │                                                                                                │
 -- │  CHE COSA NON TOCCA MAI:                                                                       │
 -- │    · una riga nata prima della partenza (salvo la configurazione sopra, che torna com'era);    │
@@ -38,6 +45,9 @@
 -- ⚠️ LO ESEGUE IL TITOLARE DALL'EDITOR SQL DI SUPABASE, MAI L'AGENTE: il freno `.claude/hooks/supabase_sql_freno.py` nega queste
 -- istruzioni (DELETE, UPDATE), giustamente. Il file è provato sul banco di prova automatico (PGlite, mai su Demo né su produzione):
 -- `__tests__/db/anno-azzera-demo.test.ts`. NON è stato eseguito sull'editor di Supabase: vedi il manuale `anno-intero-demo.md`.
+--
+-- PROVA A SECCO. La prima volta (e ogni volta che c'è un dubbio) lo stesso file si invia con `ROLLBACK;` al posto di `COMMIT;`: fa tutto,
+-- mostra la tabella finale (che cosa avrebbe tolto, rimesso, lasciato) e poi annulla ogni cosa.
 --
 -- COME SI USA. Si compila in due punti (cerca «DA COMPILARE»: la sede e la fotografia; la PARTENZA la dà la fotografia, `scattata_il`), si invia TUTTO in una volta sola: BEGIN, la funzione di appoggio, il
 -- blocco DO e COMMIT stanno nella STESSA richiesta. Il blocco si ferma da solo con un errore `AZZERA_…`: la richiesta si interrompe lì,

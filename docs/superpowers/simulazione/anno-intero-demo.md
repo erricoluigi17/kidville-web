@@ -188,7 +188,12 @@ secondo dopo il primo; l'utente inesperto che parte da zero), si usano due file 
   si ferma con `AZZERA_PRIMA_IL_RIPRISTINO`). Si compilano due punti: l'uuid di Demo al posto di `<DEMO>` e la
   fotografia al posto di `<FOTOGRAFIA>` (dentro `$foto$ … $foto$`). Si invia **tutto in una volta**; il `COMMIT` è già nel file.
 
-**Ordine.** fotografia → collaudo → `ripristino-demo.sql` → `azzera-anno-nuovo-demo.sql` → (se serve) collaudo successivo. La fotografia si rifà solo se
+**Prova a secco (sempre il primo passo).** Prima dell'uso vero, il titolare invia lo stesso file con `ROLLBACK;` al posto di `COMMIT;` (l'ultima
+riga prima della tabella finale), subito dopo aver scattato la fotografia: lo script gira per intero sul database vero, mostra la tabella finale e
+poi annulla tutto. Alla prima esecuzione, subito dopo la fotografia, non c'è ancora niente di nato dopo la partenza: la tabella deve dire tutti
+zeri e nessuna riga lasciata, ed è la prova che il file è accettato dall'editor e che ogni colonna esiste davvero.
+
+**Ordine.** fotografia → (prova a secco) → collaudo → `ripristino-demo.sql` → `azzera-anno-nuovo-demo.sql` → (se serve) collaudo successivo. La fotografia si rifà solo se
 l'anno nuovo viene preparato di nuovo a mano; per il collaudo successivo vale la stessa.
 
 **Che cosa fa.** Solo nella Demo e solo righe nate dopo la partenza: toglie le frequenze dell'anno nuovo (con le spunte), le voci di pagamento, le
@@ -208,8 +213,19 @@ dice, per tabella, quante righe sono state tolte, rimesse, lasciate, poi gli uui
 | `AZZERA_PRIMA_IL_RIPRISTINO` | l'anno nuovo è già `corrente`, oppure restano passaggi dopo la partenza |
 | `AZZERA_FREQUENZA_SPARITA` | una frequenza dell'anno di partenza della fotografia non esiste più: non si può rimetterla, si ferma tutto |
 | `AZZERA_ANNI_NATI_USATI` | a un anno nato nel collaudo punta ancora altro, di **qualunque** tabella (sezioni, frequenze, domande, voci di pagamento, presenze, valutazioni…): il messaggio dice i conteggi per tabella, non si tocca niente. Cosa fare: guardare quelle righe (sono dati del collaudo datati nell'anno nato col viaggio nel tempo) e toglierle a mano, poi rilanciare |
-| `AZZERA_FOTOGRAFIA` | la fotografia è della versione 1 o non ha `scattata_il` (si rifà con `fotografa-anno-nuovo-demo.sql`), non ha la forma attesa, è di un altro anno, o contiene righe di un altro anno |
+| `AZZERA_FOTOGRAFIA` | la fotografia è della versione 1 o non ha `scattata_il` (si rifà con `fotografa-anno-nuovo-demo.sql`), non ha la forma attesa (anche le quattro date dei due anni), è di un altro anno, o contiene righe di un altro anno |
 | `AZZERA_CONTEGGI` | dopo il lavoro restano righe nate dopo la partenza che non sono tra le «lasciate», o la configurazione non coincide con la fotografia |
+
+**Le domande tolte.** Non hanno copia nella scatola nera: l'esito elenca una riga `domanda tolta · <uuid>` per ognuna, oltre al numero.
+
+**Le dipendenze di secondo livello.** Una sezione la cui materia ha ancora una valutazione, un registro o uno scrutinio attaccato, o a cui è
+assegnato un menù della mensa, **resta** ed è elencata; lo stesso una voce di pagamento con una quota a cui punta un incasso. Il motivo: togliere
+la riga farebbe fallire il lavoro con un errore di chiave esterna, oppure scollegherebbe l'altra riga senza dirlo.
+
+**Le date degli anni.** La fotografia contiene `inizio`, `fine`, `ultimo_giorno_aperto` e `prepara_successivo_dal` dell'anno nuovo e dell'anno
+di partenza; lo script le rimette (con un solo aggiornamento, perché i vincoli di continuità si giudicano sul risultato). Se il collaudo ha
+spostato un confine fra i due anni, torna dov'era. Non riporta indietro le date delle righe che il confine spostato aveva trascinato con sé
+(frequenze, voci): quelle le guarda il titolare se il collaudo ha usato `sposta_confine_anno`.
 
 **Quello che nasce accogliendo una domanda.** Accogliere una domanda dall'app crea più di un alunno: i legami con i genitori
 (`legame_genitori_alunni`, `student_parents`) e l'invito con le credenziali (`iscrizioni_inviti_credenziali`). Questi **vanno via** insieme
@@ -222,6 +238,8 @@ senza più la frequenza nuova.
 **Che cosa non rimette.** Le spunte dei moduli di frequenze nate prima della partenza se un modulo è stato cambiato; i genitori creati accogliendo una
 domanda (restano, e il loro alunno con loro).
 
-**Provato e no.** `__tests__/db/anno-azzera-demo.test.ts` (PGlite, stessa esecuzione multi-istruzione): un caso per codice più il caso principale, con
+**Provato e no.** Il banco di prova ha le colonne della produzione per ogni tabella che lo script nomina, e `__tests__/db/anno-azzera-colonne.test.ts`
+confronta ogni colonna dello script con una fotografia delle colonne di produzione (si rigenera con `__tests__/fixtures/colonne-azzera-fotografia.mjs`).
+`__tests__/db/anno-azzera-demo.test.ts` (PGlite, stessa esecuzione multi-istruzione): un caso per codice più il caso principale, con
 l'impronta md5 delle righe di prima e delle altre sedi. **Mai eseguito dall'editor SQL di Supabase**: alla prima esecuzione si guarda che
 `BEGIN; CREATE FUNCTION; DO; DROP FUNCTION; COMMIT;` in un invio solo si comporti come sul banco.

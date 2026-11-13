@@ -883,8 +883,11 @@ describe('azzera-anno-nuovo-demo.sql · le date degli anni (O7)', () => {
       // il collaudo sposta l'INGRESSO di una frequenza della fotografia nei giorni allungati: il 6i non lo rimette
       const x = await frequenzaVecchia(AL.a)
       await b.db.query(`UPDATE public.frequenze SET data_ingresso = (SELECT fine - 2 FROM public.anni_sede WHERE id = $1) WHERE id = $2`, [annoVecchio, x])
+      // il file dentro un SAVEPOINT (non il suo BEGIN/COMMIT): se lo script riuscisse, il suo COMMIT non chiude la transazione del test
       await b.db.exec('SAVEPOINT ing')
-      await expect(b.db.exec(compila({ sede: DEMO, foto: f.fotografia! }))).rejects.toThrow(/AZZERA_CONFINE_CON_RIGHE[\s\S]*"frequenze": 1/)
+      let errore = ''
+      await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! }), 'azz_ing')).catch((e: Error) => { errore = e.message })
+      expect(errore).toMatch(/AZZERA_CONFINE_CON_RIGHE[\s\S]*"frequenze": 1[,}]/)
       await b.db.exec('ROLLBACK TO SAVEPOINT ing')
       await b.db.exec('RELEASE SAVEPOINT ing')
     })
@@ -899,8 +902,11 @@ describe('azzera-anno-nuovo-demo.sql · le date degli anni (O7)', () => {
       // una frequenza della fotografia punta a lei con continua_da: il 6a-bis la lascia, e il suo ingresso cade nei giorni allungati
       await b.db.query(`UPDATE public.frequenze SET continua_da = $2 WHERE id = $1`, [await frequenzaVecchia(AL.b), nata])
       await b.db.query(`UPDATE public.frequenze SET data_ingresso = (SELECT fine - 2 FROM public.anni_sede WHERE id = $1) WHERE id = $2`, [annoVecchio, nata])
+      // il file dentro un SAVEPOINT (non il suo BEGIN/COMMIT): se lo script riuscisse, il suo COMMIT non chiude la transazione del test
       await b.db.exec('SAVEPOINT ing2')
-      await expect(b.db.exec(compila({ sede: DEMO, foto: f.fotografia! }))).rejects.toThrow(/AZZERA_CONFINE_CON_RIGHE[\s\S]*"frequenze": 1/)
+      let errore = ''
+      await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! }), 'azz_ing2')).catch((e: Error) => { errore = e.message })
+      expect(errore).toMatch(/AZZERA_CONFINE_CON_RIGHE[\s\S]*"frequenze": 1[,}]/)
       await b.db.exec('ROLLBACK TO SAVEPOINT ing2')
       await b.db.exec('RELEASE SAVEPOINT ing2')
     })

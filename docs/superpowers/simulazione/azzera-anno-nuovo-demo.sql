@@ -363,7 +363,7 @@ BEGIN
   -- Queste due vivono quanto la sessione dell'editor (come `_sede_ripristinata`): servono alle letture dopo il COMMIT. Non le legge
   -- nessun DELETE/UPDATE.
   DROP TABLE IF EXISTS pg_temp._azzera_esito;
-  CREATE TEMP TABLE pg_temp._azzera_esito (ordine serial, voce text NOT NULL, tolte integer NOT NULL DEFAULT 0, rimesse integer NOT NULL DEFAULT 0, lasciate integer NOT NULL DEFAULT 0);
+  CREATE TEMP TABLE pg_temp._azzera_esito (ordine serial, gruppo integer NOT NULL DEFAULT 0, voce text NOT NULL, tolte integer NOT NULL DEFAULT 0, rimesse integer NOT NULL DEFAULT 0, lasciate integer NOT NULL DEFAULT 0);
   DROP TABLE IF EXISTS pg_temp._azzera_lasciate;
   CREATE TEMP TABLE pg_temp._azzera_lasciate (tabella text NOT NULL, id uuid NOT NULL);
 
@@ -427,8 +427,9 @@ BEGIN
        AND NOT EXISTS (SELECT 1 FROM pg_temp._azzera_lasciate la WHERE la.tabella = 'utenti' AND la.id = u.id);
   -- Le domande non hanno copia nella scatola nera: se una famiglia VERA avesse scritto con un link della Demo, la sua domanda sparirebbe senza
   -- traccia. L'esito ne elenca gli uuid, non solo il numero (la scrittura vera la fa il DELETE qui sotto). Le righe per uuid hanno tolte = 0: il totale è nella riga «domande del modulo pubblico».
-  INSERT INTO pg_temp._azzera_esito (voce, tolte)
-    SELECT 'domanda tolta · ' || k.id::text, 0 FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata ORDER BY k.id;
+  -- gruppo 1: in fondo, dopo tutti i conteggi (gruppo 0), qualunque sia il numero delle domande.
+  INSERT INTO pg_temp._azzera_esito (gruppo, voce, tolte)
+    SELECT 1, 'domanda tolta · ' || k.id::text, 0 FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata ORDER BY k.id;
   DELETE FROM public.iscrizioni_inviti_credenziali ic WHERE ic.submission_id IN (SELECT k.id FROM pg_temp._azzera_cand k WHERE k.tabella = 'enrollment_submissions' AND NOT k.bloccata);
   GET DIAGNOSTICS v_tolte = ROW_COUNT;
   INSERT INTO pg_temp._azzera_esito (voce, tolte) VALUES ('inviti con le credenziali tolti con le domande (senza copia: contengono l''email)', v_tolte);
@@ -764,12 +765,16 @@ BEGIN
 
   -- ── 10 · La PROVA A SECCO: il messaggio di un'eccezione è l'unica cosa che l'editor mostra di sicuro, e l'eccezione annulla tutto ──
   IF c_prova_a_secco THEN
-    SELECT string_agg(riga, E'\n' ORDER BY ord) INTO v_msg FROM (
-      SELECT zx.ordine AS ord, zx.voce || ' · tolte ' || zx.tolte || ' · rimesse ' || zx.rimesse || ' · lasciate ' || zx.lasciate AS riga FROM pg_temp._azzera_esito zx
+    -- Ordine: prima i conteggi per voce, poi gli uuid delle domande tolte (solo l'uuid), poi le lasciate, poi le invarianti: con molte domande i numeri
+    -- che contano restano in cima. Due chiavi (gruppo, progressivo), così nessun progressivo si mescola con quello di un altro gruppo.
+    SELECT string_agg(riga, E'\n' ORDER BY grp, ord) INTO v_msg FROM (
+      SELECT zx.gruppo AS grp, zx.ordine AS ord,
+             CASE WHEN zx.gruppo = 1 THEN zx.voce ELSE zx.voce || ' · tolte ' || zx.tolte || ' · rimesse ' || zx.rimesse || ' · lasciate ' || zx.lasciate END AS riga
+        FROM pg_temp._azzera_esito zx
       UNION ALL
-      SELECT 1000 + row_number() OVER (ORDER BY zl.tabella, zl.id), 'lasciata · ' || zl.tabella || ' · ' || zl.id::text FROM pg_temp._azzera_lasciate zl
+      SELECT 2, row_number() OVER (ORDER BY zl.tabella, zl.id), 'lasciata · ' || zl.tabella || ' · ' || zl.id::text FROM pg_temp._azzera_lasciate zl
       UNION ALL
-      SELECT 2000 + row_number() OVER (ORDER BY zi.invariante), 'invariante ' || zi.invariante || ' · ' || zi.tabella || ' · righe ' || zi.righe
+      SELECT 3, row_number() OVER (ORDER BY zi.invariante), 'invariante ' || zi.invariante || ' · ' || zi.tabella || ' · righe ' || zi.righe
         FROM public.anno_invarianti() zi WHERE zi.righe <> 0) zt;
     RAISE EXCEPTION E'AZZERA_PROVA_A_SECCO: prova a secco, non è stato scritto niente. Per scrivere davvero metti c_prova_a_secco a false.\n%', coalesce(v_msg, '(niente da fare)');
   END IF;
@@ -784,12 +789,12 @@ COMMIT;
 
 -- ── Ciò che l'editor mostra (solo lettura, dopo il COMMIT): i conteggi per tabella, le righe lasciate per uuid, le invarianti ──
 SELECT voce, tolte::text AS tolte, rimesse::text AS rimesse, lasciate::text AS lasciate
-  FROM (SELECT ordine, voce, tolte, rimesse, lasciate FROM pg_temp._azzera_esito
+  FROM (SELECT gruppo, ordine, voce, tolte, rimesse, lasciate FROM pg_temp._azzera_esito
         UNION ALL
-        SELECT 1000 + row_number() OVER (ORDER BY tabella, id)::integer, 'lasciata · ' || tabella || ' · ' || id::text, 0, 0, 1 FROM pg_temp._azzera_lasciate
+        SELECT 2, row_number() OVER (ORDER BY tabella, id)::integer, 'lasciata · ' || tabella || ' · ' || id::text, 0, 0, 1 FROM pg_temp._azzera_lasciate
         UNION ALL
-        SELECT 2000, 'invarianti non a zero', 0, 0, count(*)::integer FROM public.anno_invarianti() WHERE righe <> 0
+        SELECT 3, 0, 'invarianti non a zero', 0, 0, count(*)::integer FROM public.anno_invarianti() WHERE righe <> 0
         UNION ALL
-        SELECT 2001 + row_number() OVER (ORDER BY i.invariante)::integer, 'invariante ' || i.invariante || ' · ' || i.tabella, 0, 0, i.righe::integer
+        SELECT 3, row_number() OVER (ORDER BY i.invariante)::integer, 'invariante ' || i.invariante || ' · ' || i.tabella, 0, 0, i.righe::integer
           FROM public.anno_invarianti() i WHERE i.righe <> 0) t
- ORDER BY ordine;
+ ORDER BY gruppo, ordine;

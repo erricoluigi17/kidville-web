@@ -910,6 +910,22 @@ describe('azzera-anno-nuovo-demo.sql · la prova a secco (B-n1)', () => {
     })
   })
 
+  it('nel messaggio prima i conteggi, poi gli uuid delle domande tolte, che portano solo l’uuid; l’ordine regge anche con più di mille domande (O-n8)', async () => {
+    await inRollback(b.db, async () => {
+      const f = await fotografa()
+      await b.db.query(
+        `INSERT INTO public.enrollment_submissions (scuola_id, anno_id, data, status) SELECT $1, $2, '{}'::jsonb, 'pending' FROM generate_series(1, 1010)`,
+        [DEMO, annoNuovoId])
+      const righe = (await messaggio(compila({ sede: DEMO, foto: f.fotografia!, prova: true }))).split('\n')
+      const uuid = righe.map((r, i) => (r.startsWith('domanda tolta · ') ? i : -1)).filter((i) => i >= 0)
+      const conteggi = righe.map((r, i) => (/ · tolte \d+ · rimesse \d+ · lasciate \d+$/.test(r) ? i : -1)).filter((i) => i >= 0)
+      expect(uuid.length, 'tutte le domande').toBe(1010)
+      expect(Math.max(...conteggi), 'tutti i conteggi stanno prima del primo uuid').toBeLessThan(Math.min(...uuid))
+      expect(righe[uuid[0]], 'la riga dell’uuid porta solo l’uuid').toMatch(/^domanda tolta · [0-9a-f-]{36}$/)
+      expect(conteggi.length, 'i conteggi ci sono tutti').toBeGreaterThan(10)
+    })
+  })
+
   it('dopo un’esecuzione vera, una prova nella stessa connessione non mostra l’esito vecchio', async () => {
     await inRollback(b.db, async () => {
       const f = await fotografa()

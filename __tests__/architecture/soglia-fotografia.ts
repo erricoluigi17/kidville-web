@@ -441,9 +441,9 @@ export function posterioriCheContengono(
 // esterne verso `utenti` grida a ogni vincolo toccato. Nessuna chiave esterna cambia: le 83 restano com'erano. Dopo il merge cambia solo la fotografia
 // delle migrazioni, che la PR-B rigenera dalla produzione. (`20261112181553_anno_stati_automatici.sql` NON è dichiarata: un CONSTRAINT TRIGGER non è un
 // `ADD CONSTRAINT` e nessuna guardia la vede.)
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20261112181554_anno_passaggio_da_fare.sql': 'PR 4.9: nuovo codice `passaggio` nei CHECK dei gettoni (DROP/ADD CONSTRAINT), nessuna FK cambiata; la applica l\'integrazione al merge e la voce si toglie nella PR-B',
-}
+// SVUOTATA il 2026-11-13 nella PR-B della 4.9 (#308, `631c9fac`): `20261112181554` e' applicata in produzione, la fotografia delle migrazioni la contiene
+// (277) e la voce si e' tolta, come chiedeva il lock «nessuna chiave e' gia' applicata».
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

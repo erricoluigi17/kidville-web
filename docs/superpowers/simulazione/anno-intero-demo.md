@@ -1,7 +1,7 @@
 # Simulare l'anno intero in Demo (PR 4.9)
 
-> **Da fare SOLO dopo il merge della PR 4.9.** Le migrazioni M49a e M49b le applica l'integrazione al merge: prima, in Demo non c'è
-> niente da simulare. Questo manuale lo segue la chat principale insieme al titolare; l'agente di una sessione parallela non lo esegue.
+> **La PR 4.9 è in produzione** (le migrazioni M49a e M49b le ha applicate l'integrazione al merge): la simulazione si può fare. Questo
+> manuale lo segue la chat principale insieme al titolare; l'agente di una sessione parallela non lo esegue.
 > I comandi che scrivono (il tick, il passaggio, il ripristino) li lancia il titolare dall'editor SQL: il freno nega `anno_regole`,
 > `DELETE` e `UPDATE` all'agente, giustamente.
 
@@ -175,3 +175,85 @@ dopo una conferma vera. **Non è mai stato eseguito dall'editor SQL di Supabase*
 
 Un file `docs/collaudo/risultati/simulazione-anno-intero-AAAA-MM-GG.md` (non va in git): per ogni passo, lo stato letto, il codice
 d'errore se c'è stato un rifiuto, il contatore delle osservazioni, le invarianti, e se la schermata ha detto ciò che doveva. Conteggi e codici, mai nomi.
+
+## Azzerare l'anno nuovo
+
+`ripristino-demo.sql` rimette gli **stati** degli anni e toglie gettoni, passaggi e cronologia, ma lascia frequenze, voci di pagamento, sezioni,
+domande, listino, moduli e posti dell'anno nuovo. Quando un agente di collaudo deve trovare il 2027/28 della Demo **come appena nato** (il
+secondo dopo il primo; l'utente inesperto che parte da zero), si usano due file in più:
+
+- `fotografa-anno-nuovo-demo.sql`: **sola lettura**, si esegue **prima** dei collaudi. Restituisce `sede_di_prova` (dice sempre `true`: su una sede che non è di prova la query si ferma con `FOTOGRAFIA_SEDE_NON_DI_PROVA` e non esce niente), `anni_candidati`
+  (deve dire `1`) e la `fotografia`, un testo JSON da copiare. L'istante dello scatto sta dentro la fotografia (`scattata_il`, versione 2): è la partenza, non va annotato né scritto.
+- `azzera-anno-nuovo-demo.sql`: lo esegue il titolare **dopo** il ripristino (mai prima: se l'anno nuovo è ancora `corrente`, o restano passaggi,
+  si ferma con `AZZERA_PRIMA_IL_RIPRISTINO`). Si compilano due punti (l'interruttore è un terzo gesto: vedi sotto): l'uuid di Demo al posto di `<DEMO>` e la
+  fotografia al posto di `<FOTOGRAFIA>` (dentro `$foto$ … $foto$`). Si invia **tutto in una volta**; il `COMMIT` è già nel file.
+
+**Prova a secco (sempre il primo passo).** Nel file c'è un interruttore, `c_prova_a_secco`, **acceso per difetto**. Con l'interruttore acceso il file
+fa tutto e poi si ferma con l'errore `AZZERA_PROVA_A_SECCO`: nel **messaggio** dell'errore c'è il riassunto (una voce per riga: quante righe avrebbe
+tolto, rimesso, lasciato; gli uuid delle domande che toglierebbe; gli uuid delle righe lasciate; le invarianti non a zero). L'errore annulla ogni cosa,
+quindi non cambia niente, e il `COMMIT;` in fondo non viene raggiunto (se l'editor lo invia lo stesso, è un `ROLLBACK`). Per scrivere davvero si
+mette `false`: un gesto in più, nel verso giusto. **Che cosa dimostra:** che il file è accettato dall'editor, che la sede e la fotografia sono
+quelle giuste e che ogni colonna nominata esiste. I vincoli differiti di `anni_sede` (continuità del calendario, sovrapposizioni) li giudica la prova stessa, perché lo script esegue `SET CONSTRAINTS ALL IMMEDIATE` prima dei conti finali: non si scoprono al `COMMIT` dell'esecuzione vera. **Che cosa non dimostra:** subito dopo la fotografia non c'è ancora niente di nato dopo la
+partenza, quindi il riassunto è fatto di zeri e il passo che toglie gli anni nati nel collaudo non gira. Quello si vede solo rifacendo la prova
+**dopo** un collaudo, prima di spegnere l'interruttore.
+
+**Ordine.** fotografia → prova a secco → collaudo → `ripristino-demo.sql` → prova a secco di nuovo (ora vede davvero che cosa c'è da togliere) → `azzera-anno-nuovo-demo.sql` con `c_prova_a_secco := false` → (se serve) collaudo successivo. Dopo una prova la sessione resta in una transazione abortita: se l'editor riusa la connessione, il primo invio vero si ferma su `BEGIN` con «current transaction is aborted». Prima di rilanciare si invia da solo `ROLLBACK;`, oppure si apre una scheda nuova dell'editor. E la `SELECT` finale lanciata a parte dopo una prova può mostrare l'esito di un'esecuzione vecchia, non quello della prova: l'esito della prova è nel messaggio dell'errore. La fotografia si rifà solo se
+l'anno nuovo viene preparato di nuovo a mano; per il collaudo successivo vale la stessa.
+
+**Che cosa fa.** Solo nella Demo e solo righe nate dopo la partenza: toglie le frequenze dell'anno nuovo (con le spunte), le voci di pagamento, le
+domande del modulo pubblico, gli alunni nati dopo la partenza, le sezioni dell'anno nuovo con le loro copie; **rimette le frequenze dell'anno corrente com'erano nella fotografia** (stato, data di uscita e «no»: la conferma del passaggio fa uscire chi non ha risposto e chi ha detto «no», e il ripristino non le ritocca; un «no» scritto prima della partenza resta), e la scheda dell'alunno si riallinea da sola;
+toglie gli **anni nati durante il collaudo** (con il viaggio nel tempo il tick fa nascere il 2028/29: senza questo passo il selettore ne mostrerebbe tre); rimette stato, domande aperte, listino, moduli e posti **come nella fotografia, con gli stessi uuid**. Ciò che ha un legame **resta e si elenca per
+uuid** (una voce con incasso, fattura o movimento; un alunno con righe altrove; una sezione ancora usata): le decide il titolare. L'ultima tabella
+dice, per tabella, quante righe sono state tolte, rimesse, lasciate, poi gli uuid delle lasciate e le invarianti non a zero.
+
+**Codici d'errore** (il messaggio dell'eccezione è il codice; un codice ferma tutto e non cambia niente):
+
+| Codice | Vuol dire |
+|---|---|
+| `AZZERA_SEGNAPOSTO` | la sede o la fotografia sono ancora i segnaposto (o la fotografia non è un JSON) |
+| `AZZERA_SEDE_NON_DI_PROVA` | la sede non comincia per `e2e00000` e non è l'unica in `anno_regole.sedi_simulazione` |
+| `AZZERA_DATA` | lo scatto della fotografia è nel futuro, o non torna con i suoi conteggi (le righe «di prima» non sono quante la fotografia dice) |
+| `AZZERA_ANNO_NUOVO_NON_UNO` | la sede non ha **un solo** anno `in_preparazione` o `iscrizioni_aperte` nato prima della partenza (una data troppo vecchia finisce qui) |
+| `AZZERA_PRIMA_IL_RIPRISTINO` | l'anno nuovo è già `corrente`, oppure restano passaggi dopo la partenza, oppure l'anno di partenza non è tornato `corrente` |
+| `AZZERA_PROVA_A_SECCO` | l'interruttore `c_prova_a_secco` è acceso (lo è per difetto): il messaggio porta il riassunto, non è stato scritto niente. Per scrivere davvero si mette `false` |
+| `AZZERA_CONFINE_CON_RIGHE` | rimettere le date dei due anni farebbe cadere nell'anno sbagliato righe nate o cambiate nel collaudo nei giorni di un confine spostato: il messaggio dà i conteggi per tabella, non si tocca niente. Cosa fare: trovarle (vedi «Le date degli anni»), togliere quelle nate nel collaudo e rimettere la data a quelle cambiate, poi `ROLLBACK;` da solo (o una scheda nuova) e rilanciare |
+| `AZZERA_FREQUENZA_SPARITA` | una frequenza dell'anno di partenza della fotografia non esiste più: non si può rimetterla, si ferma tutto |
+| `AZZERA_ANNI_NATI_USATI` | a un anno nato nel collaudo punta ancora altro, di **qualunque** tabella (sezioni, frequenze, domande, voci di pagamento, presenze, valutazioni…): il messaggio dice i conteggi per tabella, non si tocca niente. Cosa fare: guardare quelle righe (sono dati del collaudo datati nell'anno nato col viaggio nel tempo) e toglierle a mano, poi rilanciare |
+| `AZZERA_FOTOGRAFIA` | la fotografia è della versione 1 o non ha `scattata_il` (si rifà con `fotografa-anno-nuovo-demo.sql`), non ha la forma attesa (anche le quattro date dei due anni), è di un altro anno, o contiene righe di un altro anno |
+| `AZZERA_CONTEGGI` | dopo il lavoro restano righe nate dopo la partenza che non sono tra le «lasciate», o la configurazione non coincide con la fotografia |
+
+Un errore il cui codice **non comincia per `AZZERA_`** viene dal database, non dallo script: per esempio `CALENDARIO_NON_CONTINUO`, `23P01` o l'errore di `anni_sede_domande_solo_aperto`. In quel caso non è cambiato niente (la richiesta si è interrotta) e il riassunto della prova non c'è: va letto il codice del database e corretta la causa; prima di rilanciare serve un `ROLLBACK;` da solo, oppure una scheda nuova dell'editor (dopo **qualunque** errore la sessione resta abortita, come dopo una prova).
+
+**Le domande tolte.** Non hanno copia nella scatola nera: l'esito elenca una riga `domanda tolta · <uuid>` per ognuna, oltre al numero.
+
+**Le dipendenze di secondo livello.** Una sezione la cui materia ha ancora una valutazione, un registro o uno scrutinio attaccato, o a cui è
+assegnato un menù della mensa, **resta** ed è elencata; lo stesso una voce di pagamento con una quota a cui punta un incasso. Il motivo: togliere
+la riga farebbe fallire il lavoro con un errore di chiave esterna, oppure scollegherebbe l'altra riga senza dirlo.
+
+**Le date degli anni.** La fotografia contiene `inizio`, `fine`, `ultimo_giorno_aperto` e `prepara_successivo_dal` dell'anno nuovo e dell'anno
+di partenza; lo script le rimette **dopo** le cancellazioni (con un solo aggiornamento, perché i vincoli di continuità si giudicano sul
+risultato). Se il collaudo ha spostato un confine fra i due anni con `sposta_confine_anno`, torna dov'era. Attenzione: `sposta_confine_anno`
+**non trascina righe** con sé, e rifiuta lo spostamento se nei giorni che cambiano anno c'è già qualcosa. Il rischio vero sono le righe **nate
+dopo** lo spostamento, dentro i giorni spostati (presenze, diario, registro, mensa, avvisi…): assegnate all'anno nuovo, con una data che dopo il
+ripristino del confine apparterrebbe all'anno vecchio. Lo script le conta con lo stesso criterio di `sposta_confine_anno` e, se ne trova, si
+ferma con `AZZERA_CONFINE_CON_RIGHE`, i conteggi per tabella e, per ogni anno colpito, i giorni (`dal`, `al`) e gli id dell'anno (`anni_sede` e anno scolastico), senza cambiare niente. Come trovarle: per ogni tabella nominata nel messaggio,
+le righe della Demo con la data fra il confine del collaudo e quello della fotografia, cioè nei giorni `dal`–`al` del messaggio (la tabella `anno_tabelle` dice quale colonna è la data; per `pagamenti` conta anche `scadenza` quando `periodo_competenza` è vuoto; per `frequenze` contano `data_ingresso` e `data_uscita`);
+le righe **nate** nel collaudo si tolgono a mano; a quelle **cambiate** (nate prima della partenza, con la data spostata) si rimette la data, perché cancellarle fa perdere la riga: per le tabelle che la fotografia conta (frequenze, voci, sezioni, domande) fermerebbe il giro dopo con `AZZERA_DATA` (la Demo non torna più ai conteggi), per una frequenza della fotografia con `AZZERA_FREQUENZA_SPARITA`, per presenze, diario e simili non ferma niente e la riga si perde. `AZZERA_DATA` vale solo per le tabelle che la fotografia conta. Quale data? Per una frequenza della fotografia, quella di prima sta nella fotografia stessa, sotto `partenza`, `frequenze`, con il suo uuid: `data_ingresso` e `data_uscita` (nelle fotografie rifatte dopo questa correzione; in una vecchia manca `data_ingresso`: una data dentro l'anno, per esempio l'inizio. Una fotografia senza `data_ingresso` si rifà **prima dei collaudi che scrivono**, perché rifarla cambia `scattata_il`, cioè la partenza). Per le **frequenze** il criterio è lo stesso (anno, sede, `data_ingresso` o `data_uscita` nei giorni) con una sola eccezione: la **data d'uscita** delle frequenze della fotografia non conta, perché il passo successivo la rimette com'era (se il collaudo ha allungato l'anno e confermato il passaggio, le ha fatte uscire proprio in quei giorni). La **data d'ingresso** conta sempre. Se il messaggio segnala una frequenza che sta nella fotografia, il collaudo le ha cambiato la data d'ingresso: **si rimette la data, non si cancella la riga** (una frequenza della fotografia non si cancella mai a mano). Poi, prima di rilanciare, `ROLLBACK;` da solo o una scheda nuova dell'editor.
+
+**Quello che nasce accogliendo una domanda.** Accogliere una domanda dall'app crea più di un alunno: i legami con i genitori
+(`legame_genitori_alunni`, `student_parents`) e l'invito con le credenziali (`iscrizioni_inviti_credenziali`). Questi **vanno via** insieme
+all'alunno e alla domanda che lo script toglie (sono della Demo e nati dopo la partenza), così l'anno nuovo torna davvero «appena nato».
+Restano invece, **elencati per uuid** fra le righe lasciate, gli **account** creati accogliendo la domanda (`parents`, `utenti`: li cancella solo
+chi sa che nessuno li usa) e il **CRM** (`crm_bambini`, `crm_schede`): un bambino del CRM che punta all'alunno o alla domanda li trattiene, e
+l'elenco dice perché quell'alunno non se n'è andato. Per le righe lasciate si decide a mano; l'invariante 11 conta gli alunni «in arrivo» rimasti
+senza più la frequenza nuova.
+
+**Che cosa non rimette.** Delle frequenze dell'anno di partenza si rimettono lo stato, la data d'uscita e il «no»; **non** `data_ingresso`, la sezione e `continua_da` (l'ingresso sta nella fotografia, per rimetterlo a mano). Le spunte dei moduli di frequenze nate prima della partenza se un modulo è stato cambiato; gli **account** dei genitori
+(`parents`, `utenti`) creati accogliendo una domanda: restano, e se sono nati dopo la partenza si elencano. Il legame con l'alunno e l'alunno
+vanno via.
+
+**Provato e no.** Il banco di prova ha le colonne della produzione per ogni tabella che lo script nomina, e `__tests__/db/anno-azzera-colonne.test.ts`
+confronta ogni colonna dello script con una fotografia delle colonne di produzione (si rigenera con `__tests__/fixtures/colonne-azzera-fotografia.mjs`).
+`__tests__/db/anno-azzera-demo.test.ts` (PGlite, stessa esecuzione multi-istruzione): un caso per codice più il caso principale, con
+l'impronta md5 delle righe di prima e delle altre sedi. **Mai eseguito dall'editor SQL di Supabase**: alla prima esecuzione si guarda che
+`BEGIN; CREATE FUNCTION; DO; DROP FUNCTION; COMMIT;` in un invio solo si comporti come sul banco.

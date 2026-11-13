@@ -1,3 +1,10 @@
+## 🔎 Changelog — Collaudo dell'anno scolastico dall'interfaccia, lotto 2 — 2026-11-13 (ramo `claude/anno-agente1-lotto2`, sopra il lotto 1)
+
+- **D1 — l'avviso fisso dell'anno non in corso occupava ~155 pt su 844 a 390 di larghezza.** Sotto i 640px diventa compatto, su due righe: sopra «Stai guardando il 2027/28 (in preparazione)» con «Perché?», sotto «Perché?» e il pulsante «Torna all'anno in corso», entrambi alti almeno 44px per costruzione (`min-h-[44px]`, figli diretti dell'avviso, sulla stessa riga o su righe diverse: le aree non si sovrappongono mai; niente estensioni `after:-inset` che dipendono dal font). Il testo ha `basis-full` sotto i 640px, perché con `flex-1` da solo restavano ~106px accanto al pulsante a 390 e ~36px a 320 (difetto trovato in revisione). «Perché?» apre un testo che dice chiaro che ciò che si salva da lì (nuove classi, votazioni, elenchi caricati) va nell'anno guardato e non in quello in corso (`annoAvvisoPercheTesto`, it/en). Da 640px in su resta l'avviso intero di sempre. Misurato in Chrome con il CSS compilato e con Maven Pro e Barlow Condensed veri: 86 pt a 390 e a 320 a «Perché?» chiuso (148 pt a 390 e 168 pt a 320 aperto), 65 pt a 1280, «Perché?» 70x44 e «Torna» 168x44 affiancati, nessuno scorrimento orizzontale. Test: contratto di classi in `AnnoNotice.test.tsx` (base piena, niente nowrap/truncate), che NON vede il layout reale: quella è la misura in Chrome.
+- **Schede di Impostazioni in una riga che scorre (telefono): area di tocco 36px → 44px** (`min-h-[44px]`), il dito ne sbagliava una vicina. Lock: `__tests__/architecture/impostazioni-schede-area-di-tocco.test.ts`.
+
+Nessun log da aggiungere (solo interfaccia). Nessuna migrazione.
+
 ## 🔎 Changelog — Collaudo dell'anno scolastico dall'interfaccia, lotto 1 — 2026-11-13 (ramo `claude/anno-agente1-b963c0`, sopra `631c9fac`)
 
 Primo giro in sola lettura sulla Demo (Chrome 1280 e 390, iPhone 16e), due difetti corretti:

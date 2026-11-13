@@ -127,14 +127,68 @@ describe('AnnoNotice', () => {
     expect(cls.some((c) => /truncate|line-clamp|overflow-hidden/.test(c))).toBe(false)
   })
 
-  it('non si può chiudere: l\'unico pulsante è «Torna all\'anno in corso»', () => {
+  it('non si può chiudere: i soli pulsanti sono «Torna all\'anno in corso» e «Perché?» (che apre un testo, non chiude l\'avviso)', () => {
     monta()
     fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))
     const avviso = screen.getByRole('status')
     const pulsanti = Array.from(avviso.querySelectorAll('button'))
-    expect(pulsanti).toHaveLength(1)
-    expect(pulsanti[0]).toHaveTextContent(/torna all.anno in corso/i)
+    expect(pulsanti.map((b) => b.textContent)).toEqual(['Perché?', 'Torna all’anno in corso'])
     expect(screen.queryByRole('button', { name: /chiudi|nascondi|ok/i })).toBeNull()
+  })
+
+  it('schermo stretto: la riga corta dice anno e stato, il testo lungo sta dietro «Perché?» e si apre e si chiude', () => {
+    monta()
+    fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))
+    const avviso = screen.getByRole('status')
+    // La versione corta c'è e, per CSS, è l'unica visibile sotto i 640px; quella lunga è `hidden` fino a 640px.
+    const corta = screen.getByText('Stai guardando il 2027/28 (iscrizioni aperte)')
+    expect(corta.className).toContain('min-[640px]:hidden')
+    const lunga = screen.getByText(/^Stai lavorando sul 2027\/28/)
+    expect(lunga.className).toContain('hidden')
+    expect(lunga.className).toContain('min-[640px]:inline')
+
+    const perche = screen.getByRole('button', { name: 'Perché vedo questo avviso sul 2027/28' })
+    expect(perche.className).toContain('min-[640px]:hidden')
+    expect(perche).toHaveAttribute('aria-expanded', 'false')
+    expect(avviso.querySelectorAll('#kv-anno-avviso-perche')).toHaveLength(0)
+
+    fireEvent.click(perche)
+    expect(perche).toHaveAttribute('aria-expanded', 'true')
+    expect(avviso.querySelector('#kv-anno-avviso-perche')).toHaveTextContent(/va nel 2027\/28, non nell’anno in corso/)
+
+    fireEvent.click(perche)
+    expect(perche).toHaveAttribute('aria-expanded', 'false')
+    expect(avviso.querySelectorAll('#kv-anno-avviso-perche')).toHaveLength(0)
+    // «Torna» resta sempre al suo posto, aperto o chiuso il «Perché?»
+    expect(screen.getByRole('button', { name: /torna all.anno in corso/i })).toBeInTheDocument()
+  })
+
+  // Contratto di classi, NON una misura: jsdom non calcola il layout e non vede quanto spazio resta davvero.
+  // La prova vera è la misura in Chrome a 320/390/1280 (agente1-schermate/, rapporto). Qui si impedisce solo che
+  // torni la forma che a 390 lasciava ~106px al testo e a 320 ~36px: il testo `flex-1` senza base piena,
+  // oppure `truncate`/`whitespace-nowrap` dentro l'avviso.
+  it('schermo stretto: il blocco di testo ha base piena (il pulsante va a capo), nessun nowrap/truncate nell\'avviso', () => {
+    monta()
+    fireEvent.click(screen.getByRole('button', { name: 'vai a 2027' }))
+    const avviso = screen.getByRole('status')
+    const blocco = screen.getByText('Stai guardando il 2027/28 (iscrizioni aperte)').closest('div') as HTMLElement
+    expect(blocco.parentElement).toBe(avviso)
+    expect(avviso.className.split(/\s+/)).toContain('flex-wrap') // senza, il pulsante non va a capo
+    // Le due aree di tocco sono pulsanti figli diretti dell'avviso, alti min 44px per costruzione: stanno su
+    // righe/colonne proprie e non si sovrappongono (nessuna estensione `after:-inset` che dipende dal font).
+    for (const nome of [/^Perché vedo questo avviso sul 2027\/28$/, /torna all.anno in corso/i]) {
+      const b = screen.getByRole('button', { name: nome })
+      expect(b.parentElement).toBe(avviso)
+      expect(b.className.split(/\s+/)).toContain('min-h-[44px]')
+      expect(b.className).not.toMatch(/after:|-inset-/)
+    }
+    const cls = blocco.className.split(/\s+/)
+    expect(cls).toContain('basis-full')
+    expect(cls).not.toContain('flex-1') // solo `min-[640px]:flex-1`
+    expect(cls).toContain('min-[640px]:flex-1')
+    for (const el of [avviso, ...Array.from(avviso.querySelectorAll('*'))]) {
+      expect(el.className.toString()).not.toMatch(/whitespace-nowrap|truncate|line-clamp|overflow-hidden/)
+    }
   })
 
   it('«Torna all\'anno in corso» toglie l\'avviso e cancella il cookie', () => {

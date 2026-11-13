@@ -19,23 +19,23 @@ Nessun log da aggiungere (testi e CSS). Nessuna migrazione.
 - E2: lo spazio sotto la pill (36px) si riserva solo sotto i 600px di larghezza (`@media (max-width: 600px)`); sul web largo e negli schermi bassi resta la login compatta di prima. Misurato su Chrome 375×667, 390×844, 1280×800 e 1280×600: nessuna sovrapposizione, «Accedi» visibile senza scorrere. Nel ramo `max-height: 480px` (orizzontale, logo nascosto) il padding di testa torna a 12px + safe-area. Commento in `LanguageSwitcher` e lock che legge le sue classi: se la pill cambia altezza, il 36 va rivisto. L'interstiziale del primo accesso (`auth/nuova-password`) usa la stessa pill con `pt-12` e, in shell nativa, il padding del body: non è stato provato nel simulatore.
 
 
-## 🗓️ Changelog — Anno scolastico, PR 4.9: la chiusura dell'anno — 2026-11-09 (ramo `worktree-agent-a6aa8e587ce8ffe4a`, sopra `872b1f03`)
+## 🗓️ Changelog — Anno scolastico, PR 4.9: la chiusura dell'anno — 2026-11-09 (#308, `631c9fac`, in produzione il 13/11/2026)
 
 **Rebase e pulizia (12/11).** La 4.9 poggia su `main` (4.8 unita come #307, `872b1f03`) e porta con sé, come primo commit, la pulizia della 4.8: PRD ✅, fotografia delle migrazioni rigenerata dalla produzione, tre migrazioni tolte da `IN_CODA`, `passaggio-ricopia-schede` e `anno-invarianti` in `JOB_CRON`. I corpi di `anno_invarianti`, `passaggio_conferma` e `passaggio_annulla` ridefiniti da M49a/M49b partono dal corpo FINALE della 4.8 (tracce dell'archiviazione, 15-bis, NB4) con le sole modifiche della 4.9; le due migrazioni hanno nomi definitivi `20261112181553` e `20261112181554`.
 
-**Stato:** 🟡 in revisione, fino al merge. **Ha due migrazioni**, che applica l'integrazione di Supabase al merge, ciascuna con la version del proprio file: `20261112181553_anno_stati_automatici.sql` (M49a) e `20261112181554_anno_passaggio_da_fare.sql` (M49b). **Nessuna riga di dati viene scritta alla migrazione**; M49b cambia due vincoli CHECK della tabella dei gettoni (nuovo codice `passaggio`) e M49a crea un vincolo differito su `anni_sede`. **La guardia dell'anno chiuso resta SPENTA** (`anno_regole.guardia_attiva = false`): accenderla è una decisione del titolare (vedi sotto).
+**Stato:** ✅ in `main` con la #308 (squash `631c9fac`), 13/11/2026. **Ha due migrazioni**, applicate dall'integrazione di Supabase al merge, ciascuna con la version del proprio file: `20261112181553_anno_stati_automatici.sql` (M49a) e `20261112181554_anno_passaggio_da_fare.sql` (M49b). **Nessuna riga di dati viene scritta alla migrazione**; M49b cambia due vincoli CHECK della tabella dei gettoni (nuovo codice `passaggio`) e M49a crea un vincolo differito su `anni_sede`. **La guardia dell'anno chiuso resta SPENTA** (`anno_regole.guardia_attiva = false`): accenderla è una decisione del titolare (vedi sotto).
 
 | Area | Stato | Che cosa è |
 |---|---|---|
-| Il tick cambia lo stato dell'anno | 🟡 in revisione | `anni_tick` (ogni ora, minuto 10) porta l'anno da `corrente` a `in_chiusura` il giorno dopo `ultimo_giorno_aperto` e a `chiuso` il giorno dopo `fine`; non promuove mai un anno a `corrente` (il passaggio lo fa una persona). **A guardia spenta non cambia niente** e scrive un `error` |
-| Domande d'iscrizione | 🟡 in revisione | Un anno `in_chiusura` o `chiuso` non accetta domande (vincolo differito `anni_sede_domande_solo_aperto`); il tick le chiude già a `in_chiusura` |
-| Una sede che esplode non ferma le altre | 🟡 in revisione | Gli errori del passo 2 (anche un calendario non continuo) restano della loro sede: `error` col solo SQLSTATE, battito `ok-parziale` |
-| Correggere un anno chiuso | 🟡 in revisione | Direzione e segreteria: la richiesta riceve 409 `ANNO_CHIUSO` con `correzione_possibile`, il dialogo «Registra come correzione» chiede il motivo (almeno 8 caratteri, resta nel registro `correzioni_anno_chiuso`, mai in un log) e la richiesta riparte. Su 3 schermate: competenze, periodi di scrutinio, votazioni |
-| Sola lettura dei docenti | 🟡 in revisione | Una classe dell'anno che si chiude: 403 `SEZIONE_IN_CHIUSURA` (frase senza «anno passato»); anno chiuso: `SEZIONE_SOLA_LETTURA`. Gate su tutte le route di scrittura dei docenti, con lock per handler |
-| Il passaggio non fatto | 🟡 in revisione | Dal 7° giorno prima dell'`inizio`, `salute_anno()` conta le sedi senza passaggio: `/api/health` resta `degradato`, e il giro orario di `anni_tick` scrive una riga `error` per sede e per giorno; le scritture datate nell'anno nuovo ricevono 409 `PASSAGGIO_DA_FARE` |
-| Conferma e annullo dopo il tick | 🟡 in revisione | `passaggio_conferma` e `passaggio_annulla` accendono per la loro transazione l'interruttore `anno_passaggio.in_corso`: la guardia le lascia passare e registra un gettone di codice `passaggio` con un uso per riga |
-| Invarianti | 🟡 in revisione | La 6 conta solo l'anno `chiuso`; nuova la 16 (domande aperte su un anno chiuso). La 15 è dello storico delle classi (4.8) |
-| Manuale di prova | 🟡 in revisione | `docs/superpowers/simulazione/anno-intero-demo.md` e il ripristino della sede Demo a blocco unico |
+| Il tick cambia lo stato dell'anno | ✅ in produzione | `anni_tick` (ogni ora, minuto 10) porta l'anno da `corrente` a `in_chiusura` il giorno dopo `ultimo_giorno_aperto` e a `chiuso` il giorno dopo `fine`; non promuove mai un anno a `corrente` (il passaggio lo fa una persona). **A guardia spenta non cambia niente** e scrive un `error` |
+| Domande d'iscrizione | ✅ in produzione | Un anno `in_chiusura` o `chiuso` non accetta domande (vincolo differito `anni_sede_domande_solo_aperto`); il tick le chiude già a `in_chiusura` |
+| Una sede che esplode non ferma le altre | ✅ in produzione | Gli errori del passo 2 (anche un calendario non continuo) restano della loro sede: `error` col solo SQLSTATE, battito `ok-parziale` |
+| Correggere un anno chiuso | ✅ in produzione | Direzione e segreteria: la richiesta riceve 409 `ANNO_CHIUSO` con `correzione_possibile`, il dialogo «Registra come correzione» chiede il motivo (almeno 8 caratteri, resta nel registro `correzioni_anno_chiuso`, mai in un log) e la richiesta riparte. Su 3 schermate: competenze, periodi di scrutinio, votazioni |
+| Sola lettura dei docenti | ✅ in produzione | Una classe dell'anno che si chiude: 403 `SEZIONE_IN_CHIUSURA` (frase senza «anno passato»); anno chiuso: `SEZIONE_SOLA_LETTURA`. Gate su tutte le route di scrittura dei docenti, con lock per handler |
+| Il passaggio non fatto | ✅ in produzione | Dal 7° giorno prima dell'`inizio`, `salute_anno()` conta le sedi senza passaggio: `/api/health` resta `degradato`, e il giro orario di `anni_tick` scrive una riga `error` per sede e per giorno; le scritture datate nell'anno nuovo ricevono 409 `PASSAGGIO_DA_FARE` |
+| Conferma e annullo dopo il tick | ✅ in produzione | `passaggio_conferma` e `passaggio_annulla` accendono per la loro transazione l'interruttore `anno_passaggio.in_corso`: la guardia le lascia passare e registra un gettone di codice `passaggio` con un uso per riga |
+| Invarianti | ✅ in produzione | La 6 conta solo l'anno `chiuso`; nuova la 16 (domande aperte su un anno chiuso). La 15 è dello storico delle classi (4.8) |
+| Manuale di prova | ✅ in produzione | `docs/superpowers/simulazione/anno-intero-demo.md` e il ripristino della sede Demo a blocco unico |
 
 **Tabella «agosto»** (dal giorno dopo l'`ultimo_giorno_aperto`, predefinito 31/07; la sede lo sposta dalle impostazioni dell'anno):
 
@@ -66,7 +66,7 @@ Nessun log da aggiungere (testi e CSS). Nessuna migrazione.
 
 **Correzioni dopo la revisione finale (12/11).** Le righe `error` orarie di `anni_tick` (passaggio da fare, guardia spenta) restano UNA al giorno per sede (`DO NOTHING`), così `tasso-errore` non si accende da solo; il ripristino della Demo accetta una sede `e2e00000…` anche con `sedi_simulazione` vuoto (e il manuale non chiede più di scriverla); i commenti di M49a/M49b dicono che cosa cambia davvero; M49b ha il suo `lock_timeout`; gli eventi differiti già in coda si eseguono prima del ciclo del tick; `statoAnnoDellaSezione` registra l'errore di lettura; `.superpowers/**` esce dal gate di eslint e vitest. Giro 2 e 3: l'errore del passo 1 di `anni_tick` ferma solo la sua sede (N2); le impronte `anni-tick-passaggio-da-fare:%` e `anni-tick-guardia-spenta:%` escono da `tasso-errore` perché le copre il controllo `anno` (N4); `guardia_spenta_vicina` di `salute_anno()` conta anche l'anno rimasto `in_chiusura` oltre la `fine` a guardia spenta, e allora `/api/health` è `degradato` finché la guardia è spenta, anche dopo il passaggio (M1); giro 4: la frase del controllo `anno` è vera per l'anno vicino alla chiusura e per quello rimasto oltre la fine, dice il rimedio (accendere la guardia) e va al singolare con una sola sede (Q1).
 
-**Da fare dopo il merge (PR-B).** Rigenerare dalla produzione la fotografia delle migrazioni (+2) e togliere la voce di M49b da `MIGRAZIONI_ATTESE_AL_MERGE`; riportare questo blocco a ✅ con il numero della PR. Difetti secondari annotati: `docs/superpowers/plans/2026-11-09-pr4-9-difetti-secondari.md`.
+**Fatto dopo il merge (PR-B, 13/11/2026).** Fotografia delle migrazioni rigenerata dalla produzione (277, ultima `20261112181554`), voce di M49b tolta da `MIGRAZIONI_ATTESE_AL_MERGE` (ora vuota), blocco riportato a ✅ con la #308. `IN_CODA` era già vuota e `JOB_CRON` non cambia (la 4.9 non aggiunge job). Nessuna migrazione. Difetti secondari annotati: `docs/superpowers/plans/2026-11-09-pr4-9-difetti-secondari.md`.
 
 ## 🗓️ Changelog — Anno scolastico, PR 4.8: il passaggio d'anno — 2026-11-10 (#307, `872b1f03`, in produzione il 12/11/2026)
 
@@ -117,7 +117,11 @@ Nessun log da aggiungere (testi e CSS). Nessuna migrazione.
 
 **Consegne alla 4.9.** Il lock `anni-tick-non-fa-il-passaggio` e la guardia della 3-B sono della 4.9 (la 4.8 non tocca `anni_tick`, così il lock resta verde); il testo del 403 «anno passato» per `in_chiusura` lo riprende la 4.9; in `anno_invarianti()` la 4.9 riparte dal corpo con la `15` e la `15-bis` (il suo `16` resta suo). Difetti secondari annotati: `docs/superpowers/plans/2026-11-09-pr4-8-difetti-secondari.md`.
 
-## 🧪 Changelog — Anno scolastico: azzerare l'anno nuovo della Demo fra un collaudo e l'altro — 2026-11-13 (ramo `claude/anno-azzera-demo-96ac71`, sopra la 4.9)
+## 🧹 Changelog — Anno scolastico, PR 4.9-B: pulizia dopo il merge — 2026-11-13
+
+Senza migrazioni. PRD della 4.9 a ✅ (#308, `631c9fac`), fotografia delle migrazioni rigenerata dalla produzione (277), `MIGRAZIONI_ATTESE_AL_MERGE` svuotata, e porta dentro lo strumento di collaudo descritto qui sotto (azzeramento dell'anno nuovo della Demo).
+
+## 🧪 Changelog — Anno scolastico: azzerare l'anno nuovo della Demo fra un collaudo e l'altro — 2026-11-13 (PR-B della 4.9, sopra `631c9fac`)
 
 Strumento di collaudo, **non è schema e non porta migrazioni**. Dopo la 4.9 tre agenti collaudano l'app vera nella sede Demo; fra uno e l'altro
 `ripristino-demo.sql` rimette gli stati degli anni ma lascia frequenze, voci, sezioni, domande, listino e posti. Questo secondo file riporta l'anno

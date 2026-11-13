@@ -277,12 +277,18 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId, solaLettura = 
     // La correzione porta con sé la classe in cui è stata aperta: cambiando classe NON resta a schermo (derivato, senza un effetto
     // che azzera lo stato) — su una classe di sola lettura finirebbe un chip con i campi d'orario.
     const classeCorrente = sectionId ?? sezione;
-    const [correzioneAperta, setCorrezione] = useState<{ alunnoId: string; giorno: string; classe: string } | null>(null);
-    const correzione = correzioneAperta && correzioneAperta.classe === classeCorrente ? correzioneAperta : null;
+    const [correzione, setCorrezione] = useState<{ alunnoId: string; giorno: string } | null>(null);
+    // Azzerata DAVVERO (non solo nascosta) al cambio di classe: pattern «reset durante il render», niente effetto. Tornando alla
+    // classe di partenza il chip non riappare con l'alunno e il giorno di prima.
+    const [classeDelChip, setClasseDelChip] = useState(classeCorrente);
+    if (classeDelChip !== classeCorrente) {
+        setClasseDelChip(classeCorrente);
+        setCorrezione(null);
+    }
     const [erroreOrario, setErroreOrario] = useState<string | null>(null);
 
     const apriCorrezione = (alunnoId: string, giorno: string) => {
-        setCorrezione({ alunnoId, giorno, classe: classeCorrente });
+        setCorrezione({ alunnoId, giorno });
         setErroreOrario(null);
     };
 

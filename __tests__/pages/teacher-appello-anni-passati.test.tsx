@@ -204,7 +204,8 @@ describe('appello docente — il giorno di partenza in sola lettura (rilievo 9)'
             expect(b.className).toMatch(/\bh-11\b/);
             expect(b.className).toMatch(/\bw-11\b/);
         }
-        expect(giornoSelezionato().parentElement?.className).toMatch(/min-h-11/);
+        // N3: l'elemento che si TOCCA è l'input, e deve essere alto 44 px (non solo il suo contenitore).
+        expect(giornoSelezionato().className).toMatch(/\bh-11\b/);
         // L'unico «Oggi» è la linguetta della pagina: il pulsante «torna a oggi» del navigatore non c'è in una classe passata.
         expect(screen.getAllByRole('button', { name: itPresenze.oggi })).toHaveLength(1);
         // Il giorno dopo l'ultimo dell'anno non si apre.

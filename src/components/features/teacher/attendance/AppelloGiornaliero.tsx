@@ -154,7 +154,7 @@ function DateNavigator({ date, onChange, solaLettura = false, primoGiorno, ultim
                     max={tetto}
                     aria-label={solaLettura ? t('giornoDaVedere') : undefined}
                     onChange={(e) => e.target.value && onChange(e.target.value)}
-                    className="w-full cursor-pointer bg-transparent font-maven text-sm font-medium text-kidville-ink outline-none"
+                    className={`w-full cursor-pointer bg-transparent font-maven text-sm font-medium text-kidville-ink outline-none ${solaLettura ? 'h-11' : ''}`}
                 />
             </div>
 

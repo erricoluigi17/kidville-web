@@ -22,12 +22,18 @@ const ALU_2 = 'c1111111-0000-4000-8000-000000000002'
 const ALU_NUOVO = 'c1111111-0000-4000-8000-000000000003'
 
 const h = vi.hoisted(() => ({
+  logEvento: vi.fn(),
   requireDocente: vi.fn(),
   db: {} as DBFinto,
   tabelle: [] as string[],
   visibili: null as null | (() => { data: unknown; error: unknown }),
+  errori: {} as Record<string, { code: string; message: string }>,
 }))
 
+vi.mock('@/lib/logging/logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/logging/logger')>()),
+  logEvento: h.logEvento,
+}))
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: vi.fn(), requireDocente: h.requireDocente }))
 vi.mock('@/lib/auth/scope', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/auth/scope')>()),
@@ -38,14 +44,15 @@ vi.mock('@/lib/sezioni/risoluzione', () => ({
 }))
 vi.mock('@/lib/anagrafiche/legami', () => ({
   genitoreHasFiglio: vi.fn(), verificaLegameGenitore: vi.fn(), getGenitoriDiAlunno: vi.fn(),
-  getGenitoriDiAlunni: async () => new Map(),
+  // Un genitore collegato al primo bambino: il roster dell'anno a un docente NON deve portarlo.
+  getGenitoriDiAlunni: async () => new Map([['c1111111-0000-4000-8000-000000000001', ['9e000000-0000-4000-8000-000000000001']]]),
 }))
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
   const rpc = {
     sezioni_visibili_docente: () => (h.visibili ? h.visibili() : { data: [], error: null }),
   }
-  const crea = async () => creaFintoSupabase(h.db, h.tabelle, { rpc })
+  const crea = async () => creaFintoSupabase(h.db, h.tabelle, { rpc, errori: h.errori })
   return { createAdminClient: crea, createClient: crea }
 })
 
@@ -62,7 +69,7 @@ const dbBase = (): DBFinto => ({
   ],
   // DOPO la ricopia: i due bambini sono già nella classe NUOVA.
   alunni: [
-    { id: ALU_1, nome: 'Uno', cognome: 'Alfa', note_mediche: null, classe_sezione: 'TEST Infanzia', section_id: SEC_NUOVA, scuola_id: SEDE_A, anonimizzato_il: null },
+    { id: ALU_1, nome: 'Uno', cognome: 'Alfa', note_mediche: 'NOTA-SANITARIA', allergeni: ['ALLERGENE'], allergies: 'ALLERGIA', consenso_privacy: true, classe_sezione: 'TEST Infanzia', section_id: SEC_NUOVA, scuola_id: SEDE_A, anonimizzato_il: null },
     { id: ALU_2, nome: 'Due', cognome: 'Beta', note_mediche: null, classe_sezione: 'TEST Infanzia', section_id: SEC_NUOVA, scuola_id: SEDE_A, anonimizzato_il: null },
     { id: ALU_NUOVO, nome: 'Tre', cognome: 'Gamma', note_mediche: null, classe_sezione: 'TEST Infanzia', section_id: SEC_NUOVA, scuola_id: SEDE_A, anonimizzato_il: null },
   ],
@@ -77,6 +84,7 @@ const dbBase = (): DBFinto => ({
   ],
   utenti_sezioni: [],
   utenti_scuole: [],
+  utenti: [{ id: '9e000000-0000-4000-8000-000000000001', nome: 'Genitore', cognome: 'Prova', email: 'genitore@example.invalid' }],
 })
 
 const richiesta = (sectionId: string, dellAnno = true) =>
@@ -88,6 +96,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.db = dbBase()
   h.tabelle = []
+  h.errori = {}
   h.visibili = () => ({
     data: [{ section_id: SEC_NUOVA, sola_lettura: false }, { section_id: SEC_VECCHIA, sola_lettura: true }],
     error: null,
@@ -133,5 +142,51 @@ describe('GET /api/diary/students?sectionId= — classe di un anno passato', () 
     const res = await GET(richiesta(SEC_VECCHIA))
     expect(res.status).toBe(200)
     expect(await ids(res)).toEqual([ALU_1])
+  })
+
+  it('🔴 N1 · al docente la risposta porta SOLO l’identità: niente note mediche, allergie, consensi né genitori', async () => {
+    const res = await GET(richiesta(SEC_VECCHIA))
+    const corpo = await res.text()
+    for (const vietato of ['note_mediche', 'allergeni', 'allergies', 'consenso_privacy', 'parents', 'NOTA-SANITARIA', 'ALLERGENE', 'genitore@example.invalid']) {
+      expect(corpo).not.toContain(vietato)
+    }
+    const righe = JSON.parse(corpo) as Record<string, unknown>[]
+    expect(righe.length).toBe(2)
+    expect(Object.keys(righe[0]).sort()).toEqual(['classe_sezione', 'cognome', 'id', 'nome'])
+  })
+
+  it('lo staff con `dellAnno=1` legge il roster dell’anno con i dati completi (è già dietro il suo gate)', async () => {
+    h.requireDocente.mockResolvedValue({ user: { id: DOCENTE, role: 'admin', scuola_id: SEDE_A } })
+    const res = await GET(richiesta(SEC_VECCHIA))
+    const righe = (await res.json()) as { id: string; note_mediche?: string; parents?: unknown[] }[]
+    expect(righe.map((a) => a.id).sort()).toEqual([ALU_1, ALU_2].sort())
+    expect(righe.find((a) => a.id === ALU_1)?.note_mediche).toBe('NOTA-SANITARIA')
+    expect(righe.find((a) => a.id === ALU_1)?.parents).toHaveLength(1)
+  })
+
+  it('guasto della lettura `frequenze`: 500 con `codice: LETTURA_FALLITA`, mai una lista vuota', async () => {
+    h.errori = { frequenze: { code: 'XX000', message: 'guasto' } }
+    const res = await GET(richiesta(SEC_VECCHIA))
+    expect(res.status).toBe(500)
+    expect(await res.json()).toMatchObject({ codice: 'LETTURA_FALLITA' })
+  })
+
+  it('schema dell’anno assente sulle `frequenze` (42P01): ripiego sulla lettura di sempre, e il ripiego è LOGGATO col solo codice', async () => {
+    h.errori = { frequenze: { code: '42P01', message: 'relation does not exist' } }
+    const res = await GET(richiesta(SEC_VECCHIA))
+    expect(res.status).toBe(200)
+    expect(h.logEvento).toHaveBeenCalledWith('db', 'warn', expect.objectContaining({ esito: 'schema-anno-assente-ripiego', lettura: 'frequenze', codice: '42P01' }))
+  })
+
+  it('una sezione `in_preparazione` non è un anno passato: lettura di sempre, nessuna frequenza letta', async () => {
+    h.db.anni_sede[1].stato = 'in_preparazione'
+    await GET(richiesta(SEC_VECCHIA))
+    expect(h.tabelle).not.toContain('frequenze')
+  })
+
+  it('una frequenza SENZA `section_id` non appartiene a nessuna classe: resta fuori dal roster (nessun ripiego)', async () => {
+    h.db.frequenze.push({ id: 'f9', alunno_id: ALU_NUOVO, anno_id: ANNO_VECCHIO, section_id: null, stato: 'iscritto' })
+    const res = await GET(richiesta(SEC_VECCHIA))
+    expect(await ids(res)).toEqual([ALU_1, ALU_2].sort())
   })
 })

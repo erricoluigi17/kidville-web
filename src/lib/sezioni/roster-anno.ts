@@ -12,19 +12,26 @@ import { sezioniVisibiliConEsito } from '@/lib/sezioni/docenti'
  * classe dell'ANNO, non quella di un giorno, e le frequenze sono la fonte che il resto dell'anno scolastico già usa.)
  *
  * Esito: `null` = la sezione NON è di un anno passato (o il DB non ha lo schema dell'anno): vale la lettura di sempre.
- * `[]` = anno passato senza bambini. Un guasto di lettura LANCIA: una classe vuota per un errore è la bugia che qui si evita.
+ * `[]` = anno passato senza bambini. Una frequenza SENZA `section_id` non appartiene a nessuna classe di quell'anno e resta
+ * fuori dal roster (misurato in produzione: 3 su 25 negli anni chiusi); nessun ripiego, di proposito. Un guasto di lettura LANCIA: una classe vuota per un errore è la bugia che qui si evita.
  */
 const STATI_PASSATI = ['in_chiusura', 'chiuso']
 const CODICI_SCHEMA_ASSENTE = ['42703', '42P01', 'PGRST204', 'PGRST205']
 
-function schemaAssente(e: { code?: string } | null): boolean {
-  return !!e && CODICI_SCHEMA_ASSENTE.includes(e.code ?? '')
+/**
+ * Schema dell'anno assente (DB E2E non migrato): si ricade sulla lettura ordinaria. Il ripiego si LOGGA, col solo codice
+ * d'errore: senza, un guasto vero di schema in produzione tornerebbe alla lettura che il rilievo 2 voleva evitare, in silenzio.
+ */
+function schemaAssente(e: { code?: string } | null, lettura: string): boolean {
+  const assente = !!e && CODICI_SCHEMA_ASSENTE.includes(e.code ?? '')
+  if (assente) logEvento('db', 'warn', { operazione: 'sezioni/roster-anno', esito: 'schema-anno-assente-ripiego', lettura, codice: e?.code ?? '' })
+  return assente
 }
 
 export async function rosterDellAnnoDellaSezione(db: SupabaseClient, sectionId: string): Promise<string[] | null> {
   const sez = await db.from('sections').select('anno_id, scuola_id').eq('id', sectionId).maybeSingle()
   if (sez.error) {
-    if (schemaAssente(sez.error)) return null
+    if (schemaAssente(sez.error, 'sections')) return null
     throw sez.error
   }
   const annoId = (sez.data as { anno_id?: string | null } | null)?.anno_id
@@ -33,7 +40,7 @@ export async function rosterDellAnnoDellaSezione(db: SupabaseClient, sectionId: 
 
   const sede = await db.from('anni_sede').select('stato').eq('anno_id', annoId).eq('scuola_id', scuolaId).maybeSingle()
   if (sede.error) {
-    if (schemaAssente(sede.error)) return null
+    if (schemaAssente(sede.error, 'anni_sede')) return null
     throw sede.error
   }
   const stato = (sede.data as { stato?: string } | null)?.stato
@@ -41,7 +48,7 @@ export async function rosterDellAnnoDellaSezione(db: SupabaseClient, sectionId: 
 
   const fr = await db.from('frequenze').select('alunno_id').eq('anno_id', annoId).eq('section_id', sectionId).neq('stato', 'in_attesa')
   if (fr.error) {
-    if (schemaAssente(fr.error)) return null
+    if (schemaAssente(fr.error, 'frequenze')) return null
     throw fr.error
   }
   return [...new Set(((fr.data ?? []) as { alunno_id: string }[]).map((r) => r.alunno_id))]

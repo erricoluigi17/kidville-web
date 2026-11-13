@@ -99,4 +99,17 @@ describe('tabella del mese — sola lettura', () => {
         rerender(<MonthlyAttendanceTable sezione={SEZIONE} sectionId={SECTION_ID} solaLettura />);
         await waitFor(() => expect(chip()).toBeNull());
     });
+
+    it('🔴 N2 · si TORNA alla classe di partenza: il chip non riappare con l’alunno e il giorno di prima', async () => {
+        const { rerender } = render(<MonthlyAttendanceTable sezione={SEZIONE} sectionId={SECTION_ID} />);
+        await waitFor(() => expect(cella()).not.toBeNull());
+        fireEvent.click(cella()!);
+        await waitFor(() => expect(chip()).not.toBeNull());
+
+        rerender(<MonthlyAttendanceTable sezione={SEZIONE} sectionId="aaaa1111-0000-4000-8000-0000000000a3" />);
+        await waitFor(() => expect(chip()).toBeNull());
+        rerender(<MonthlyAttendanceTable sezione={SEZIONE} sectionId={SECTION_ID} />);
+        await waitFor(() => expect(cella()).not.toBeNull());
+        expect(chip()).toBeNull();
+    });
 });

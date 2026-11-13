@@ -197,6 +197,8 @@ function Binario({ ariaNav, tab, gruppi, pathname, isActive, menuAcceso, hrefDi,
               exit={riduci ? { opacity: 0 } : { x: -16, opacity: 0 }}
               transition={{ type: 'spring', damping: 28, stiffness: 380 }}
               onKeyDown={(e) => {
+                // Bersaglio nel portale della conferma d'uscita (fuori da questo foglio): non è un Esc per il foglio.
+                if (!e.currentTarget.contains(e.target as Node)) return;
                 if (e.key === 'Escape') {
                   e.preventDefault();
                   setAperto(false);

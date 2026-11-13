@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import type { Calendario } from '@/lib/anno-scolastico'
-import { caricaCalendario, statoCalendario } from '@/lib/anno/calendario'
+import { annoAttivoIdDi, caricaCalendario, STATI_RISERVATI, statoCalendario } from '@/lib/anno/calendario'
 import { getFigliAttiviDiGenitore } from '@/lib/anagrafiche/legami'
 import { eDirezione, eFamiglia, haRuolo, ruoliDi } from '@/lib/auth/predicati-ruolo'
 import { requireUser } from '@/lib/auth/require-staff'
@@ -19,9 +19,6 @@ const getQuerySchema = z.object({}).strict()
 // la risposta dell'utenza di prima.
 const CACHE = { 'Cache-Control': 'private, max-age=60', Vary: 'Cookie' }
 const SENZA_CACHE = { 'Cache-Control': 'no-store' }
-
-// Gli anni che docenti e genitori «non vedono» (specifica §4.4.1): ancora in costruzione.
-const STATI_RISERVATI: ReadonlySet<string> = new Set(['in_preparazione', 'iscrizioni_aperte'])
 
 const guasto = () =>
   NextResponse.json({ error: 'Calendario non disponibile', codice: 'LETTURA_FALLITA' }, { status: 500, headers: SENZA_CACHE })
@@ -65,7 +62,7 @@ export const GET = withRoute('anno/calendario:GET', async (request: Request) => 
     }
   }
 
-  const data: Array<{ scuola_id: string; righe: Calendario }> = []
+  const data: Array<{ scuola_id: string; anno_attivo_id: string | null; righe: Calendario }> = []
   let nonDisponibili = 0
   for (const [scuolaId, completa] of sedi) {
     const stato = await statoCalendario(supabase, scuolaId)
@@ -80,7 +77,13 @@ export const GET = withRoute('anno/calendario:GET', async (request: Request) => 
       continue
     }
     const righe = (await caricaCalendario(supabase, scuolaId)) ?? []
-    data.push({ scuola_id: scuolaId, righe: completa ? righe : righe.filter((r) => !STATI_RISERVATI.has(r.stato)) })
+    // L'anno attivo si ricava dalle righe INTERE, prima del filtro: il client lo usa come «anno di oggi»
+    // quando l'anno che contiene il giorno è riservato e a lui non è arrivato (null = sede senza attivo).
+    data.push({
+      scuola_id: scuolaId,
+      anno_attivo_id: annoAttivoIdDi(righe),
+      righe: completa ? righe : righe.filter((r) => !STATI_RISERVATI.has(r.stato)),
+    })
   }
 
   const fonte = sedi.size > 0 && nonDisponibili === sedi.size ? 'non_disponibile' : 'database'

@@ -259,14 +259,14 @@ describe('chiudiFrequenzeAperte · le letture cadute (4.5.16, E)', () => {
 
   it('la lettura degli anni caduta conta come una chiusura NON riuscita, e scrive un logErrore col solo codice', async () => {
     const r = await chiudiFrequenzeAperte(cliente({ anni_sede: { error: { code: '08006' } } }), { alunnoId: ALUNNO, attore })
-    expect(r).toEqual({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 1 })
+    expect(r).toEqual({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, voci_alla_contabilita: 0, non_riuscite: 1 })
     expect(logErrore).toHaveBeenCalledTimes(1)
     expect(String(vi.mocked(logErrore).mock.calls[0][1])).toContain('08006')
   })
 
   it('la lettura delle frequenze caduta conta come una chiusura NON riuscita', async () => {
     const r = await chiudiFrequenzeAperte(cliente({ anni_sede: { data: [{ id: A_APERTO }] }, frequenze: { error: { code: '57014' } } }), { alunnoId: ALUNNO, attore })
-    expect(r).toEqual({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 1 })
+    expect(r).toEqual({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, voci_alla_contabilita: 0, non_riuscite: 1 })
     expect(logErrore).toHaveBeenCalledTimes(1)
   })
 
@@ -274,7 +274,7 @@ describe('chiudiFrequenzeAperte · le letture cadute (4.5.16, E)', () => {
     for (const code of ['42P01', 'PGRST205']) {
       vi.mocked(logErrore).mockClear()
       const r = await chiudiFrequenzeAperte(cliente({ anni_sede: { error: { code } } }), { alunnoId: ALUNNO, attore })
-      expect(r).toEqual({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, non_riuscite: 0 })
+      expect(r).toEqual({ chiuse: 0, voci_tolte: 0, voci_pagate_rimaste: 0, voci_alla_contabilita: 0, non_riuscite: 0 })
       expect(logErrore).not.toHaveBeenCalled()
     }
     const r2 = await chiudiFrequenzeAperte(cliente({ anni_sede: { data: [{ id: A_APERTO }] }, frequenze: { error: { code: '42703' } } }), { alunnoId: ALUNNO, attore })

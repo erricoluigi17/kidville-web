@@ -33,10 +33,23 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
+// (chiusura 4.8) Il finto di questo file non ha `rpc('anno_attivo')`/`rpc('anno_visibile_oggi')`: la finestra del passaggio non è l'oggetto di queste
+// prove (le sue sono in `__tests__/db/anno-passaggio-chiusura.test.ts`, con le route vere). Qui si è fuori dalla finestra.
+vi.mock('@/lib/anno/iscrizione-anno', async (orig) => ({
+  ...(await orig<typeof import('@/lib/anno/iscrizione-anno')>()),
+  frequenzeDellaFinestra: async () => ({ ok: true, nellaFinestra: false }),
+  archiviatoDalPassaggio: async () => ({ ok: true, si: false }),
+  classeRicordataDelloStessoAnno: async () => ({ ok: true, stesso: true }),
+}))
+
 vi.mock('@/lib/anno/frequenze', async (orig) => ({
   ...(await orig<typeof import('@/lib/anno/frequenze')>()),
   scriviFrequenza: h.scriviFrequenza,
   annoAttivoDiSede: h.annoAttivoDiSede,
+  // (giro 3) fuori dalla finestra l'anno visibile è l'attivo: la route dell'archiviazione ora chiede il visibile.
+  annoVisibileDiSede: (c: unknown, sede: string | null) => h.annoAttivoDiSede(c, sede),
+  // (giro 9, O-a) Il finto non ha `rpc`: fuori dalla finestra, senza guasto di lettura.
+  leggiFinestraDiSede: async () => ({ finestra: null, guasto: false }),
 }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/pagamenti/scadenze', async (orig) => ({
@@ -112,6 +125,11 @@ const dbBase = (): DBFinto => ({
     { id: `anno-di-${SEDE_B}`, scuola_id: SEDE_B, anno_id: 'y1', inizio: '2026-09-01', fine: '2027-08-31' },
   ],
   gruppi_mensa: [],
+  // (giro 1, B7) Chi si riporta fra gli iscritti ha una frequenza nell'anno in corso (chiusa il giorno dell'archiviazione, quindi
+  // conta): senza, la route rifiuta con ALUNNO_SENZA_ISCRIZIONE (provato in coda a questo file).
+  frequenze: [
+    { id: 'fr-r', alunno_id: ALU_R, anno_sede_id: `anno-di-${SEDE_A}`, stato: 'ritirato', data_uscita: '2026-08-01' },
+  ],
   alunni: [
     alunno(ALU_A, SEDE_A, SEC_A),
     alunno(ALU_A2, SEDE_A, SEC_A),
@@ -276,6 +294,24 @@ describe('POST /api/admin/students/riattiva', () => {
     const res = await RIATTIVA(riattiva({ alunno_id: ALU_R }))
     expect(res.status).toBe(500)
     expect(h.scriviFrequenza).not.toHaveBeenCalled()
+  })
+
+  // Giro 1, B7: il bambino uscito col passaggio d'anno (frequenza dell'anno in corso chiusa PRIMA dell'archiviazione, o assente)
+  // non si rimette `iscritto` da qui: la scheda resterebbe senza frequenza, con un 200 che dice il falso.
+  it('senza nessuna frequenza nell’anno in corso: 409 ALUNNO_SENZA_ISCRIZIONE, la scheda non cambia', async () => {
+    h.db.frequenze = []
+    const res = await RIATTIVA(riattiva({ alunno_id: ALU_R }))
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('ALUNNO_SENZA_ISCRIZIONE')
+    expect(h.db.alunni.find((r) => r.id === ALU_R)!.stato).toBe('ritirato')
+    expect(h.scriviFrequenza).not.toHaveBeenCalled()
+  })
+
+  it('frequenza chiusa PRIMA del giorno dell’archiviazione (è uscito col passaggio): 409 anche così', async () => {
+    h.db.frequenze = [{ id: 'fr-r', alunno_id: ALU_R, anno_sede_id: `anno-di-${SEDE_A}`, stato: 'ritirato', data_uscita: '2026-07-15' }]
+    const res = await RIATTIVA(riattiva({ alunno_id: ALU_R }))
+    expect(res.status).toBe(409)
+    expect((await res.json()).codice).toBe('ALUNNO_SENZA_ISCRIZIONE')
   })
 })
 
@@ -796,12 +832,15 @@ describe('archivia e riattiva — i ritocchi dopo la revisione', () => {
       expect(riga(ALU_R).classe_sezione).toBe('2 ANNI')
     })
 
-    it('classe attuale DIVERSA dalla ricordata (memoria stantia): 409, il bambino NON viene spostato', async () => {
+    it('classe attuale DIVERSA dalla ricordata (memoria stantia): il bambino NON viene spostato; si tolgono le tracce e si risponde il vero (quinto giro, E2)', async () => {
       faseB()
       iscrittoConMemoria('3 ANNI')
       const res = await RIATTIVA(riattiva({ alunno_id: ALU_R }))
-      expect(res.status).toBe(409)
-      expect(riga(ALU_R).classe_sezione).toBe('3 ANNI')
+      expect(res.status).toBe(200)
+      expect((await res.json()).esito_classe).toBe('conservata')
+      expect(riga(ALU_R).classe_sezione, 'la classe attuale è giusta e non si tocca').toBe('3 ANNI')
+      expect(riga(ALU_R).archiviato_da, 'le tracce se ne vanno').toBeNull()
+      expect(riga(ALU_R).archiviato_classe_sezione).toBeNull()
       expect(h.scriviFrequenza).not.toHaveBeenCalled()
     })
   })

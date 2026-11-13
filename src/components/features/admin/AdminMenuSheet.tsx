@@ -247,6 +247,9 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, userId = null, 
   const tutteAttive = effettive.length === sedi.length;
 
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    // Con la conferma d'uscita in un portale su `document.body` il tasto risale comunque i genitori REACT: se il
+    // bersaglio non sta nel DOM del foglio, l'evento è del dialogo e il foglio lo ignora (Esc, ma anche il Tab).
+    if (!e.currentTarget.contains(e.target as Node)) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
@@ -404,7 +407,11 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, userId = null, 
           <CambiaProfiloMenuButton className={`${FOOTER_BTN_CLS} text-kidville-green hover:bg-kidville-green-soft disabled:opacity-60`} />
           {/* `error-strong` e non `error`: «Esci» è testo, e il rosso `error` su bianco fa 4,23:1 (soglia
               4,5). Lo stesso difetto corretto il 18/10 nei menu di genitori e docenti. */}
-          <LogoutMenuButton className={`${FOOTER_BTN_CLS} text-kidville-error-strong hover:bg-kidville-error-soft disabled:opacity-60`} />
+          {/* Staccato dalle altre voci (mt-4 + filetto): in fondo a una lista che scorre, un tocco sbagliato non deve
+              finire su «Esci». La conferma (`ConfermaUscita`) è la seconda difesa. */}
+          <div className="mt-4 border-t border-kidville-line pt-3">
+            <LogoutMenuButton className={`${FOOTER_BTN_CLS} text-kidville-error-strong hover:bg-kidville-error-soft disabled:opacity-60`} />
+          </div>
         </div>
       </div>
     </div>

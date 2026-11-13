@@ -173,7 +173,17 @@ export function ConfermeClient() {
   if (loading) return <p role="status" className="font-maven text-sm text-kidville-sub">{t('caricamento')}</p>;
   if (!sedeCorrente) return <SedeNotice cosa={t('sedeCosa')} />;
   if (!effettivo || !effettivo.annoSedeId) return <p className="font-maven text-sm text-kidville-sub">{t('nessunAnno')}</p>;
-  if (effettivo.attivo) return <p className="font-maven text-sm text-kidville-sub">{t('annoAttivo')}</p>;
+  if (effettivo.attivo) {
+    // (giro 1, B4) Il passaggio d'anno ha la sua pagina: dall'anno in corso ci si arriva da qui, non solo dall'indirizzo.
+    return (
+      <div className="space-y-2">
+        <p className="m-0 font-maven text-sm text-kidville-sub">{t('annoAttivo')}</p>
+        <p className="m-0 font-maven text-sm text-kidville-sub">
+          <Link href="/admin/students/passaggio" className="font-bold text-kidville-green underline underline-offset-2">{t('vaiAlPassaggio')}</Link>
+        </p>
+      </div>
+    );
+  }
   if (effettivo.stato !== 'iscrizioni_aperte') return <p className="font-maven text-sm text-kidville-sub">{t('annoNonAperto')}</p>;
   // `key`: cambiato l'anno si riparte da zero (pagina, filtro, righe).
   return <ElencoConferme key={effettivo.annoSedeId} annoSedeId={effettivo.annoSedeId} />;
@@ -407,6 +417,7 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
       )}
 
       <p className={`${hint} mt-3`}>{t('annullareNota')}</p>
+      <p className={hint}><Link href="/admin/students/passaggio" className="underline underline-offset-2">{t('rimandoPassaggio')}</Link></p>
 
       {pagine > 1 && (
         <nav className="mt-4 flex items-center gap-3" aria-label={t('paginaDi', { pagina, pagine })}>

@@ -111,7 +111,7 @@ export const POST = withRoute('admin/votazioni:POST', async (request: NextReques
   // figlia cade, il disfacimento della testata. Tutte tabelle del registro (`dichiarato` o `madre`).
   const candidatiDaScrivere = dati.rappresentanteIstituto ? dati.candidatiIstituto : []
   const usi = 1 + (dati.sectionIds.length > 0 ? 1 : 0) + (candidatiDaScrivere.length > 0 ? 1 : 0) + 1
-  const esito = await resolveAnnoScrittura(request, supabase, auth.user, scuolaId, { dichiarato: dati.annoId, usi })
+  const esito = await resolveAnnoScrittura(request, supabase, auth.user, scuolaId, { dichiarato: dati.annoId, usi, correzione: dati.correzione })
   if (esito instanceof NextResponse) return esito
   const operazione = 'admin/votazioni:POST'
   const guasto = (errore: unknown) => rispostaErroreDbVotazioni(errore as { code?: string; message?: string }, operazione)

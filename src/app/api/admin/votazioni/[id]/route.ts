@@ -4,13 +4,19 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
-import { parseBody, parseData } from '@/lib/validation/http'
+import { parseBody, parseBodyFacoltativo, parseData } from '@/lib/validation/http'
+import { resolveAnnoScrittura } from '@/lib/auth/scope'
+import { annoDellaRiga } from '@/lib/anno/anno-della-riga'
+import { erroreAnno } from '@/lib/anno/errori'
+import { clientPerScrittura } from '@/lib/anno/gettone'
+import type { Correzione } from '@/lib/anno/correzione'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { zUuid } from '@/lib/validation/common'
 import { caricaVotazioneInScope, requireVotazioni } from '@/lib/votazioni/accesso'
 import { genitoriDellaSede, genitoriDelleClassi, nomiGenitori } from '@/lib/votazioni/aventi-diritto'
 import { contaVoti } from '@/lib/votazioni/conteggio'
 import { rispostaErroreDbVotazioni } from '@/lib/votazioni/errori'
-import { azioneVotazioneSchema, scadenzaInIstante } from '@/lib/votazioni/schemi'
+import { azioneVotazioneSchema, eliminaVotazioneSchema, scadenzaInIstante } from '@/lib/votazioni/schemi'
 import { statoVotazione } from '@/lib/votazioni/stato'
 import type {
   CandidatoConVoti,
@@ -47,6 +53,8 @@ import {
  * un risultato.
  *
  * ── PATCH /api/admin/votazioni/[id] ──────────────────────────────────────────────────────────────────────
+ *  · Su un anno `chiuso` (PR 4.9) `chiudi` e `proroga` (e il DELETE) rispondono 409 `ANNO_CHIUSO` con `correzione_possibile`; con
+ *    `correzione: { motivo }` nel corpo JSON (anche per il DELETE) la scrittura passa con un gettone.
  *  · `chiudi`: 409 `VOTAZIONE_CHIUSA` se è già chiusa a mano o scaduta; altrimenti `chiusa_il = adesso`. È
  *    DEFINITIVA (nessuna proroga la riapre).
  *  · `proroga`: 409 `VOTAZIONE_CHIUSA` se `chiusa_il` è valorizzato; 400 `VOTAZIONE_SCADENZA_PASSATA` se la nuova
@@ -66,6 +74,29 @@ import {
 
 const paramsSchema = z.object({ id: zUuid })
 type Contesto = { params: Promise<{ id: string }> }
+
+/**
+ * Con quale client si scrive su una votazione GIÀ ESISTENTE (chiudi, proroga, elimina). L'anno è quello della testata (`anno_id`): si
+ * dichiara a `resolveAnnoScrittura`, che su un anno `chiuso` risponde 409 `ANNO_CHIUSO` con `correzione_possibile` (la schermata apre
+ * il dialogo) o, con la `correzione`, crea il gettone (UNO: l'`update` o il `delete` è una sola transazione, e le figlie in cascata
+ * sono in modo `madre`). Anno corrente, testata senza `anno_id` o database senza lo schema dell'anno: il client di prima.
+ * Va chiamata DOPO i rifiuti «a occhio»: una richiesta che si rifiuta non crea gettoni.
+ */
+async function clientPerVotazione(
+  request: NextRequest,
+  supabase: SupabaseClient,
+  user: Parameters<typeof resolveAnnoScrittura>[2],
+  v: { id: string; scuola_id: string },
+  correzione: Correzione | undefined,
+  guasto: (errore: unknown) => NextResponse,
+): Promise<{ scrittura: SupabaseClient } | { response: NextResponse }> {
+  const daAnno = await annoDellaRiga(supabase, 'votazioni', v.id)
+  if ('guasto' in daAnno) return { response: guasto(daAnno.guasto) }
+  if (!daAnno.annoId) return { scrittura: supabase }
+  const esito = await resolveAnnoScrittura(request, supabase, user, v.scuola_id, { dichiarato: daAnno.annoId, correzione })
+  if (esito instanceof NextResponse) return { response: esito }
+  return { scrittura: await clientPerScrittura(supabase, esito) }
+}
 
 type RigaVoto = {
   id: string
@@ -323,14 +354,16 @@ export const PATCH = withRoute('admin/votazioni/[id]:PATCH', async (request: Nex
     esito = eraScaduta ? 'riaperta' : 'prorogata'
   }
 
-  const { data: toccate, error } = await supabase
+  const dove = await clientPerVotazione(request, supabase, auth.user, v, azione.correzione, guasto)
+  if ('response' in dove) return dove.response
+  const { data: toccate, error } = await dove.scrittura
     .from('votazioni')
     .update(patch)
     .eq('id', v.id)
     .eq('scuola_id', scuolaId)
     .is('chiusa_il', null)
     .select('id')
-  if (error) return guasto(error)
+  if (error) return erroreAnno(error, operazione) ?? guasto(error)
   // Zero righe: qualcuno l'ha chiusa fra la lettura e la scrittura. La sua data di chiusura resta com'è.
   if (!toccate || toccate.length === 0) return rifiutoVotazione('VOTAZIONE_CHIUSA')
 
@@ -360,6 +393,8 @@ export const DELETE = withRoute('admin/votazioni/[id]:DELETE', async (request: N
 
   const p = parseData(paramsSchema, await ctx.params)
   if ('response' in p) return p.response
+  const corpoElimina = await parseBodyFacoltativo(request, eliminaVotazioneSchema)
+  if ('response' in corpoElimina) return corpoElimina.response
 
   const operazione = 'admin/votazioni/[id]:DELETE'
   const guasto = (errore: unknown) => rispostaErroreDbVotazioni(errore as { code?: string; message?: string }, operazione)
@@ -380,13 +415,15 @@ export const DELETE = withRoute('admin/votazioni/[id]:DELETE', async (request: N
   if (errVoti) return guasto(errVoti)
   if ((conVoti ?? []).length > 0) return rifiutoVotazione('VOTAZIONE_CON_VOTI')
 
-  const { data: tolte, error } = await supabase
+  const dove = await clientPerVotazione(request, supabase, auth.user, v, corpoElimina.data.correzione, guasto)
+  if ('response' in dove) return dove.response
+  const { data: tolte, error } = await dove.scrittura
     .from('votazioni')
     .delete()
     .eq('id', v.id)
     .eq('scuola_id', scuolaId)
     .select('id')
-  if (error) return guasto(error)
+  if (error) return erroreAnno(error, operazione) ?? guasto(error)
   // Zero righe: qualcun altro l'ha eliminata fra la lettura e la cancellazione.
   if (!tolte || tolte.length === 0) return rifiutoVotazione('VOTAZIONE_NON_TROVATA')
 

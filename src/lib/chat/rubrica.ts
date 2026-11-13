@@ -11,6 +11,7 @@ import {
 import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato';
 import { figliAttiviDi, idDeiFigli } from '@/lib/anno/visibilita-genitore';
 import { logEvento } from '@/lib/logging/logger';
+import { schemaAnnoIndietro } from '@/lib/anno/schema';
 
 /**
  * ════════════════════════════════════════════════════════════════════════════
@@ -419,11 +420,37 @@ export async function rubricaDiOperatore(supabase: SupabaseClient, operatore: Ap
         logEvento('chat', 'error', { operazione: 'chat/rubrica:operatore', esito: 'alunni-non-letti', utente: operatore.id }, erroreAlunni);
         return vuota(null, erroreAlunni);
     }
-    const alunni = (righeAlunni ?? []) as Array<{
+    const candidati = (righeAlunni ?? []) as Array<{
         id: string; nome: string | null; cognome: string | null;
         classe_sezione: string | null; section_id: string | null; scuola_id: string | null;
     }>;
-    if (alunni.length === 0) return vuota('sezioni-senza-famiglie');
+    if (candidati.length === 0) return vuota('sezioni-senza-famiglie');
+
+    // PR 4.8.3 · Le famiglie di un docente sono quelle dei bambini con una frequenza VIVA in una delle SUE sezioni, come il POST della
+    // chat e come `figli_attivi` per le famiglie. La riga di `alunni` dopo il passaggio può essere ancora la vecchia: chi è uscito, o
+    // è passato alla classe nuova, non è più «suo», e la sezione vecchia (sola lettura) non deve restare in rubrica per scrivere.
+    // Funzione assente (CI, deploy) → il filtro di oggi con una riga `info`; ogni altro errore → rubrica vuota, mai la lista larga.
+    let alunni = candidati;
+    const { data: vive, error: erroreVive } = await supabase.rpc('frequenze_attive', { p_alunni: candidati.map(a => a.id) });
+    if (erroreVive) {
+        if (schemaAnnoIndietro(erroreVive)) {
+            logEvento('anno-scolastico', 'info', {
+                operazione: 'chat/rubrica:operatore', esito: 'schema-indietro', error_code: (erroreVive as { code?: string }).code ?? null,
+            });
+        } else {
+            logEvento('chat', 'error', { operazione: 'chat/rubrica:operatore', esito: 'frequenze-non-lette', utente: operatore.id }, erroreVive);
+            return vuota(null, erroreVive);
+        }
+    } else {
+        const mie = new Set(sezioni);
+        const conFrequenza = new Set(
+            ((vive ?? []) as Array<{ alunno_id: string; section_id: string | null }>)
+                .filter(f => f.section_id && mie.has(f.section_id))
+                .map(f => f.alunno_id),
+        );
+        alunni = candidati.filter(a => conFrequenza.has(a.id));
+        if (alunni.length === 0) return vuota('sezioni-senza-famiglie');
+    }
 
     const genitoriPerAlunno = await getGenitoriDiAlunni(supabase, alunni.map(a => a.id));
     const idGenitori = [...new Set([...genitoriPerAlunno.values()].flat())];

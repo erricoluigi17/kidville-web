@@ -1,7 +1,7 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/fk-utenti-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/fk-utenti-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-09",
-  "generato_alle": "2026-11-09T15:37:21Z",
+  "generato_il": "2026-11-13",
+  "generato_alle": "2026-11-13T12:09:06Z",
   "sha256": "767ee28680284a3c3e079f1c40d728a485b2f6c1c47acb02bfabf83bf7a10c31",
   "fk": [
     {

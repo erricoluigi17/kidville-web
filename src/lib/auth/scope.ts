@@ -441,15 +441,21 @@ export function annoDalCookie(request: NextRequest): string | null {
   return raw && FORMA_UUID.test(raw) ? formaConfronto(raw) : null
 }
 
-function rifiutoAnno(codice: string, operazione: string): NextResponse {
+function rifiutoAnno(codice: string, operazione: string, opzioni?: { correzionePossibile?: boolean; etichetta?: string }): NextResponse {
   // `erroreAnno` conosce tutti i codici di questo file: `null` non può uscire.
-  return erroreAnno({ message: codice }, operazione) as NextResponse
+  return erroreAnno({ message: codice }, operazione, undefined, opzioni) as NextResponse
 }
 
 export type OpzioniAnnoScrittura = {
   /** `anni_scolastici.id` dichiarato dal client (corpo o query), già validato da zod. */
   dichiarato?: string
-  /** Solo per Direzione e segreteria su un anno `chiuso`. Il motivo non esce mai in un log. */
+  /**
+   * Solo per Direzione e segreteria su un anno `chiuso`. Il motivo non esce mai in un log.
+   * PR 4.9: una route che SA chiedere il gettone `correzione` (la legge dal corpo e la passa qui) scrive la chiave `correzione`
+   * nelle opzioni, anche con valore `undefined`: è il segnale «sa correggere». Solo allora il 409 `ANNO_CHIUSO` allo staff su un
+   * anno `chiuso` porta `correzione_possibile: true` e la schermata apre il dialogo. Una route che non lo sa NON deve offrirlo: il
+   * dialogo ripartirebbe contro la stessa porta. Lo garantisce il lock `anno-correzione-wiring`.
+   */
   correzione?: { motivo: string }
   /** Quanti gettoni creare (default 1, massimo 10): un gettone vale una sola transazione. */
   usi?: number
@@ -469,6 +475,20 @@ export type OpzioniAnnoScrittura = {
  * un gettone. `utente_id` del gettone è `AppUser.id` (= `utenti.id` = `auth.users.id` per lo staff).
  */
 /**
+ * Il nome breve di un anno («2025/26») per il dialogo della correzione. Una lettura che non riesce NON cambia l'esito: il 409 parte
+ * lo stesso, senza etichetta, e il dialogo dice «un anno già chiuso». Si registra il solo codice di Postgres.
+ */
+async function etichettaDellAnno(supabase: SupabaseClient, annoId: string, azione: string): Promise<string | undefined> {
+  const { data, error } = await supabase.from('anni_scolastici').select('etichetta_breve').eq('id', annoId).limit(1)
+  if (error) {
+    logEvento('anno-scolastico', 'warn', { tipo: 'etichetta-anno-non-letta', azione, error_code: error.code ?? 'sconosciuto' })
+    return undefined
+  }
+  const riga = (Array.isArray(data) ? data[0] : null) as { etichetta_breve?: unknown } | null
+  return typeof riga?.etichetta_breve === 'string' && riga.etichetta_breve.trim() !== '' ? riga.etichetta_breve : undefined
+}
+
+/**
  * Un anno `in_chiusura`/`chiuso` senza gettone (Ruling P48). Finché la guardia è spenta
  * (`anno_regole.guardia_attiva = false`) nessuna scrittura che oggi passa va rifiutata (D1): l'esito
  * NON dichiara l'anno (`osservato`), la regola transitoria del database lo assegna come prima, e un
@@ -480,11 +500,16 @@ async function rifiutoOsservandoLaGuardia(
   supabase: SupabaseClient,
   riga: RigaAnnoSede,
   azione: string,
+  correzionePossibile = false,
 ): Promise<EsitoAnno | NextResponse> {
   const { data, error } = await supabase.from('anno_regole').select('guardia_attiva').limit(1)
   if (!error) {
     const attiva = (Array.isArray(data) ? data[0] : null) as { guardia_attiva?: boolean } | null
-    if (attiva?.guardia_attiva === true) return rifiutoAnno('ANNO_CHIUSO', azione)
+    if (attiva?.guardia_attiva === true) {
+      // Il nome dell'anno si legge solo quando il 409 offre la correzione (è per il dialogo): un rifiuto qualunque non paga la lettura.
+      const etichetta = correzionePossibile ? await etichettaDellAnno(supabase, riga.anno_id, azione) : undefined
+      return rifiutoAnno('ANNO_CHIUSO', azione, { correzionePossibile, etichetta })
+    }
   } else if (!schemaAnnoIndietro(error)) {
     logEvento('anno-scolastico', 'warn', { tipo: 'guardia-non-letta', azione, error_code: error.code ?? 'sconosciuto' })
   }
@@ -521,7 +546,8 @@ async function esitoPerAnno(
       codice = 'agosto'
       break
     case 'chiuso': {
-      if (!staff || !opzioni.correzione) return rifiutoOsservandoLaGuardia(supabase, riga, azione)
+      // `correzione_possibile` solo allo staff e solo se la route sa chiedere il gettone (la chiave `correzione` è nelle opzioni).
+      if (!staff || !opzioni.correzione) return rifiutoOsservandoLaGuardia(supabase, riga, azione, staff && 'correzione' in opzioni)
       motivo = typeof opzioni.correzione.motivo === 'string' ? opzioni.correzione.motivo.trim() : ''
       if (!motivo) return rifiutoAnno('MOTIVO_OBBLIGATORIO', azione)
       codice = 'correzione'
@@ -549,8 +575,10 @@ async function esitoPerAnno(
  * `in_preparazione`, e «non chiuso» darebbe due anni dal giorno del merge (Ruling D2).
  *
  * Nessuna delle tre → 400 `ANNO_DA_SPECIFICARE` + `warn` `anno-scrittura-ambigua`. In agosto (il
- * vecchio è `in_chiusura`, il nuovo `in_preparazione`, nessun `corrente`) è voluto: la PR 4.2 mette
- * di default il cookie `anno_attivo` PRIMA del 01/08/2027.
+ * vecchio è `in_chiusura`, il nuovo `in_preparazione`, nessun `corrente`) è voluto. ⚠️ Il cookie `anno_attivo` NON ha un valore di
+ * default: lo scrive il browser (`anno-context.tsx`, `scegli`) solo quando una persona SCEGLIE un anno. Una persona che non ha mai
+ * scelto non ha cookie, e in agosto (e dal 01/09 finché il passaggio non è fatto) una scrittura che non dichiara l'anno prende
+ * questo 400: per questo ogni route dello staff lo dichiara (`dichiarato`).
  *
  * Un anno dichiarato (o nel cookie) che la sede non ha → 400 `ANNO_NON_DELLA_SEDE` + `warn`.
  * Gli uuid si confrontano senza distinzione di maiuscole (`formaConfronto`) e escono in forma
@@ -844,6 +872,42 @@ export async function assertSezioneInScope(
 }
 
 /**
+ * Il 403 di una classe in sola lettura (PR 4.9, compito 4.9.4). Una classe `in_chiusura` NON è «di un anno passato»: l'anno è ancora
+ * quello in corso, si sta solo chiudendo, e a correggerla possono Direzione e segreteria. Il codice è `SEZIONE_IN_CHIUSURA` (frase
+ * propria in `shared.json`). Per un anno `chiuso`, o se lo stato non si sa leggere, resta il rifiuto di sempre `SEZIONE_SOLA_LETTURA`.
+ */
+function rifiutoSolaLettura(stato: string | null | undefined): NextResponse {
+  if (stato === 'in_chiusura') {
+    return NextResponse.json(
+      { error: 'Questa classe è nell’anno che si sta chiudendo: solo la Direzione e la segreteria possono correggerla', codice: 'SEZIONE_IN_CHIUSURA' },
+      { status: 403 },
+    )
+  }
+  return NextResponse.json(
+    { error: 'Questa classe è di un anno passato: è in sola lettura', codice: 'SEZIONE_SOLA_LETTURA' },
+    { status: 403 },
+  )
+}
+
+/** Lo stato dell'anno di una sezione nella sua sede; `null` se non si legge (ripiego: il rifiuto «anno passato», mai un errore). */
+async function statoAnnoDellaSezione(supabase: SupabaseClient, sectionId: string, scuolaId: string): Promise<string | null> {
+  const sez = await supabase.from('sections').select('anno_id').eq('id', sectionId).maybeSingle()
+  const annoId = (sez.data as { anno_id?: string | null } | null)?.anno_id
+  // PostgREST non lancia: l'errore va guardato. Il ripiego resta (fail-closed), ma il perché si registra: col solo codice dell'errore.
+  if (sez.error) {
+    logEvento('auth', 'warn', { tipo: 'stato-anno-sezione-illeggibile', azione: 'statoAnnoDellaSezione', operazione: 'sections' }, sez.error)
+    return null
+  }
+  if (!annoId) return null
+  const st = await supabase.from('anni_sede').select('stato').eq('scuola_id', scuolaId).eq('anno_id', annoId).maybeSingle()
+  if (st.error) {
+    logEvento('auth', 'warn', { tipo: 'stato-anno-sezione-illeggibile', azione: 'statoAnnoDellaSezione', operazione: 'anni_sede' }, st.error)
+    return null
+  }
+  return (st.data as { stato?: string | null } | null)?.stato ?? null
+}
+
+/**
  * Come `assertSezioneInScope`, per le SCRITTURE: in più, un docente che vede la sezione in sola lettura (anno
  * `in_chiusura` o `chiuso`) riceve **403** con `codice: 'SEZIONE_SOLA_LETTURA'`. Direzione e segreteria
  * (`vedeTutteLeClassi`) non hanno mai sola lettura qui: l'anno chiuso per loro lo difende il database (PR 3-B).
@@ -891,10 +955,7 @@ async function verificaSezione(
       logEvento('auth', 'warn', {
         tipo: 'sezione-sola-lettura', azione: 'assertSezioneScrivibile', utente: user.id, sezione: sectionId,
       })
-      return NextResponse.json(
-        { error: 'Questa classe è di un anno passato: è in sola lettura', codice: 'SEZIONE_SOLA_LETTURA' },
-        { status: 403 },
-      )
+      return rifiutoSolaLettura(await statoAnnoDellaSezione(supabase, sectionId, section.scuola_id as string))
     }
   }
   return null
@@ -1068,10 +1129,7 @@ async function rifiutoAnnoDellaFirma(
     logEvento('auth', 'warn', {
       tipo: 'sezione-sola-lettura', azione: 'assertSezionePrimariaFirmabile', utente: user.id, sezione: sectionId,
     })
-    return NextResponse.json(
-      { error: 'Questa classe è di un anno passato: è in sola lettura', codice: 'SEZIONE_SOLA_LETTURA' },
-      { status: 403 },
-    )
+    return rifiutoSolaLettura(valore)
   }
   return nonUsabile()
 }
@@ -1144,6 +1202,41 @@ export async function assertClasseNomeInScope(
       })
       return NextResponse.json({ error: 'Classe non assegnata al docente' }, { status: 403 })
     }
+  }
+  return null
+}
+
+/**
+ * Come `assertClasseNomeInScope`, per le SCRITTURE (PR 4.9, giro 1-bis): in più, un docente le cui classi con quel nome (nell'anno
+ * attivo del plesso) sono TUTTE in sola lettura (anno `in_chiusura`/`chiuso`) riceve 403 `SEZIONE_IN_CHIUSURA`/`SEZIONE_SOLA_LETTURA`.
+ * Direzione e segreteria non sono fermate. Un docente che non ha quella classe fra le sue non è toccato da questo controllo (lo
+ * decide `soloSezioniAssegnate`, come prima).
+ */
+export async function assertClasseNomeScrivibile(
+  supabase: SupabaseClient,
+  user: AppUser,
+  classeNome: string | null | undefined,
+  opts?: { soloSezioniAssegnate?: boolean },
+): Promise<NextResponse | null> {
+  const fuori = await assertClasseNomeInScope(supabase, user, classeNome, opts)
+  if (fuori) return fuori
+  if (vedeTutteLeClassi(user)) return null
+  const plessi = await scuoleDiUtente(supabase, user)
+  const anniAttivi = await anniAttiviDeiPlessi(supabase, plessi)
+  let ricerca = supabase.from('sections').select('id, scuola_id').eq('name', classeNome as string).in('scuola_id', plessi)
+  ricerca = filtraPerAnnoDiSede(ricerca, anniAttivi)
+  const { data, error } = await ricerca
+  if (error) return scopeNonRisolto('scope-classe-non-risolta', error, { sezione: classeNome })
+  const mie = await sezioniVisibiliDiUtente(supabase, user.id)
+  const mieDiQuestoNome = (data ?? []).flatMap((s) => {
+    const m = mie.find(x => x.sectionId === (s.id as string))
+    return m ? [{ id: s.id as string, scuola: s.scuola_id as string, solaLettura: m.solaLettura }] : []
+  })
+  if (mieDiQuestoNome.length > 0 && mieDiQuestoNome.every(m => m.solaLettura)) {
+    logEvento('auth', 'warn', {
+      tipo: 'sezione-sola-lettura', azione: 'assertClasseNomeScrivibile', utente: user.id, sezione: classeNome as string,
+    })
+    return rifiutoSolaLettura(await statoAnnoDellaSezione(supabase, mieDiQuestoNome[0].id, mieDiQuestoNome[0].scuola))
   }
   return null
 }
@@ -1385,6 +1478,39 @@ export async function assertAlunnoInScope(
     if (!alunno.section_id || !mie.includes(alunno.section_id as string)) {
       return NextResponse.json({ error: 'Alunno non nella tua classe' }, { status: 403 })
     }
+  }
+  return null
+}
+
+/**
+ * Come `assertAlunnoInScope`, per le SCRITTURE (PR 4.9, giro 1-bis): in più, un docente la cui classe di quell'alunno è di un anno
+ * non `corrente` (`in_chiusura` o `chiuso`: `sola_lettura` di `sezioni_visibili_docente`) riceve **403** con la stessa risposta di
+ * `assertSezioneScrivibile` (`SEZIONE_IN_CHIUSURA` / `SEZIONE_SOLA_LETTURA`). Direzione e segreteria (`vedeTutteLeClassi`) non sono
+ * fermate: in agosto scrivono. È l'equivalente «per alunno» di `assertSezioneScrivibile`: la chiave è `alunni.section_id`.
+ */
+export async function assertAlunnoScrivibile(
+  supabase: SupabaseClient,
+  user: AppUser,
+  alunnoId: string | null | undefined,
+): Promise<NextResponse | null> {
+  const fuori = await assertAlunnoInScope(supabase, user, alunnoId)
+  if (fuori) return fuori
+  if (vedeTutteLeClassi(user)) return null
+  const { data: alunno, error } = await supabase
+    .from('alunni')
+    .select('section_id, scuola_id')
+    .eq('id', alunnoId as string)
+    .maybeSingle()
+  if (error) return scopeNonRisolto('scope-alunno-non-risolto', error, { utente: user.id })
+  const sezione = (alunno as { section_id?: string | null; scuola_id?: string | null } | null)?.section_id
+  if (!sezione) return null
+  const mie = await sezioniVisibiliDiUtente(supabase, user.id)
+  const mia = mie.find(m => m.sectionId === sezione)
+  if (mia?.solaLettura) {
+    logEvento('auth', 'warn', {
+      tipo: 'sezione-sola-lettura', azione: 'assertAlunnoScrivibile', utente: user.id, sezione,
+    })
+    return rifiutoSolaLettura(await statoAnnoDellaSezione(supabase, sezione, (alunno as { scuola_id: string }).scuola_id))
   }
   return null
 }

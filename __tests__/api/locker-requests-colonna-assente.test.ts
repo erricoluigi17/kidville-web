@@ -59,6 +59,7 @@ vi.mock('@/lib/auth/require-parent', () => ({ requireParentOfStudent: h.requireP
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente }))
 vi.mock('@/lib/auth/scope', () => ({
     assertAlunnoInScope: async () => null,
+    assertAlunnoScrivibile: async () => null,
     assertClasseNomeInScope: async () => null,
     // Il gemello per UUID: da quando la classe si identifica con `section_id`
     // (2026-09-02) `risolviSezione` sceglie fra i due gate.

@@ -109,6 +109,9 @@ const FERMATE: ReadonlyArray<readonly [string, string, string]> = [
   ['anno_chiuso.oblio dentro un DO', "DO $$ BEGIN PERFORM set_config('anno_chiuso.oblio', 'on', true); END $$", 'interruttore'],
   // Anno scolastico, PR 2 compito 2.4: le varianti rimaste senza test nel 1.6 (virgolette doppie, SESSION).
   ['anno_chiuso.oblio con le virgolette doppie', `SELECT set_config('"anno_chiuso"."oblio"','on',true)`, 'interruttore'],
+  ['anno_passaggio.in_corso con set_config (giro 1, R1/R2)', "SELECT set_config('anno_passaggio.in_corso','on',true)", 'interruttore'],
+  ['anno_passaggio.in_corso con SET LOCAL', "SET LOCAL anno_passaggio.in_corso = 'on'", 'interruttore'],
+  ['anno_passaggio.in_corso dentro un DO con le virgolette doppie', `DO $$ BEGIN PERFORM set_config('"anno_passaggio"."in_corso"', 'on', true); END $$`, 'interruttore'],
   ['anno_chiuso.oblio con SET SESSION', "SET SESSION anno_chiuso.oblio = 'on'", 'interruttore'],
   ['anno_chiuso.oblio con SET LOCAL e le virgolette doppie', 'SET LOCAL "anno_chiuso"."oblio" = on', 'interruttore'],
   // Anno scolastico, PR 2 compito 2.4: l'interruttore del riempimento.
@@ -178,6 +181,7 @@ const PASSANO: ReadonlyArray<readonly [string, string]> = [
   ['colonne che cominciano come una parola distruttiva', 'SELECT deleted_at, dropped, truncated FROM public.prova_freno'],
   ['identificatore fra virgolette', 'SELECT "delete" FROM public.prova_freno'],
   ["lettura dell'interruttore, non scrittura", "SELECT current_setting('scatola_nera.manutenzione', true)"],
+  ["lettura dell'interruttore del passaggio, non scrittura", "SELECT current_setting('anno_passaggio.in_corso', true)"],
   ["lettura del gettone dell'oblio, non scrittura", "SELECT current_setting('anno_chiuso.oblio', true)"],
   ['più letture nella stessa stringa', 'SELECT 1; SELECT 2;'],
   // Anno scolastico, PR 2 compito 2.4: leggere le manopole non è scriverle.

@@ -40,6 +40,7 @@ class Query implements PromiseLike<Risultato> {
   private singola: 'no' | 'maybe' | 'one' = 'no'
   private payload: Record<string, unknown> | null = null
   private conflitto: string | null = null
+  private aggiornaSuConflitto = false
 
   constructor(private db: PGlite, private tabella: string) {}
 
@@ -51,7 +52,9 @@ class Query implements PromiseLike<Risultato> {
   insert(p: Record<string, unknown>) { this.op = 'insert'; this.payload = p; return this }
   /** Solo `ignoreDuplicates: true` con `onConflict` (4.5.17): INSERT ... ON CONFLICT (colonne) DO NOTHING, come la spunta dei moduli. */
   upsert(p: Record<string, unknown>, o?: { onConflict?: string; ignoreDuplicates?: boolean }) {
-    if (!o?.onConflict || o.ignoreDuplicates !== true) throw new Error('upsert nel finto: serve onConflict con ignoreDuplicates: true')
+    if (!o?.onConflict) throw new Error('upsert nel finto: serve onConflict')
+    // (giro 4) Senza `ignoreDuplicates` è un vero upsert: ON CONFLICT DO UPDATE sulle colonne scritte.
+    this.aggiornaSuConflitto = o.ignoreDuplicates !== true
     this.op = 'insert'; this.payload = p; this.conflitto = o.onConflict.split(',').map((x) => ident(x.trim())).join(', '); return this
   }
   update(p: Record<string, unknown>) { this.op = 'update'; this.payload = p; return this }
@@ -102,7 +105,7 @@ class Query implements PromiseLike<Risultato> {
     if (this.op === 'insert') {
       const chiavi = Object.keys(this.payload ?? {})
       chiavi.forEach((k) => params.push(param((this.payload as Record<string, unknown>)[k])))
-      return { testo: `INSERT INTO ${t} (${chiavi.map(ident).join(', ')}) VALUES (${chiavi.map((_, i) => `$${i + 1}`).join(', ')})${this.conflitto ? ` ON CONFLICT (${this.conflitto}) DO NOTHING` : ''}${ritorno}`, params }
+      return { testo: `INSERT INTO ${t} (${chiavi.map(ident).join(', ')}) VALUES (${chiavi.map((_, i) => `$${i + 1}`).join(', ')})${this.conflitto ? (this.aggiornaSuConflitto ? ` ON CONFLICT (${this.conflitto}) DO UPDATE SET ${chiavi.map((k) => `${ident(k)} = excluded.${ident(k)}`).join(', ')}` : ` ON CONFLICT (${this.conflitto}) DO NOTHING`) : ''}${ritorno}`, params }
     }
     if (this.op === 'update') {
       const chiavi = Object.keys(this.payload ?? {})

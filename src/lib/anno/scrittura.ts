@@ -80,7 +80,7 @@ export function conFaseB(supabase: SupabaseClient): Promise<boolean> {
  * `section_id` a NULL). `ok: false` se la lettura è fallita: chi chiama non scrive.
  * `cache` (una `Map` per richiesta) tiene le sezioni di un anno, per i lotti.
  */
-async function sezioneDelNome(
+export async function sezioneDelNome(
   supabase: SupabaseClient,
   annoSedeId: string,
   nome: string,

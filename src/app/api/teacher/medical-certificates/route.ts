@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope'
+import { assertAlunnoScrivibile, resolveScuoleAttive } from '@/lib/auth/scope'
 import { risolviSezione } from '@/lib/sezioni/risoluzione'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { periodoValido } from '@/lib/certificati/stato'
@@ -119,7 +119,7 @@ export const PATCH = withRoute('teacher/medical-certificates:PATCH', async (requ
       .from('certificati_medici').select('alunno_id').eq('id', id).maybeSingle()
     if (errCert) return rispostaGuastoDb('teacher/medical-certificates:PATCH', 'db:certificati_medici', errCert)
     if (!certScope) return NextResponse.json({ error: 'Certificato non trovato' }, { status: 404 })
-    const scopeErr = await assertAlunnoInScope(supabase, auth.user, certScope.alunno_id as string)
+    const scopeErr = await assertAlunnoScrivibile(supabase, auth.user, certScope.alunno_id as string)
     if (scopeErr) return scopeErr
 
     const patch: Record<string, unknown> = {

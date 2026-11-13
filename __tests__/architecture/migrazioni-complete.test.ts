@@ -103,6 +103,10 @@ const IN_CODA: Record<string, string> = {
     // `20261002215800_video_conservazione_uscite.sql`) e applicate in produzione PRIMA del merge con
     // `supabase db push --linked`, dopo essere state mostrate; la fotografia qui accanto le contiene
     // (202 migrazioni). L'integrazione Supabase al merge le trova gia' registrate.
+    //
+    // RIAPERTA il 2026-11-10 con le tre migrazioni della PR 4.8 «passaggio d'anno» e SVUOTATA il 12/11: la 4.8 e' in `main` (#307, `872b1f03`), le tre
+    // sono state applicate dall'integrazione di Supabase con la version del proprio file e la fotografia (275 migrazioni, rigenerata dalla produzione)
+    // le contiene.
 }
 
 const RADICE = process.cwd()

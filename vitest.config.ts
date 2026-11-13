@@ -19,7 +19,7 @@ export default defineConfig({
     // test compresi. Senza questa esclusione una `vitest run` esegue anche i test di un ALTRO
     // branch, e il gate diventa rosso (o verde) per codice che non è quello che si sta per
     // rilasciare: il modo più efficace che esista di non fidarsi più dei propri test.
-    exclude: [...configDefaults.exclude, 'e2e/**', 'ios/**', 'android/**', '.claude/**'],
+    exclude: [...configDefaults.exclude, 'e2e/**', 'ios/**', 'android/**', '.claude/**', '.superpowers/**'],
     /**
      * ⚠️ IL BERSAGLIO DELLA SUITE NON PUÒ ESSERE LA PRODUZIONE (2026-08-03).
      *

@@ -212,6 +212,35 @@ export async function annoDi(supabase: SupabaseClient, scuolaId: string, giorno:
   return anno
 }
 
+/** Gli anni che docenti e famiglie «non vedono» (specifica §4.4.1): ancora in costruzione. */
+export const STATI_RISERVATI: ReadonlySet<string> = new Set<StatoAnno>(['in_preparazione', 'iscrizioni_aperte'])
+
+/** L'uuid dell'anno ATTIVO di una sede (`anni_scolastici.id`), o `null` se non ce n'è. */
+export function annoAttivoIdDi(calendario: Calendario | null | undefined): string | null {
+  return annoAttivoDelCalendario(calendario)?.annoId ?? null
+}
+
+/**
+ * «Che anno è oggi» per CHI chiede (PR 4.8.4, Scelta 5). Lo staff ha l'anno che contiene il giorno.
+ * Docenti e famiglie, se quell'anno è ancora riservato (`in_preparazione`/`iscrizioni_aperte`: i
+ * giorni fra l'inizio del nuovo anno e il passaggio), hanno l'anno ATTIVO, cioè il vecchio, invece
+ * di «nessuno». Dopo la conferma il nuovo è `corrente`, non è più riservato e vale per tutti.
+ * Sede senza alcun anno attivo: l'anno che contiene il giorno, come per lo staff (mai un errore).
+ * Nessuna scrittura cambia: solo la risposta alla domanda «che anno è». `oggi` è il giorno di Roma.
+ */
+export async function annoDiOggiPerChi(
+  supabase: SupabaseClient,
+  scuolaId: string,
+  opzioni: { staff: boolean; oggi?: string },
+): Promise<AnnoDelGiorno> {
+  const oggi = opzioni.oggi ?? dataCivile()
+  const cal = await caricaCalendario(supabase, scuolaId)
+  const contiene = annoDelGiorno(oggi, cal)
+  if (opzioni.staff || !contiene.riga || !STATI_RISERVATI.has(contiene.riga.stato)) return contiene
+  const attivo = annoAttivoDelCalendario(cal)
+  return attivo ? annoDelGiorno(attivo.inizio, cal) : contiene
+}
+
 /**
  * L'anno a cui è iscritto un bambino, per stamparlo su un documento: quello attivo se ha una
  * frequenza viva lì, altrimenti il più vicino fra i successivi (nuova iscrizione per l'anno

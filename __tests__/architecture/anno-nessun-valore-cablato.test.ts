@@ -12,7 +12,7 @@ import { mascheraSorgente, riga } from '../fixtures/sorgente'
  * stanno nel database (`anni_sede`, `anno_regole`, il calendario della sede): il codice li LEGGE, non li conosce.
  *
  * Il lock guarda due insiemi, scritti QUI (un test non deve dipendere dalla storia di git):
- *  - le cinque migrazioni M45 (`MIGRAZIONI`), lette come SQL senza commenti;
+ *  - le cinque migrazioni M45 (`MIGRAZIONI`: le cinque della 4.5 e le tre della 4.8), lette come SQL senza commenti;
  *  - i file NUOVI di `src/` della PR (`FILE_NUOVI_SRC`), letti come TypeScript mascherato (commenti spenti, stringhe leggibili).
  *
  * Non ammette, fuori dai commenti: `2027`, `2028` (quindi anche `2027/28`), `-09-01`, `-07-31`, né un numero di mese cablato
@@ -21,7 +21,7 @@ import { mascheraSorgente, riga } from '../fixtures/sorgente'
  * quanto uno che sta in un'espressione.
  *
  * ─── PERCHÉ NON È CIECO ───────────────────────────────────────────────────────
- * Dichiara quanti file ha letto (5 migrazioni e ≥ 8 file di `src/`, la lista ne ha 20) e ha il suo controllo positivo su
+ * Dichiara quanti file ha letto (8 migrazioni e ≥ 8 file di `src/`, la lista ne ha 31) e ha il suo controllo positivo su
  * sorgenti finti: un `'2027'` dentro una funzione SQL e dentro una funzione TypeScript deve far rosso; un commento no.
  *
  * ─── CHE COSA NON VEDE ────────────────────────────────────────────────────────
@@ -39,6 +39,13 @@ const MIGRAZIONI = [
   'supabase/migrations/20261109035216_anno_listino_moduli_sezioni.sql',
   'supabase/migrations/20261109035219_anno_iscrizione_conferma.sql',
   'supabase/migrations/20261109035223_anno_crm_anno_id.sql',
+  // Giro 1 della 4.8 (S26): il lock guarda anche le tre migrazioni del passaggio d'anno e i file nuovi di `src/` della 4.8.
+  'supabase/migrations/20261109182420_anno_passaggio_anteprima.sql',
+  'supabase/migrations/20261109182421_anno_passaggio_didattica.sql',
+  'supabase/migrations/20261109182422_anno_passaggio_conferma.sql',
+  // PR 4.9 (chiusura A): il tick degli stati e il passaggio da fare.
+  'supabase/migrations/20261112181553_anno_stati_automatici.sql',
+  'supabase/migrations/20261112181554_anno_passaggio_da_fare.sql',
 ] as const
 
 /**
@@ -67,9 +74,27 @@ const FILE_NUOVI_SRC = [
   'src/lib/anno/lettura-a-blocchi.ts',
   'src/lib/crm/anno-scheda.ts',
   'src/lib/prestampati/firma-per-anno.ts',
+  // PR 4.8 (S26): la pagina, le sette route e le due librerie del passaggio d'anno.
+  'src/app/(dashboard)/admin/students/passaggio/PassaggioClient.tsx',
+  'src/app/(dashboard)/admin/students/passaggio/page.tsx',
+  'src/app/api/admin/anni/[annoSedeId]/passaggio/route.ts',
+  'src/app/api/admin/anni/[annoSedeId]/passaggio/righe/route.ts',
+  'src/app/api/admin/anni/[annoSedeId]/passaggio/docenti/route.ts',
+  'src/app/api/admin/anni/[annoSedeId]/passaggio/conferma/route.ts',
+  'src/app/api/admin/anni/[annoSedeId]/passaggio/annulla/route.ts',
+  'src/app/api/admin/anni/[annoSedeId]/passaggio/conferma-tardiva/route.ts',
+  'src/app/api/admin/anni/[annoSedeId]/passaggio/nomi/route.ts',
+  'src/lib/anno/passaggio.ts',
+  'src/lib/anno/passaggio-risposte.ts',
+  // PR 4.9 (chiusura A): il dialogo della correzione e le sue librerie.
+  'src/components/features/anno/CorrezioneAnnoDialog.tsx',
+  'src/components/features/anno/useCorrezioneAnno.tsx',
+  'src/lib/anno/anno-della-riga.ts',
+  'src/lib/anno/correzione.ts',
+  'src/lib/ui/correzione-fetch.ts',
 ] as const
 
-const MINIMO_MIGRAZIONI = 5
+const MINIMO_MIGRAZIONI = 8
 const MINIMO_FILE_SRC = 8
 
 interface Divieto { nome: string; re: RegExp }
@@ -160,13 +185,13 @@ describe('anno-nessun-valore-cablato — il controllo positivo, su sorgenti fint
 
   it('zero file letti non passano per verdi: il minimo li ferma', () => {
     expect(violazioniMinimi(0, 0)).toHaveLength(2)
-    expect(violazioniMinimi(5, 8)).toEqual([])
-    expect(violazioniMinimi(4, 20)).toHaveLength(1)
+    expect(violazioniMinimi(8, 8)).toEqual([])
+    expect(violazioniMinimi(7, 20)).toHaveLength(1)
   })
 })
 
 describe('anno-nessun-valore-cablato — le cinque migrazioni M45 e i file nuovi di src/', () => {
-  it('ha letto tutto ciò che deve: 5 migrazioni e almeno 8 file di src/ (la lista ne ha 20)', () => {
+  it('ha letto tutto ciò che deve: 8 migrazioni e almeno 8 file di src/ (la lista ne ha 31)', () => {
     expect(violazioniMinimi(LETTI_SQL.length, LETTI_SRC.length)).toEqual([])
     // la lista non perde file in silenzio: ogni voce deve esistere (un file spostato va aggiornato qui)
     const mancanti = [...MIGRAZIONI, ...FILE_NUOVI_SRC].filter((f) => !fs.existsSync(path.join(CWD, f)))

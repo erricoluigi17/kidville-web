@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { render, screen, fireEvent, within } from '@testing-library/react'
 
 import itCruscotto from '../../messages/it/annoCruscotto.json'
 import enCruscotto from '../../messages/en/annoCruscotto.json'
 import enSettings from '../../messages/en/adminSettings.json'
+import itSettings from '../../messages/it/adminSettings.json'
 import itConfermeCat from '../../messages/it/annoConferme.json'
 import enConfermeCat from '../../messages/en/annoConferme.json'
 
@@ -182,6 +185,24 @@ describe('CruscottoClient — i collegamenti alla pagina Conferme', () => {
   })
 })
 
+describe('CruscottoClient — il rimando al passaggio d’anno (B4)', () => {
+  it('sotto le risposte delle famiglie c’è il rimando alla pagina del passaggio, e quella pagina esiste con quel nome', async () => {
+    render(<CruscottoClient />)
+    await screen.findByRole('heading', { name: itCruscotto.risposteTitolo })
+    const link = screen.getByRole('link', { name: itCruscotto.passaggioApri }) as HTMLAnchorElement
+    expect(link.getAttribute('href')).toBe('/admin/students/passaggio')
+    expect(screen.getByText(itCruscotto.passaggioIntro)).toBeInTheDocument()
+    expect(existsSync(join(process.cwd(), 'src/app/(dashboard)/admin/students/passaggio/page.tsx')), 'la pagina del rimando esiste').toBe(true)
+    // lo stesso indirizzo del menu della segreteria: stessi ruoli (admin, coordinator, segreteria)
+    expect(readFileSync(join(process.cwd(), 'src/components/features/admin/admin-nav-config.ts'), 'utf8')).toContain("href: '/admin/students/passaggio'")
+  })
+  it('le frasi ci sono in italiano e in inglese', () => {
+    expect(itCruscotto.passaggioApri).toBeTruthy()
+    expect(enCruscotto.passaggioApri).toBeTruthy()
+    expect(enCruscotto.passaggioIntro).toBeTruthy()
+  })
+})
+
 describe('CruscottoClient — gli stati', () => {
   it('anno non aperto (409): messaggio, senza «Riprova»', async () => {
     s.cruscotto = { status: 409, body: { error: 'ANNO_NON_APERTO' } }
@@ -271,7 +292,9 @@ describe('CruscottoClient — più sedi attive (revisione finale, B2)', () => {
     expect(itCruscotto.annoNonAperto).toMatch(/Impostazioni/)
     expect(enCruscotto.annoNonAperto).toMatch(/Settings/)
     // N6: un nome solo per il comando, quello di `adminSettings.json`
-    expect(enCruscotto.annoNonAperto).toContain(`“${enSettings.annoIscrizioniTitolo}”`)
+    // (rilettura del 13/11) si nomina il PULSANTE da premere («Sì, apri le iscrizioni»), non il titolo della sezione
+    expect(enCruscotto.annoNonAperto).toContain(`“${enSettings.annoApriConferma}”`)
+    expect(itCruscotto.annoNonAperto).toContain(`«${itSettings.annoApriConferma}»`)
     // N5: la nota del confronto non promette un accordo con «Hanno confermato» che non vale
     expect(itCruscotto.confrontoNota).not.toMatch(/Hanno confermato/)
     expect(enCruscotto.confrontoNota).not.toMatch(/Confirmed/)

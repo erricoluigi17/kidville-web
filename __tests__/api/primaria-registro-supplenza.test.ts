@@ -283,11 +283,11 @@ describe('POST /api/primaria/registro — l’anno della classe', () => {
     ]
   }
 
-  it('anno in_chiusura: 403 SEZIONE_SOLA_LETTURA e nessuna scrittura', async () => {
+  it('anno in_chiusura: 403 SEZIONE_IN_CHIUSURA (4.9.4: non è «anno passato») e nessuna scrittura', async () => {
     conAnni({ passato: 'in_chiusura', futuro: 'in_preparazione' })
     const res = await POST(req(corpo(SEZ_PASSATA)))
     expect(res.status).toBe(403)
-    expect((await res.json()).codice).toBe('SEZIONE_SOLA_LETTURA')
+    expect((await res.json()).codice).toBe('SEZIONE_IN_CHIUSURA')
     expect(righeScritte()).toEqual([])
   })
 

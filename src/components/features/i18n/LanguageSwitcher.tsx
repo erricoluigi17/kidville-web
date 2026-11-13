@@ -14,6 +14,11 @@ function applicaLingua(l: Locale) {
 }
 
 // Selettore lingua (IT/EN). Nessuna dipendenza dal routing: funziona ovunque.
+// ⚠️ Nella login (`auth/login/page.module.css`, `--kv-testa-login`) lo spazio sotto questa pill è
+// 36px, calcolato su un'altezza di ~32px (`p-1` + `py-1 text-xs`). Se la pill diventa più alta,
+// quel 36 va rivisto: lo guarda il lock `login-pill-lingua-sotto-safe-area`. L'area di tocco (44px) è un pseudo-elemento
+// che sporge di ~10px sopra e sotto ogni pulsante: non cambia la pill a vista né lo spazio riservato al logo
+// (il logo non è interattivo, e il pseudo-elemento sporge al massimo di 2px sulla sua fascia).
 export function LanguageSwitcher({ className }: { className?: string }) {
   const locale = useLocale() as Locale;
   const t = useTranslations('common');
@@ -33,7 +38,9 @@ export function LanguageSwitcher({ className }: { className?: string }) {
             onClick={() => { if (!attivo) applicaLingua(l); }}
             aria-pressed={attivo}
             className={cx(
-              'rounded-pill px-3 py-1 font-barlow text-xs font-bold uppercase tracking-wide transition-colors',
+              'relative rounded-pill px-3 py-1 font-barlow text-xs font-bold uppercase tracking-wide transition-colors',
+              // Area di tocco di 44px (h-11 fissi, non dipendono dal font) senza far crescere la pill a vista.
+              'before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-[\'\']',
               attivo ? 'bg-kidville-green text-white' : 'text-kidville-sub hover:text-kidville-green',
             )}
           >

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   AlertTriangle,
@@ -483,6 +483,8 @@ export function PrestampatiGenitore({
   inAttesa = false,
   motivoAssenza = null,
   onAlunnoScelto,
+  alunnoIniziale,
+  moduloIniziale,
 }: {
   figli: readonly FiglioPrestampati[];
   /**
@@ -529,6 +531,19 @@ export function PrestampatiGenitore({
    * sola, e vale per tutto quello che c'è in quella scheda.
    */
   onAlunnoScelto?: (alunnoId: string) => void;
+  /**
+   * IL FIGLIO GIÀ SCELTO DA CHI APRE IL PANNELLO (fascia «Moduli da rifirmare», 4.8.6).
+   *
+   * Vale solo alla nascita del pannello, e solo se è uno dei `figli`: è la scelta esplicita di
+   * un genitore che ha toccato «Firma» sulla riga di QUEL bambino, non un valore predefinito
+   * (che è ciò che il blocco su due figli esclude). Per cambiare figlio dopo c'è la tendina.
+   */
+  alunnoIniziale?: string;
+  /**
+   * Il modulo da aprire appena l'elenco del figlio è arrivato — una volta sola. Se non è
+   * firmabile ora o non c'è nell'elenco, il pannello resta sulla scelta del modulo.
+   */
+  moduloIniziale?: string;
 }) {
   const t = useTranslations('prestampatiGenitore');
   const ts = useTranslations('shared');
@@ -538,11 +553,21 @@ export function PrestampatiGenitore({
 
   // Un solo figlio: la scelta non è ambigua e si fa da sé. Due o più: nessun preselezionato,
   // e il perché sta nella testata di questo file.
-  const [alunnoId, setAlunnoId] = useState(() => (figli.length === 1 ? figli[0].id : ''));
+  const [alunnoId, setAlunnoId] = useState(() =>
+    alunnoIniziale && figli.some((f) => f.id === alunnoIniziale)
+      ? alunnoIniziale
+      : figli.length === 1
+        ? figli[0].id
+        : '',
+  );
   const [passo, setPasso] = useState<Passo>('modulo');
+  /** Il modulo chiesto da chi ha aperto il pannello: si consuma alla prima lettura dell'elenco. */
+  const moduloDaAprire = useRef<string | null>(moduloIniziale ?? null);
 
   const [elenco, setElenco] = useState<RispostaPrestampati | null>(null);
-  const [elencoInCorso, setElencoInCorso] = useState(() => figli.length === 1);
+  const [elencoInCorso, setElencoInCorso] = useState(
+    () => (!!alunnoIniziale && figli.some((f) => f.id === alunnoIniziale)) || figli.length === 1,
+  );
   const [erroreElenco, setErroreElenco] = useState<string | null>(null);
 
   const [slug, setSlug] = useState('');
@@ -659,6 +684,18 @@ export function PrestampatiGenitore({
       }
       setErroreElenco(null);
       setElenco(r.corpo);
+      // Il modulo chiesto da fuori si apre una volta sola, e solo se la famiglia può firmarlo ora
+      // (stessa regola di `scegliModulo`): gli stati sono quelli del passo «compila».
+      const daAprire = moduloDaAprire.current;
+      moduloDaAprire.current = null;
+      const voluto = daAprire ? (r.corpo.modelli ?? []).find((m) => m.slug === daAprire) : undefined;
+      if (voluto?.firmabileOra) {
+        setSlug(voluto.slug);
+        setDettaglioInCorso(true);
+        setDettaglio(null);
+        setErroreDettaglio(null);
+        setPasso('compila');
+      }
     } finally {
       // `finally`, non `catch`: se il caricamento resta acceso su un errore, la schermata
       // mente dicendo che sta ancora lavorando.

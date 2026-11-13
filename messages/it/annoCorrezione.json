@@ -1,0 +1,11 @@
+{
+  "titolo": "Registra come correzione",
+  "intro": "Stai correggendo l’anno {etichetta}, già chiuso. Scrivi perché: il motivo resta registrato insieme alla correzione.",
+  "introSenzaAnno": "Stai correggendo un anno già chiuso. Scrivi perché: il motivo resta registrato insieme alla correzione.",
+  "etichettaMotivo": "Motivo della correzione",
+  "segnaposto": "Per esempio: voto riportato male dopo lo scrutinio",
+  "minimo": "{min, plural, one {Serve almeno # carattere.} other {Servono almeno # caratteri.}}",
+  "conteggio": "{n}/{max}",
+  "registra": "Registra la correzione",
+  "annulla": "Annulla"
+}

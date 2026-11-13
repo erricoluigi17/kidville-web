@@ -40,6 +40,7 @@ const log = vi.hoisted(() => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: v
 vi.mock('@/lib/auth/scope', () => ({
   assertPagamentoInScope: vi.fn(async () => null),
   assertAlunnoInScope: vi.fn(async () => null),
+  assertAlunnoScrivibile: vi.fn(async () => null),
   assertParentInScope: vi.fn(async () => null),
   scuoleDiUtente: vi.fn(async () => ['sc-1']),
   resolveScuoleAttive: vi.fn(async () => ['sc-1']),

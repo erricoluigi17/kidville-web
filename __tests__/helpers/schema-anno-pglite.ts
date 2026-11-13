@@ -477,6 +477,13 @@ const SUFFISSI_PR2 = {
   M46b: '_anno_listino_rette_scrittura.sql',
   // PR 4.7: il cruscotto dell'anno prossimo (solo funzioni di lettura). Dopo M45e.
   M47: '_anno_cruscotto.sql',
+  // PR 4.8 (tre testate nate nel compito 4.8.0). Si applicano nell'ordine a, c, b: M48b chiama la copia della didattica di M48c. Dopo M45e.
+  M48a: '_anno_passaggio_anteprima.sql',
+  M48c: '_anno_passaggio_didattica.sql',
+  M48b: '_anno_passaggio_conferma.sql',
+  // PR 4.9 (due testate nate nel compito 4.9.0). Si applicano nell'ordine a, b. Dopo M48b.
+  M49a: '_anno_stati_automatici.sql',
+  M49b: '_anno_passaggio_da_fare.sql',
 } as const
 
 /**
@@ -632,6 +639,73 @@ export const SCHEMA_ISCRIZIONE_ANNO = `
   $f$;
 `
 
+/**
+ * PR 4.8 (compito 4.8.0) · Le cinque tabelle della didattica che seguono la sezione per `section_id` e che il banco minimo non ha
+ * (`materie`, `campanelle`, `orario_settimanale`, `tempo_scuola`, `sezione_materia_obiettivo`), con le sole colonne, i vincoli e gli
+ * indici unici veri di produzione (baseline del 04/07/2026). `utenti_sezioni_materie` c'è già in `SCHEMA_BASE`. NON stanno in
+ * `SCHEMA_BASE`: il registro non le conosce (non sono in `anno_tabelle`), e cambiarlo cambierebbe i test di prima. Chi prova la copia
+ * della didattica del passaggio le passa nella `codaPrima` di `creaDbAnnoPr2`. `obiettivo_id` non ha la chiave esterna: la tabella
+ * degli obiettivi non serve a nessuna prova.
+ */
+export const SCHEMA_PASSAGGIO_DIDATTICA = `
+  CREATE TABLE public.materie (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scuola_id uuid NOT NULL REFERENCES public.schools(id) ON DELETE CASCADE,
+    section_id uuid NOT NULL REFERENCES public.sections(id) ON DELETE CASCADE,
+    nome text NOT NULL,
+    codice text NOT NULL,
+    e_civica boolean NOT NULL DEFAULT false,
+    turno_mensa boolean NOT NULL DEFAULT false,
+    ordine integer NOT NULL DEFAULT 0,
+    attiva boolean NOT NULL DEFAULT true,
+    creato_il timestamptz DEFAULT now(),
+    updated_at timestamptz DEFAULT now(),
+    UNIQUE (section_id, codice)
+  );
+  CREATE TABLE public.campanelle (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    section_id uuid NOT NULL REFERENCES public.sections(id) ON DELETE CASCADE,
+    giorno_settimana integer NOT NULL CHECK (giorno_settimana BETWEEN 1 AND 6),
+    ordine integer NOT NULL,
+    ora_inizio time NOT NULL,
+    ora_fine time NOT NULL,
+    tipo text NOT NULL DEFAULT 'lezione' CHECK (tipo IN ('lezione', 'intervallo', 'mensa')),
+    creato_il timestamptz DEFAULT now(),
+    UNIQUE (section_id, giorno_settimana, ordine)
+  );
+  CREATE TABLE public.orario_settimanale (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    section_id uuid NOT NULL REFERENCES public.sections(id) ON DELETE CASCADE,
+    campanella_id uuid NOT NULL REFERENCES public.campanelle(id) ON DELETE CASCADE,
+    giorno_settimana integer NOT NULL CHECK (giorno_settimana BETWEEN 1 AND 6),
+    materia_id uuid REFERENCES public.materie(id) ON DELETE SET NULL,
+    docente_id uuid REFERENCES public.utenti(id) ON DELETE SET NULL,
+    note text,
+    creato_il timestamptz DEFAULT now(),
+    updated_at timestamptz DEFAULT now(),
+    UNIQUE (section_id, giorno_settimana, campanella_id)
+  );
+  CREATE TABLE public.tempo_scuola (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    section_id uuid NOT NULL REFERENCES public.sections(id) ON DELETE CASCADE,
+    modello integer NOT NULL CHECK (modello IN (27, 29, 40)),
+    giorni_settimana integer NOT NULL DEFAULT 5 CHECK (giorni_settimana BETWEEN 5 AND 6),
+    attivo boolean NOT NULL DEFAULT true,
+    creato_il timestamptz DEFAULT now(),
+    updated_at timestamptz DEFAULT now()
+  );
+  CREATE UNIQUE INDEX uq_tempo_scuola_section_attivo ON public.tempo_scuola (section_id) WHERE attivo;
+  CREATE TABLE public.sezione_materia_obiettivo (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    section_id uuid NOT NULL REFERENCES public.sections(id) ON DELETE CASCADE,
+    materia_id uuid NOT NULL REFERENCES public.materie(id) ON DELETE CASCADE,
+    obiettivo_id uuid NOT NULL,
+    creato_il timestamptz DEFAULT now(),
+    updated_at timestamptz DEFAULT now(),
+    UNIQUE (section_id, materia_id)
+  );
+`
+
 export async function applicaPr2(db: PGlite, quale: keyof typeof SUFFISSI_PR2): Promise<void> {
   const suffisso = SUFFISSI_PR2[quale]
   // La sezione M della migrazione 4.2 aggiorna `student_documents`: se il banco non l'ha, la crea nuda (senza registro).
@@ -712,7 +786,7 @@ export async function creaAnniFissi(db: PGlite, sedi: string[]): Promise<void> {
 
 export interface OpzioniDbPr2 {
   sedi: string[]
-  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43 → M44a → M44b → M44g → M45a → M45b → M45d → M45c → M45e → M46a → M46b → M47. */
+  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43 → M44a → M44b → M44g → M45a → M45b → M45d → M45c → M45e → M46a → M46b → M47 → M48a → M48c → M48b → M49a → M49b. */
   fino: keyof typeof SUFFISSI_PR2
   /** Con `SCHEMA_PR2` e `SCHEMA_PR2_RIEMPIMENTO` (le tabelle grandi); senza, solo il banco minimo della PR 1. */
   completo?: boolean
@@ -734,8 +808,8 @@ export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
     codaPrima: (o.completo ? SCHEMA_PR2 + SCHEMA_PR2_RIEMPIMENTO : '') + (o.codaPrima ?? ''),
   })
   await creaAnniFissi(db, o.sedi)
-  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43', 'M44a', 'M44b', 'M44g', 'M45a', 'M45b', 'M45d', 'M45c', 'M45e', 'M46a', 'M46b', 'M47']
-  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined, M44a: undefined, M44b: undefined, M44g: undefined, M45a: undefined, M45b: undefined, M45d: undefined, M45c: undefined, M45e: undefined, M46a: undefined, M46b: undefined, M47: undefined } as const
+  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43', 'M44a', 'M44b', 'M44g', 'M45a', 'M45b', 'M45d', 'M45c', 'M45e', 'M46a', 'M46b', 'M47', 'M48a', 'M48c', 'M48b', 'M49a', 'M49b']
+  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined, M44a: undefined, M44b: undefined, M44g: undefined, M45a: undefined, M45b: undefined, M45d: undefined, M45c: undefined, M45e: undefined, M46a: undefined, M46b: undefined, M47: undefined, M48a: undefined, M48c: undefined, M48b: undefined, M49a: undefined, M49b: undefined } as const
   for (const passo of ordine) {
     await applicaPr2(db, passo)
     await gancio[passo]?.(db)

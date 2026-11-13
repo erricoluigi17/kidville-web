@@ -2353,6 +2353,12 @@ export const CODICI_ERRORE = {
     SEZIONE_NON_TROVATA: 'erroreSezioneNonTrovata',
     /** 403 — la classe è di un anno passato e il docente la vede in sola lettura (`assertSezioneScrivibile`). */
     SEZIONE_SOLA_LETTURA: 'erroreSezioneSolaLettura',
+    /**
+     * 403 — la classe è dell'anno che si sta chiudendo (`in_chiusura`: da agosto a settembre): il docente la vede ma non la
+     * scrive, e la frase NON dice «anno passato», perché quell'anno è ancora quello in corso. Solo la Direzione e la segreteria
+     * possono correggerla (`assertSezioneScrivibile`, `assertSezionePrimariaFirmabile`; PR 4.9).
+     */
+    SEZIONE_IN_CHIUSURA: 'erroreSezioneInChiusura',
     /** 403 — questa è la porta del registro di PRIMARIA, e la classe è di un altro grado. */
     CLASSE_NON_DI_PRIMARIA: 'erroreClasseNonDiPrimaria',
     /**
@@ -3668,6 +3674,24 @@ export const CODICI_ERRORE = {
     IMPORTO_NON_VALIDO: 'erroreImportoNonValido',
     /** La spunta dei moduli (compito 4.5.10): 404 `FREQUENZA_NON_TROVATA`, la risposta di `rispostaFrequenzaNonTrovata`. */
     FREQUENZA_NON_TROVATA: 'erroreFrequenzaNonTrovata',
+    /**
+     * IL PASSAGGIO D'ANNO (PR 4.8, compito 4.8.0), tradotti da `erroreAnno`:
+     * 409 `PASSAGGIO_NON_PRONTO` · 409 `PASSAGGIO_TROPPO_PRESTO` · 409 `PASSAGGIO_GIA_CONFERMATO` · 409 `PASSAGGIO_NON_ANNULLABILE` ·
+     * 409 `PASSAGGIO_NON_MODIFICABILE` · 404 `PASSAGGIO_NON_TROVATO` · 409 `ANTEPRIMA_VECCHIA` · 409 `RIGHE_DA_DECIDERE` · 422 `RIGA_NON_VALIDA`.
+     * `PASSAGGIO_OGGI_NON_AMMESSO` NON c'è: lo solleva solo il database (sta in `CODICI_INTERNI`).
+     */
+    PASSAGGIO_NON_PRONTO: 'errorePassaggioNonPronto',
+    PASSAGGIO_TROPPO_PRESTO: 'errorePassaggioTroppoPresto',
+    PASSAGGIO_GIA_CONFERMATO: 'errorePassaggioGiaConfermato',
+    PASSAGGIO_NON_ANNULLABILE: 'errorePassaggioNonAnnullabile',
+    PASSAGGIO_NON_MODIFICABILE: 'errorePassaggioNonModificabile',
+    PASSAGGIO_NON_TROVATO: 'errorePassaggioNonTrovato',
+    ANTEPRIMA_VECCHIA: 'erroreAnteprimaVecchia',
+    RIGHE_DA_DECIDERE: 'erroreRigheDaDecidere',
+    RIGA_NON_VALIDA: 'erroreRigaNonValida',
+    /** Giro 1 del passaggio: 422 `DOCENTE_NON_VALIDO` (B5) · 409 `ALUNNO_SENZA_ISCRIZIONE` (B7). */
+    DOCENTE_NON_VALIDO: 'erroreDocenteNonValido',
+    ALUNNO_SENZA_ISCRIZIONE: 'erroreAlunnoSenzaIscrizione',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

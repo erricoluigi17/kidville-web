@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
-import { assertAlunnoInScope, assertSezioneInScope } from '@/lib/auth/scope';
+import { assertAlunnoScrivibile, assertSezioneInScope } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche';
 import { parseBody, parseQuery } from '@/lib/validation/http';
@@ -136,7 +136,7 @@ export const POST = withRoute('diary:POST', async (request: NextRequest) => {
 
         const supabase = await createClient();
         const admin = await createAdminClient();
-        const scopeErr = await assertAlunnoInScope(admin, auth.user, alunno_id);
+        const scopeErr = await assertAlunnoScrivibile(admin, auth.user, alunno_id);
         if (scopeErr) return scopeErr;
 
         // Calcola il timestamp per la notifica (evento + 10 min buffer)

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { assertAlunnoScrivibile, resolveScuoleAttive } from '@/lib/auth/scope';
 import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami';
 import { logScrittura } from '@/lib/audit/scrittura';
@@ -152,7 +152,7 @@ export const POST = withRoute('teacher/modulistica:POST', async (request: Reques
     //    legame familiare. `requireDocente` verifica il RUOLO: senza questo, un
     //    docente poteva allegare una scansione al fascicolo di un bambino di
     //    un'altra sede (e ricavarne il genitore) indovinandone l'id.
-    const scopeErr = await assertAlunnoInScope(supabase, auth.user, studentId);
+    const scopeErr = await assertAlunnoScrivibile(supabase, auth.user, studentId);
     if (scopeErr) return scopeErr;
 
     // 1. Upload reale della scansione (service-role, bucket privato).

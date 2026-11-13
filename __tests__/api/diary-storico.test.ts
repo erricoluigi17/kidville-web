@@ -7,7 +7,7 @@ const h = vi.hoisted(() => ({ db: {} as DBFinto, opzioni: {} as OpzioniFinto, us
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => creaFintoSupabase(h.db, [], h.opzioni) }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: async () => ({ user: h.user }) }))
 vi.mock('@/lib/auth/require-parent', () => ({ requireParentOfStudent: async () => ({ user: h.user }) }))
-vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => h.negato ? NextResponse.json({}, { status: 403 }) : null, resolveScuoleAttive: async () => h.negato ? [] : ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'] }))
+vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => h.negato ? NextResponse.json({}, { status: 403 }) : null, assertAlunnoScrivibile: async () => h.negato ? NextResponse.json({}, { status: 403 }) : null, resolveScuoleAttive: async () => h.negato ? [] : ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'] }))
 vi.mock('@/lib/auth/sede-richiesta', () => ({ restringiASedeRichiesta: () => ({ plessi: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'] }) }))
 vi.mock('@/lib/sezioni/risoluzione', () => ({ risolviSezione: async () => ({ sectionIds: ['classe'] }) }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn() }))

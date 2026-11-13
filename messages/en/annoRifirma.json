@@ -1,0 +1,9 @@
+{
+  "titolo": "Forms to sign again",
+  "testo": "With the new school year these forms need to be signed again. Tap “Sign” to open the form.",
+  "voce": "{modulo} · {nome}",
+  "firmatoIl": "Signed on {data}",
+  "firma": "Sign",
+  "firmaAria": "Sign: {modulo} · {nome}",
+  "altri": "{n, plural, one {And one more form, which appears after these.} other {And # more forms, which appear after these.}}"
+}

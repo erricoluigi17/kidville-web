@@ -4,7 +4,7 @@ import type { AppUser } from '@/lib/auth/predicati-ruolo'
 import { creaFintoSupabase, type DBFinto } from '../fixtures/finto-supabase'
 const h = vi.hoisted(() => ({ db: {} as DBFinto, user: {} as AppUser }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: async () => ({ user: h.user }) }))
-vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => null, assertSezioneInScope: async () => null, assertSezioneScrivibile: async () => null, assertAlunniInSezione: async () => null }))
+vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => null, assertAlunnoScrivibile: async () => null, assertSezioneInScope: async () => null, assertSezioneScrivibile: async () => null, assertAlunniInSezione: async () => null }))
 vi.mock('@/lib/supabase/server-client', () => ({ createAdminClient: async () => creaFintoSupabase(h.db) }))
 vi.mock('@/lib/notifiche/config', () => ({ isNotificaAbilitata: async () => true }))
 vi.mock('@/lib/notifiche/destinatari', () => ({ genitoriDiAlunni: async () => ['genitore'] }))

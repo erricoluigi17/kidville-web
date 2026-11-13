@@ -200,5 +200,6 @@
   "periodiRipristina": "Rimetti in elenco",
   "periodiArchiviatoBadge": "archiviato",
   "periodiMostraArchiviati": "Mostra anche gli archiviati",
+  "periodiRicalcoloNonRiuscito": "Salvato, ma i voti non sono stati riassegnati ai quadrimestri: avvisa l’assistenza.",
   "periodiPromemoriaDate": "Mancano le date dei quadrimestri di quest’anno: senza, i voti non si collegano al quadrimestre e lo scrutinio chiuso non li protegge."
 }

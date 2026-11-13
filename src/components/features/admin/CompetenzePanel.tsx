@@ -10,6 +10,7 @@ import { useSediAttive } from '@/lib/context/sede-context'
 import { apriDocumento } from '@/lib/native/scarica'
 import { avvisoDocumento, nomeFileProtocollo } from '@/lib/ui/documento-segreteria'
 import { logClient, nomeErrore } from '@/lib/logging/client'
+import { useCorrezioneAnno } from '@/components/features/anno/useCorrezioneAnno'
 
 interface Livello { competenza_codice: string; livello: string | null; note: string | null }
 interface Cert {
@@ -38,6 +39,8 @@ const LEVEL_DOT: Record<string, string> = {
 export function CompetenzePanel({ userId }: { userId: string }) {
   const t = useTranslations('adminStudents')
   const hdr = useCallback(() => ({ 'Content-Type': 'application/json', 'x-user-id': userId }), [userId])
+  // Una bozza su un anno già chiuso si crea come CORREZIONE (PR 4.9): il server risponde 409 con `correzione_possibile` e si apre il dialogo.
+  const { inviaConCorrezione, dialogo } = useCorrezioneAnno()
   // Sedi accessibili: servono a ETICHETTARE le quinte omonime e a ricaricare
   // l'elenco quando la selezione delle sedi cambia (`reFetchKey`).
   const { sedi, reFetchKey } = useSediAttive()
@@ -95,7 +98,8 @@ export function CompetenzePanel({ userId }: { userId: string }) {
     if (!sectionId) return
     setBusy('seed'); setMsg(null)
     try {
-      const r = await fetch(`/api/admin/competenze?userId=${userId}`, { method: 'POST', headers: hdr(), body: JSON.stringify({ sectionId }) })
+      const r = await inviaConCorrezione((correzione) =>
+        fetch(`/api/admin/competenze?userId=${userId}`, { method: 'POST', headers: hdr(), body: JSON.stringify({ sectionId, ...(correzione ? { correzione } : {}) }) }))
       const d = await r.json()
       if (!r.ok) { setMsg(d.error ?? t('compErrCreazione')); return }
       setMsg(t('compBozzeCreate', { n: d.creati }))
@@ -325,6 +329,7 @@ export function CompetenzePanel({ userId }: { userId: string }) {
           )}
         </div>
       )}
+      {dialogo}
     </div>
   )
 }

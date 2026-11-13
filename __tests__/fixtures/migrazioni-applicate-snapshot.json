@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-09",
-  "generato_alle": "2026-11-09T16:52:17Z",
-  "sha256": "a9cae685d35da48327f5be6d017bb0afb06bc543033aecdec07bb3d6fe3e2e78",
+  "generato_il": "2026-11-13",
+  "generato_alle": "2026-11-13T12:07:10Z",
+  "sha256": "8afe32358037dbd0de5346ca1d28b77f226f5892612f592b95be6d03040c4600",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -1087,6 +1087,30 @@
     {
       "version": "20261109153825",
       "name": "anno_listino_rette_scrittura"
+    },
+    {
+      "version": "20261109165244",
+      "name": "anno_cruscotto"
+    },
+    {
+      "version": "20261109182420",
+      "name": "anno_passaggio_anteprima"
+    },
+    {
+      "version": "20261109182421",
+      "name": "anno_passaggio_didattica"
+    },
+    {
+      "version": "20261109182422",
+      "name": "anno_passaggio_conferma"
+    },
+    {
+      "version": "20261112181553",
+      "name": "anno_stati_automatici"
+    },
+    {
+      "version": "20261112181554",
+      "name": "anno_passaggio_da_fare"
     }
   ]
 }

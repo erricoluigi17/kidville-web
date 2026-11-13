@@ -436,12 +436,21 @@ export function posterioriCheContengono(
 // nessuna tabella con `scuola_id`, nessun bucket, nessuno schema delle candidature, nessuna scrittura nel registro dell'anno. Nessuna delle guardie
 // la segnalerebbe e il lock «nessuna voce morta» rifiuterebbe una dichiarazione che non serve. Dopo il merge cambia solo la fotografia delle
 // migrazioni (+1), che la PR-B rigenera dalla produzione.
-// 2026-11-11 · CRM Assistente Famiglie: due tabelle private, chiavi e indici, e funzioni che scrivono
+// 2026-11-09 · PR 4.9 (`20261112181554_anno_passaggio_da_fare.sql`): dentro la PR, la applica l'integrazione al merge. Cambia i due CHECK della tabella dei
+// gettoni (`correzioni_anno_chiuso_codice_check`, `…_utente_check`: il codice nuovo `passaggio`) con DROP/ADD CONSTRAINT, e il riconoscitore delle chiavi
+// esterne verso `utenti` grida a ogni vincolo toccato. Nessuna chiave esterna cambia: le 83 restano com'erano. Dopo il merge cambia solo la fotografia
+// delle migrazioni, che la PR-B rigenera dalla produzione. (`20261112181553_anno_stati_automatici.sql` NON è dichiarata: un CONSTRAINT TRIGGER non è un
+// `ADD CONSTRAINT` e nessuna guardia la vede.)
+// SVUOTATA il 2026-11-13 nella PR-B della 4.9 (#308, `631c9fac`): `20261112181554` e' applicata in produzione, la fotografia delle migrazioni la contiene
+// (277) e la voce si e' tolta, come chiedeva il lock «nessuna chiave e' gia' applicata».
+// 2026-11-11 · CRM Assistente Famiglie (`20261113212650_crm_accesso_ai.sql`): due tabelle private, chiavi e indici, e funzioni che scrivono
 // nei bambini del CRM. La applica l’integrazione al merge. Fotografie da aggiornare nella PR-B.
-// 2026-11-13 · CRM, servizi offerti dalla sede: una tabella privata con i valori iniziali. Stessa regola.
+// 2026-11-13 · CRM, servizi offerti dalla sede (`20261113212652_crm_servizi_sede.sql`): una tabella privata con i valori iniziali. Stessa regola.
+// Rinominate il 13/11 allineando il ramo a main: le version erano 20261111225125 e 20261113100000, la prima PIÙ VECCHIA delle due migrazioni
+// del 12/11 già in produzione (l'integrazione applica in ordine) e la seconda con un orario tondo.
 export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-  '20261111225125_crm_accesso_ai.sql': 'L’integrazione applica al merge tabelle private, vincoli e funzioni CRM; fotografie nella PR-B.',
-  '20261113100000_crm_servizi_sede.sql': 'L’integrazione applica al merge la tabella privata dei servizi per sede (RLS accesa, solo service-role); fotografie nella PR-B.',
+  '20261113212650_crm_accesso_ai.sql': 'L’integrazione applica al merge tabelle private, vincoli e funzioni CRM; fotografie nella PR-B.',
+  '20261113212652_crm_servizi_sede.sql': 'L’integrazione applica al merge la tabella privata dei servizi per sede (RLS accesa, solo service-role); fotografie nella PR-B.',
 }
 
 /**

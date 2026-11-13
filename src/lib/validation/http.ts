@@ -48,9 +48,14 @@ export type ParseResult<T> = { data: T } | { response: NextResponse };
 export function validationError(
     issues: ReadonlyArray<{ path: PropertyKey[]; message: string }>
 ): NextResponse {
+    // La CORREZIONE di un anno chiuso (`correzione: { motivo }`) che non regge (motivo corto, lungo, non è testo) ha il suo codice:
+    // la schermata può dire «scrivi perché» invece di un «Dati non validi» muto. Il messaggio dello schema non esce (può citare
+    // il testo): restano percorso e motivo della regola, come per ogni 400. Mai l'eco del motivo.
+    const sullaCorrezione = issues.some((i) => String(i.path[0]) === 'correzione');
     return NextResponse.json(
         {
             error: 'Dati non validi',
+            ...(sullaCorrezione ? { codice: 'MOTIVO_OBBLIGATORIO' } : {}),
             details: issues.map((i) => ({
                 path: i.path.map(String).join('.'),
                 message: i.message,
@@ -113,6 +118,35 @@ export async function parseBody<S extends z.ZodType>(
         return {
             response: validationError([
                 { path: [], message: 'Body JSON mancante o malformato' },
+            ]),
+        };
+    }
+    impostaPayload('body', raw);
+    return valida(schema, raw);
+}
+
+/**
+ * Come `parseBody`, ma il corpo può MANCARE: un `DELETE` classico non ne ha, e chi vuole portare una correzione di un anno chiuso
+ * (PR 4.9) lo manda nel corpo JSON (mai in una URL: finisce nei log di chiunque stia in mezzo). Corpo assente o vuoto → lo schema
+ * vede `{}`; corpo presente ma non JSON → 400, come `parseBody`.
+ */
+export async function parseBodyFacoltativo<S extends z.ZodType>(
+    request: Request,
+    schema: S
+): Promise<ParseResult<z.output<S>>> {
+    const testo = await request.text();
+    if (testo.trim() === '') {
+        impostaPayloadEsito('body', 'body-assente');
+        return valida(schema, {});
+    }
+    let raw: unknown;
+    try {
+        raw = JSON.parse(testo);
+    } catch {
+        impostaPayloadEsito('body', 'body-json-malformato');
+        return {
+            response: validationError([
+                { path: [], message: 'Body JSON malformato' },
             ]),
         };
     }

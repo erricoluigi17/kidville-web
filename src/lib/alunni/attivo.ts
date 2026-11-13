@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { eAncoraIscritto } from './stato';
 import { logEvento } from '@/lib/logging/logger';
+import { schemaAnnoIndietro } from '@/lib/anno/schema';
 
 /**
  * QUANDO UN BAMBINO NON DEVE PIÙ COMPARIRE ALLA SUA FAMIGLIA — in un posto solo.
@@ -146,5 +147,43 @@ export async function verificaAlunnoAttivo(
   if (!data) return 'attivo';
 
   const presenti = new Set(colonne);
-  return motivoNascosto(data as Record<string, unknown>, presenti) ? 'nascosto' : 'attivo';
+  if (motivoNascosto(data as Record<string, unknown>, presenti)) return 'nascosto';
+
+  // ─── PR 4.8.3 · «ATTIVO» DOPO IL PASSAGGIO ────────────────────────────────
+  // `alunni` da sola non sa più dire se un bambino è attivo: dopo il passaggio chi NON continua ha ancora classe, stato
+  // «iscritto» e nessuna archiviazione, e questo gate lo lasciava passare mentre `figli_attivi` (l'elenco dei figli, la
+  // galleria, gli avvisi) non lo elenca più. La definizione di «frequenza viva nell'anno attivo» sta in SQL una volta sola
+  // (`frequenze_attive`, sotto `figli_attivi`): qui si fa la stessa domanda per UN bambino, così le due risposte concordano.
+  // Si paga solo se `alunni` ha già detto sì, e una lettura di chiave in più per richiesta di famiglia.
+  return (await frequenzaViva(supabase, alunnoId)) as EsitoAlunnoAttivo;
+}
+
+/**
+ * Il bambino ha una frequenza viva nell'anno attivo della sua sede?
+ *
+ *  · funzione assente (DB della CI, finestra del deploy) → il controllo di oggi, cioè `'attivo'`, con una riga `info`;
+ *  · ogni altro errore, o un'eccezione → `'non-letto'`: come per `alunni`, un guasto lascia passare (filtro di presentazione,
+ *    il perimetro è il legame) ma lascia una riga `error`. Mai un `'nascosto'` inventato da una lettura fallita.
+ */
+async function frequenzaViva(supabase: SupabaseClient, alunnoId: string): Promise<EsitoAlunnoAttivo> {
+  try {
+    const { data, error } = await supabase.rpc('frequenze_attive', { p_alunni: [alunnoId] });
+    if (error) {
+      if (schemaAnnoIndietro(error)) {
+        logEvento('anno-scolastico', 'info', {
+          operazione: 'alunni/attivo',
+          esito: 'schema-indietro',
+          error_code: (error as { code?: string }).code ?? null,
+        });
+        return 'attivo';
+      }
+      segnala('alunno-attivo-frequenza-non-letta', error);
+      return 'non-letto';
+    }
+    const righe = Array.isArray(data) ? data : data ? [data] : [];
+    return righe.length > 0 ? 'attivo' : 'nascosto';
+  } catch (e) {
+    segnala('alunno-attivo-frequenza-non-letta', e);
+    return 'non-letto';
+  }
 }

@@ -161,3 +161,48 @@ describe('creaMuta · rete giù', () => {
     expect(JSON.stringify(h.logClient.mock.calls)).not.toContain('Failed to fetch')
   })
 })
+
+describe('creaMuta · un successo che dice qualcosa (`avvisoDalSuccesso`)', () => {
+  const avviso = (corpo: unknown) =>
+    (corpo as { ricalcolo?: string } | null)?.ricalcolo === 'non-riuscito' ? 'Salvato, ma i voti non sono stati riassegnati.' : null
+
+  function bancoConAvviso() {
+    const ricarica = vi.fn()
+    const setErrore = vi.fn()
+    return { ricarica, setErrore, muta: creaMuta({ route: ROTTA, ricarica, setErrore, fallback: RIPIEGO, avvisoDalSuccesso: avviso }) }
+  }
+
+  it('il server accetta ma dice «non-riuscito»: ritorna true, ricarica e MOSTRA l’avviso (non il silenzio)', async () => {
+    fetchMock.mockResolvedValue(risposta(201, { success: true, ricalcolo: 'non-riuscito' }))
+    const b = bancoConAvviso()
+
+    await expect(b.muta('/api/x', { method: 'POST' }, 'x-respinta')).resolves.toBe(true)
+
+    expect(b.setErrore).toHaveBeenCalledWith('Salvato, ma i voti non sono stati riassegnati.')
+    expect(b.ricarica).toHaveBeenCalledTimes(1)
+  })
+
+  it('un successo pulito azzera l’avviso come sempre', async () => {
+    fetchMock.mockResolvedValue(risposta(200, { success: true, ricalcolo: 'fatto' }))
+    const b = bancoConAvviso()
+    await expect(b.muta('/api/x', { method: 'PATCH' }, 'x-respinta')).resolves.toBe(true)
+    expect(b.setErrore).toHaveBeenCalledWith('')
+  })
+
+  it('un corpo di successo illeggibile non rompe la mutazione: true, avviso vuoto, e una riga di log senza il corpo', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token <') } })
+    const b = bancoConAvviso()
+    await expect(b.muta('/api/x', { method: 'PATCH' }, 'x-respinta')).resolves.toBe(true)
+    expect(b.setErrore).toHaveBeenCalledWith('')
+    expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'warn', evento: 'fetch', route: ROTTA }))
+    expect(JSON.stringify(h.logClient.mock.calls)).not.toContain('Unexpected token')
+  })
+
+  it('senza `avvisoDalSuccesso` il corpo non si legge nemmeno (la mutazione è quella di sempre)', async () => {
+    const json = vi.fn()
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json })
+    const b = banco()
+    await b.muta('/api/x', { method: 'POST' }, 'x-respinta')
+    expect(json).not.toHaveBeenCalled()
+  })
+})

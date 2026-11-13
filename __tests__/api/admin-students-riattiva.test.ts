@@ -39,6 +39,10 @@ const h = vi.hoisted(() => ({
   tabelle: [] as string[],
   scritture: [] as unknown[],
   errori: {} as Record<string, { code: string; message?: string }>,
+  // (quinto giro) Le due letture nuove si pilotano: di default «non è archiviata dal passaggio» e «la classe ricordata è dello stesso anno».
+  annoAttivo: null as string | null,
+  passaggio: { ok: true, si: false } as { ok: boolean; si?: boolean },
+  stessoAnno: { ok: true, stesso: true } as { ok: boolean; stesso?: boolean },
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -105,6 +109,9 @@ beforeEach(() => {
   h.tabelle = []
   h.scritture = []
   h.errori = {}
+  h.annoAttivo = null
+  h.passaggio = { ok: true, si: false }
+  h.stessoAnno = { ok: true, stesso: true }
   h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: SEDE_A } })
 })
 
@@ -330,6 +337,28 @@ describe('POST /api/admin/students/riattiva — i rifiuti', () => {
   })
 })
 
+describe('POST /api/admin/students/riattiva — l\'uscita del passaggio (quinto giro)', () => {
+  it('ancora archiviato dal passaggio: 409 che rimanda alla «Conferma tardiva», niente scritto', async () => {
+    h.annoAttivo = 'anno-attivo-1'
+    h.passaggio = { ok: true, si: true }
+    const res = await POST(post({ alunno_id: ALU_A }))
+    expect(res.status).toBe(409)
+    expect(String((await res.json()).error)).toContain('Conferma tardiva')
+    expect(riga(ALU_A)?.stato).toBe('ritirato')
+    expect(scrittureSu('alunni')).toHaveLength(0)
+  })
+
+  it('la lettura del criterio non riesce: 500 `RIATTIVAZIONE_NON_RIUSCITA`, niente scritto (non so ≠ no)', async () => {
+    h.annoAttivo = 'anno-attivo-1'
+    h.passaggio = { ok: false }
+    const res = await POST(post({ alunno_id: ALU_A }))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBe('RIATTIVAZIONE_NON_RIUSCITA')
+    expect(riga(ALU_A)?.stato).toBe('ritirato')
+    expect(scrittureSu('alunni')).toHaveLength(0)
+  })
+})
+
 describe('POST /api/admin/students/riattiva — «libera spazio» è già passato', () => {
   it('la riattivazione RIESCE, ma la risposta dichiara che foto e messaggi non tornano', async () => {
     h.db.alunni[0].spazio_liberato_il = '2026-08-05T09:00:00.000Z'
@@ -383,7 +412,16 @@ describe('POST /api/admin/students/riattiva — audit e DB non migrato', () => {
 })
 
 // PR 3 · 3.7-2: il finto di questo file non ha `rpc('anno_attivo')`; l'anno attivo non è l'oggetto del test.
+// (chiusura 4.8) Il finto di questo file non ha `rpc('anno_attivo')`/`rpc('anno_visibile_oggi')`: la finestra del passaggio non è l'oggetto di queste
+// prove (le sue sono in `__tests__/db/anno-passaggio-chiusura.test.ts`, con le route vere). Qui si è fuori dalla finestra.
+vi.mock('@/lib/anno/iscrizione-anno', async (orig) => ({
+  ...(await orig<typeof import('@/lib/anno/iscrizione-anno')>()),
+  frequenzeDellaFinestra: async () => ({ ok: true, nellaFinestra: false }),
+  archiviatoDalPassaggio: async () => h.passaggio,
+  classeRicordataDelloStessoAnno: async () => h.stessoAnno,
+}))
+
 vi.mock('@/lib/anno/frequenze', async (orig) => ({
   ...(await orig<typeof import('@/lib/anno/frequenze')>()),
-  annoAttivoDiSede: async () => null,
+  annoAttivoDiSede: async () => h.annoAttivo,
 }))

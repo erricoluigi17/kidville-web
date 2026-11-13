@@ -596,6 +596,7 @@ const schemaIndietro = (): RispostaRpc => ({ data: null, error: { code: 'PGRST20
 const RPC_DI_SERIE: Record<string, (args: Riga) => RispostaRpc> = {
   scatola_nera_dimentica: () => ({ data: 0, error: null }),
   figli_attivi: schemaIndietro,
+  frequenze_attive: schemaIndietro,
   avvisi_visibili_genitore: schemaIndietro,
   thread_visibili: schemaIndietro,
   thread_e_visibile: schemaIndietro,

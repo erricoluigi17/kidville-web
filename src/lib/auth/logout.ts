@@ -4,6 +4,7 @@ import { impostaBiometria } from '@/lib/native/biometric';
 import { dimenticaTuttiIGradi } from '@/lib/auth/use-child-school-type';
 import { svuotaCacheLocale } from '@/lib/offline/pulizia-cache';
 import { unregisterNativePush } from '@/lib/push/native-register';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 // Logout lato client (modello ibrido: sessione Supabase via cookie + identità
 // applicativa in localStorage + cookie server-side ruolo/sedi). doLogout():
@@ -51,28 +52,57 @@ const LOCAL_KEYS = [
   'kv_teacher_id',
 ];
 
+// Ogni passo è best-effort e FAIL-OPEN: un errore (di rete, di cache, perfino del logger) non impedisce mai di
+// uscire. Ma non si butta via in silenzio (regole 6 e 7 di AGENTS.md): si scrive il PASSO e il CODICE dell'errore,
+// mai il messaggio (può contenere email o altro). Il canale client conosce solo `warn` ed `error`: questi sono
+// `warn`, perché l'uscita si completa comunque.
+const CODICE_SICURO = /^[a-z][a-z0-9_]{0,63}$/;
+
+function segnala(passo: string, errore: unknown): void {
+  try {
+    let codice = nomeErrore(errore);
+    const c = (errore as { code?: unknown } | null)?.code;
+    if (typeof c === 'string' && CODICE_SICURO.test(c)) codice = c;
+    logClient({
+      livello: 'warn',
+      evento: 'accesso',
+      messaggio: `uscita: passo non riuscito — passo=${passo} codice=${codice}`,
+      route: '/logout',
+    });
+  } catch {
+    // Regola 9 di AGENTS.md: il logger è fail-open e non rompe mai l'uscita. Se è il logger a lanciare non c'è
+    // niente di più da scrivere dove registrarlo: questo catch è l'unico `catch` vuoto voluto del file.
+  }
+}
+
 export async function doLogout(): Promise<void> {
   try {
     // PRIMA di chiudere la sessione: vedi il blocco qui sopra. Su web è un no-op
     // puro (la push web resta gestita dal service worker e dal suo opt-in).
     await unregisterNativePush();
-  } catch {
-    /* ignore: non lancia già di suo, e comunque l'uscita non dipende da lei */
+  } catch (e) {
+    segnala('push', e); // non lancia già di suo, e comunque l'uscita non dipende da lei
   }
   try {
     await fetch('/api/auth/logout', { method: 'POST' });
-  } catch {
-    /* ignore: procedo comunque a chiudere la sessione */
+  } catch (e) {
+    segnala('cookie', e); // procedo comunque a chiudere la sessione
   }
   try {
-    await getSupabase().auth.signOut();
-  } catch {
-    /* ignore */
+    // `scope: 'local'`: l'uscita chiude la sessione di QUESTO dispositivo e basta. Senza scope supabase-js usa
+    // `'global'` e cancella le sessioni di quell'utente su TUTTI i dispositivi (visto nel collaudo del 13/11:
+    // un «Esci» sull'iPhone ha buttato fuori anche Chrome). Decisione di Luigi del 13/11/2026.
+    // `signOut` NON lancia: ritorna `{ error }`. Con `local` la revoca lato server è l'unica che resta, e se fallisce
+    // (rete, 5xx) il refresh token resta vivo: si registra il codice. Lo stato locale lo toglie comunque.
+    const { error } = await getSupabase().auth.signOut({ scope: 'local' });
+    if (error) segnala('signOut', error);
+  } catch (e) {
+    segnala('signOut', e);
   }
   try {
     await impostaBadgeNonLette(0);
-  } catch {
-    /* ignore: il badge è cosmetico, l'uscita no */
+  } catch (e) {
+    segnala('badge', e); // il badge è cosmetico, l'uscita no
   }
   try {
     // `impostaBiometria(false)` e NON la chiave dentro LOCAL_KEYS: quella lista
@@ -82,18 +112,18 @@ export async function doLogout(): Promise<void> {
     // smetterebbe di spegnerla IN SILENZIO — cioè di nuovo un utente chiuso
     // fuori dalla schermata di login, che è il difetto appena corretto.
     impostaBiometria(false);
-  } catch {
-    /* ignore */
+  } catch (e) {
+    segnala('biometria', e);
   }
   try {
     await svuotaCacheLocale();
-  } catch {
-    /* ignore */
+  } catch (e) {
+    segnala('cache', e);
   }
   try {
     for (const k of LOCAL_KEYS) window.localStorage.removeItem(k);
-  } catch {
-    /* ignore */
+  } catch (e) {
+    segnala('chiavi', e);
   }
   try {
     // Il grado di ogni figlio è memorizzato per dispositivo con una chiave a
@@ -105,8 +135,8 @@ export async function doLogout(): Promise<void> {
     // Non è cosmetico: nel suffisso c'è l'uuid di un minore, e questi telefoni
     // e tablet passano di mano.
     dimenticaTuttiIGradi();
-  } catch {
-    /* ignore: non lancia già di suo, e comunque l'uscita non dipende da lei */
+  } catch (e) {
+    segnala('gradi', e);
   }
   // Hard navigation: scarta qualunque stato in memoria e rivaluta le guardie.
   window.location.href = '/auth/login';

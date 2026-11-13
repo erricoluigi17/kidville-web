@@ -1,0 +1,11 @@
+{
+  "titolo": "Record as a correction",
+  "intro": "You are correcting the school year {etichetta}, which is already closed. Write why: the reason is saved together with the correction.",
+  "introSenzaAnno": "You are correcting a school year that is already closed. Write why: the reason is saved together with the correction.",
+  "etichettaMotivo": "Reason for the correction",
+  "segnaposto": "For example: grade recorded wrongly after the final assessment",
+  "minimo": "{min, plural, one {At least # character is needed.} other {At least # characters are needed.}}",
+  "conteggio": "{n}/{max}",
+  "registra": "Record the correction",
+  "annulla": "Cancel"
+}

@@ -188,7 +188,13 @@ export async function scriviFrequenza(
     } else {
       const attivo = await supabase.rpc('anno_attivo', { p_scuola: scuolaId })
       if (attivo.error) return esitoDaErrore(attivo.error, 'anno-attivo')
-      if (attivo.data !== annoSedeId) return { ok: true, saltata: 'anno-non-attivo' }
+      if (attivo.data !== annoSedeId) {
+        // (giro 3, NB1/NB2) Nella finestra fra la conferma e l'inizio l'anno attivo è il nuovo, ma le schede seguono ancora il vecchio:
+        // la frequenza dell'anno VISIBILE si scrive come quella dell'attivo (retta, giorno di scadenza, ritiro). Senza la funzione
+        // (schema indietro) o con un altro anno resta `anno-non-attivo`, come prima.
+        const visibile = await supabase.rpc('anno_visibile_oggi', { p_scuola: scuolaId })
+        if (visibile.error || visibile.data !== annoSedeId) return { ok: true, saltata: 'anno-non-attivo' }
+      }
     }
 
     const riga = await supabase
@@ -276,6 +282,82 @@ export async function annoAttivoDiSede(
   }
   cache?.set(scuolaId, anno)
   return anno
+}
+
+/**
+ * (giro 3, NB1/NB2) L'anno VISIBILE di una sede oggi (`anno_visibile_oggi`): quello che le schede seguono. Fuori dalla finestra fra la
+ * conferma del passaggio e l'inizio coincide con l'attivo; nella finestra è l'anno che finisce, mentre l'attivo è già il nuovo (non ancora
+ * cominciato). Le route che SALVANO o ARCHIVIANO la scheda scrivono i campi per anno nella frequenza di questo anno, non dell'attivo.
+ * Non lancia mai. Se la funzione non c'è (schema indietro) o fallisce, ripiega sull'attivo: il comportamento di prima, mai peggio.
+ */
+export async function annoVisibileDiSede(
+  supabase: SupabaseClient,
+  scuolaId: string | null | undefined,
+  cache?: Map<string, string | null>,
+): Promise<string | null> {
+  if (!scuolaId) return null
+  if (cache?.has(scuolaId)) return cache.get(scuolaId) ?? null
+  try {
+    const r = await supabase.rpc('anno_visibile_oggi', { p_scuola: scuolaId })
+    if (!r.error && typeof r.data === 'string') {
+      cache?.set(scuolaId, r.data)
+      return r.data
+    }
+    if (r.error && !schemaAnnoIndietro(r.error)) {
+      logErrore({ operazione: 'anno/frequenze:annoVisibileDiSede' }, new Error(`anno_visibile_oggi:${r.error.code ?? 'senza-codice'}`))
+    }
+  } catch (err) {
+    logErrore({ operazione: 'anno/frequenze:annoVisibileDiSede' }, err)
+  }
+  return annoAttivoDiSede(supabase, scuolaId, cache)
+}
+
+/**
+ * (giro 3) LA FINESTRA fra la conferma del passaggio e l'inizio dell'anno nuovo: l'anno attivo è già il nuovo (non ancora cominciato),
+ * il visibile è ancora il vecchio. `null` fuori dalla finestra, o se le due letture non riescono: in dubbio si resta nel comportamento
+ * di prima. NON segna il client fra le letture fallite (`LETTURE_ANNO_FALLITE`): è una lettura di contorno, e se l'anno attivo non si
+ * legge davvero lo scoprirà e lo segnerà la scrittura vera, che ne risponde.
+ */
+export async function finestraDiSede(
+  supabase: SupabaseClient,
+  scuolaId: string | null | undefined,
+): Promise<{ attivo: string; visibile: string } | null> {
+  return (await leggiFinestraDiSede(supabase, scuolaId)).finestra
+}
+
+/**
+ * (Riattiva, giro 9, O-a) Come `finestraDiSede`, ma dice anche se una lettura è CADUTA (`guasto`): «non so» non vale «fuori dalla finestra».
+ * Chi scrive in base alla finestra (la chiusura delle iscrizioni all'archiviazione) deve poter distinguere i due casi. Lo schema indietro
+ * (la CI, un ambiente a metà) non è un guasto.
+ */
+export async function leggiFinestraDiSede(
+  supabase: SupabaseClient,
+  scuolaId: string | null | undefined,
+): Promise<{ finestra: { attivo: string; visibile: string } | null; guasto: boolean }> {
+  if (!scuolaId) return { finestra: null, guasto: false }
+  try {
+    const [att, vis] = await Promise.all([
+      supabase.rpc('anno_attivo', { p_scuola: scuolaId }),
+      supabase.rpc('anno_visibile_oggi', { p_scuola: scuolaId }),
+    ])
+    if (att.error || vis.error) {
+      let guasto = false
+      for (const e of [att.error, vis.error]) {
+        if (e && !schemaAnnoIndietro(e)) {
+          guasto = true
+          logErrore({ operazione: 'anno/frequenze:finestraDiSede' }, new Error(`finestra:${e.code ?? 'senza-codice'}`))
+        }
+      }
+      return { finestra: null, guasto }
+    }
+    if (typeof att.data === 'string' && typeof vis.data === 'string' && att.data !== vis.data) {
+      return { finestra: { attivo: att.data, visibile: vis.data }, guasto: false }
+    }
+  } catch (err) {
+    logErrore({ operazione: 'anno/frequenze:finestraDiSede' }, err)
+    return { finestra: null, guasto: true }
+  }
+  return { finestra: null, guasto: false }
 }
 
 /**

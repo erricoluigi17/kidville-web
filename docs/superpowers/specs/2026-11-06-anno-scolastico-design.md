@@ -339,8 +339,10 @@ passaggio è il nuovo.
 Il passaggio si conferma dal giorno dopo l'`ultimo_giorno_aperto` del vecchio anno fino all'`inizio` del
 nuovo. Prima di allora non si può, perché avremmo due anni correnti. Se il nuovo anno comincia e il
 passaggio non è stato fatto, le scritture datate nel nuovo anno vengono rifiutate con
-`409 PASSAGGIO_DA_FARE`. Il cruscotto lo segnala dal 1° agosto, e `/api/health` dà `error` da 7 giorni
-prima dell'`inizio` (**scelta mia**: fermarsi è meglio che archiviare in silenzio nell'anno sbagliato).
+`409 PASSAGGIO_DA_FARE`. Il cruscotto lo segnala dal 1° agosto, e `/api/health` dà `degradato` da 7 giorni
+prima dell'`inizio`, e il giro orario di `anni_tick` scrive, per ogni sede, una riga di log di livello `error` (la stessa impronta: le occorrenze crescono) col solo numero di giorni all'inizio (**scelta mia**: fermarsi è
+meglio che archiviare in silenzio nell'anno sbagliato; la salute non scende a `giu` perché i controlli nuovi non lo fanno mai, lock
+`salute-controlli-nuovi-mai-giu`: il `503` resta di `db-lettura`, `auth` e `schema-atteso`).
 
 #### 4.4.2 Le sezioni
 
@@ -826,15 +828,19 @@ salute notturno (un'invariante mai rieseguita è una fotografia), e copiata nel 
 4. un «iscritto» senza moduli o senza quota, ricalcolato dalla verità (`frequenze_moduli`, voce pagata) e
    non dai flag; esclude `recupero` e li conta;
 5. una competenza fuori dal periodo del suo anno;
-6. una riga di `scatola_nera.modifiche` su un anno `in_chiusura` o `chiuso`, successiva al cambio di
-   stato, senza un uso di gettone nella stessa `transazione` (la scatola nera la registra già); per le
-   tabelle senza scatola nera bastano i gettoni;
+6. una riga di `scatola_nera.modifiche` su un anno **`chiuso`** (non `in_chiusura`: lì la segreteria scrive
+   senza gettone, regola R-a, e in produzione le tabelle `piena` registrano migliaia di modifiche al mese:
+   contarle sarebbe un falso difetto), successiva al cambio di stato, con almeno una colonna non esente e
+   senza un uso di gettone nella stessa `transazione` (la scatola nera la registra già); per le tabelle
+   senza scatola nera bastano i gettoni;
 7. un genitore che vede, attraverso un figlio non attivo, una sezione, una foto, un avviso o un thread;
 8. un docente che vede una sezione di un anno `in_preparazione` o `iscrizioni_aperte`;
 9. (mia) una riga creata dopo l'attivazione con una sezione di un altro anno;
 10. (mia) una tabella del registro senza colonna o senza trigger, o una tabella con `anno_id` che non è nel
     registro;
 11. (mia, durante le PR 3-4) una scheda alunno che non coincide con la sua frequenza dell'anno attivo.
+15. (4.8) un bambino in classe senza riga aperta nello storico delle classi;
+16. (mia, 4.9) un anno `in_chiusura` o `chiuso` con le domande ancora aperte.
 
 **Altre prove**:
 - **Conservazione**: conteggi ed euro prima e dopo, dal rapporto del §4.13, uguali al centesimo.

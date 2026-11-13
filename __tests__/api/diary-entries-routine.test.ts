@@ -81,7 +81,7 @@ vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn() }));
 vi.mock('@/lib/primaria/notifiche', () => ({ notificaTitolariScrittura: vi.fn(), enqueueDiarioGenitori: vi.fn() }));
 vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: async () => h.config, leggiModuleConfig: async () => ({ ok: true, config: h.config }) }));
 vi.mock('@/lib/armadietto/richieste', () => ({ riconciliaRichieste: vi.fn() }));
-vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => null, resolveScuoleAttive: async () => [SEDE] }));
+vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => null, assertAlunnoScrivibile: async () => null, resolveScuoleAttive: async () => [SEDE] }));
 vi.mock('@/lib/logging/logger', async (orig) => ({ ...(await orig<Record<string, unknown>>()), logEvento: h.logEvento }));
 
 const req = (body: unknown) => new NextRequest('http://x/api/diary/entries?userId=u1', {

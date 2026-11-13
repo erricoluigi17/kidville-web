@@ -24,6 +24,8 @@ export const ECCEZIONI: Record<string, string> = {
     'pannello di segreteria: elenca e confronta le assegnazioni di OGNI anno per gestirle (non è la visibilità del docente)',
   'lib/chat/rubrica.ts':
     'rubrica della famiglia: parte dalle sezioni del FIGLIO (anno attivo) e cerca chi vi insegna; non è «le sezioni di un docente»',
+  'app/api/admin/anni/[annoSedeId]/passaggio/docenti/route.ts':
+    'dopo «Togli» dice alla pagina se la persona resta assegnata alla classe nuova dalla scheda della classe: legge una coppia (utente, sezione) precisa, non «le sezioni di un docente»',
   'lib/audit/valutatore.ts':
     'chi è titolare di una materia in una sezione GIÀ nota (la scrive solo chi ha passato assertSezioneScrivibile); distingue guasto da assenza, cosa che sezioniDiUtente non fa',
 }

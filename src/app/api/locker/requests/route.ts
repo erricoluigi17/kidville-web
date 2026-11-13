@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
-import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { assertAlunnoScrivibile, scuoleDiUtente } from '@/lib/auth/scope';
 import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -233,7 +233,7 @@ export const PATCH = withRoute('locker/requests:PATCH', async (request: NextRequ
         // che il legame con quel bambino l'ha verificato — e la sede al genitore non si
         // applica affatto, due fratelli possono stare in due plessi diversi.
         if (stato === 'evasa') {
-            const scopeErr = await assertAlunnoInScope(supabase, auth.user, riga.alunno_id);
+            const scopeErr = await assertAlunnoScrivibile(supabase, auth.user, riga.alunno_id);
             if (scopeErr) return scopeErr;
         }
 

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { zDataOraLocale, zUuid } from '@/lib/validation/common'
 import { istanteDaLocale } from '@/lib/format/confini-giorno'
+import { zCorrezione } from '@/lib/anno/correzione'
 import { AMBITI, TITOLO_MAX } from './tipi'
 
 /**
@@ -48,14 +49,20 @@ export const creaVotazioneSchema = z.object({
   // Deduplicato come le classi: lo stesso candidato due volte sarebbe un 23505 sulla chiave di
   // `votazioni_candidati`, cioè un 500 per un doppio clic.
   candidatiIstituto: z.array(zUuid).max(200).transform(senzaDoppioni).default([]),
+  // Su un anno chiuso la segreteria registra una CORREZIONE (PR 4.9): il motivo sta nella riga del gettone, mai in un log.
+  correzione: zCorrezione.optional(),
 })
 export type CreaVotazioneInput = z.infer<typeof creaVotazioneSchema>
 
 /** Il body di `PATCH /api/admin/votazioni/[id]`. */
 export const azioneVotazioneSchema = z.discriminatedUnion('azione', [
-  z.object({ azione: z.literal('chiudi') }),
-  z.object({ azione: z.literal('proroga'), scadenza: zDataOraLocale }),
+  // Su un anno chiuso la segreteria registra una CORREZIONE (PR 4.9): il motivo sta nella riga del gettone, mai in un log.
+  z.object({ azione: z.literal('chiudi'), correzione: zCorrezione.optional() }),
+  z.object({ azione: z.literal('proroga'), scadenza: zDataOraLocale, correzione: zCorrezione.optional() }),
 ])
+
+/** Il corpo FACOLTATIVO di `DELETE /api/admin/votazioni/[id]`: vuoto, o `{ correzione }` su un anno chiuso. */
+export const eliminaVotazioneSchema = z.object({ correzione: zCorrezione.optional() })
 export type AzioneVotazioneInput = z.infer<typeof azioneVotazioneSchema>
 
 /**

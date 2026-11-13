@@ -2691,9 +2691,18 @@ describe('coverage-lock isolamento fra sedi', () => {
             // Misurato rieseguendo il lock: 402 → 403.
             // 403 → 404 il 2026-11-09 (PR 4.7, 4.7.2): entra `admin/anni/[annoSedeId]/senza-firma-app` (GET). CONTROLLATA, nessuna esenzione:
             // gate `requireStaff`, `assertAnnoSedeInScope`; i nomi sono SOLO della pagina e ogni bambino mostrato passa dal registro degli accessi.
-            // 404 → 413 il 2026-11-12 (CRM, accesso AI): 7 route `crm/ai/*` e 2 `admin/crm/integrazioni*`.
-            // La sede viene dalla chiave AI o dalla sessione di Direzione. Incremento misurato col lock.
-            routeConServiceRole: 413,
+            // 401 → 407 il 2026-11-09 (anno scolastico, PR 4.8, compito 4.8.8): entrano le sei route del passaggio
+            // (`admin/anni/[annoSedeId]/passaggio`, `…/righe`, `…/docenti`, `…/conferma`, `…/annulla`, `…/conferma-tardiva`).
+            // CONTROLLATE, nessuna esenzione: gate `requireStaff` e `assertAnnoSedeInScope` sull'anno nuovo prima di ogni lettura o
+            // scrittura; il passaggio lo trova il server dall'anno dell'URL (mai dal corpo); l'anteprima verifica anche l'anno di partenza.
+            // Misurato rieseguendo il lock: 401 → 407.
+
+            // 407 → 408 il 2026-11-10 (giro 1, S6): entra `admin/anni/[annoSedeId]/passaggio/nomi` (GET). CONTROLLATA: `requireStaff`, `assertAnnoSedeInScope`,
+            // e i nomi si leggono solo fra le righe del passaggio di QUELL'anno (porta `leggiNomiDelPassaggio`). Misurato: 407 → 408.
+            // routeConServiceRole era 411: 404 + le sette route del passaggio d’anno (PR 4.8), tutte CONTROLLATE. Misurato rieseguendo il lock dopo l’allineamento a main.
+            // 411 → 420 il 2026-11-13 (CRM, accesso AI, ramo `ripresa-crm` allineato a main): 7 route `crm/ai/*` e 2 `admin/crm/integrazioni*`,
+            // tutte CONTROLLATE. La sede viene dalla chiave AI o dalla sessione di Direzione. Misurato rieseguendo il lock: 411 → 420.
+            routeConServiceRole: 420,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -3054,9 +3063,14 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 619 → 621 il 2026-11-09 (4.6.4): `rette:GET` e `rette:PUT`, entrambi CONTROLLATI; `handlerEsentati` non cambia (108).
             // 621 → 622 il 2026-11-09 (PR 4.7, 4.7.6): `cruscotto:GET`, CONTROLLATO; `handlerEsentati` non cambia (108).
             // 622 → 623 il 2026-11-09 (PR 4.7, 4.7.2): `senza-firma-app:GET`, CONTROLLATO; `handlerEsentati` non cambia (108).
-            // 623 → 633 il 2026-11-12 (CRM, accesso AI): 7 handler AI e 3 di Direzione (elenco, creazione, revoca).
-            // Tutti controllati. Le esenzioni restano 108.
-            handlerControllati: 633,
+            // 619 → 626 il 2026-11-09 (PR 4.8, 4.8.8): le sette funzioni HTTP delle sei route del passaggio, tutte CONTROLLATE;
+            // `handlerEsentati` non cambia (108).
+
+            // 626 → 627 il 2026-11-10 (giro 1): `passaggio/nomi:GET`, CONTROLLATO; `handlerEsentati` non cambia (108).
+            // handlerControllati era 631: 623 + otto handler del passaggio (PR 4.8, GET/PUT/POST delle sette route), tutti CONTROLLATI; handlerEsentati non cambia (108).
+            // 631 → 641 il 2026-11-13 (CRM, accesso AI): 7 handler AI e 3 di Direzione (elenco, creazione, revoca), tutti CONTROLLATI;
+            // `handlerEsentati` non cambia (108). Misurato rieseguendo il lock: 631 → 641.
+            handlerControllati: 641,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

@@ -71,6 +71,8 @@ vi.mock('@/lib/auth/scope', () => ({
   resolveScuolaScrittura: h.resolveScuolaScrittura,
   scuoleDiUtente: h.scuoleDiUtente,
   resolveScuoleAttive: vi.fn(),
+  // I destinatari-classe dei video passano dal gate di anno: qui non è in prova (lo è in docenti-agosto-comunicazioni).
+  assertClasseNomeScrivibile: async () => null,
 }))
 
 vi.mock('@/lib/security/rate-limit', () => ({

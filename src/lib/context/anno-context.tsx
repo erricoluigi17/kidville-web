@@ -28,6 +28,7 @@ import { useTranslations } from 'next-intl';
 import { annoAttivoDelCalendario, etichettaAnno, type Calendario } from '@/lib/anno-scolastico';
 import type { StatoAnno } from '@/lib/anno/tipi';
 import { logClient } from '@/lib/logging/client';
+import { AvvisoAnnoInChiusura } from '@/components/features/anno/AvvisoAnnoInChiusura';
 import { useRuoloCockpit } from './admin-identity';
 import { useCalendario } from './calendario-context';
 import { useSediAttive } from './sede-context';
@@ -274,21 +275,55 @@ export function AnnoNotice() {
   const visibile = useVedeAnno();
   const t = useTranslations('shared');
   const testoStato = useTestoStatoAnno();
-  if (!ctx || !visibile || !ctx.effettivo || ctx.eAttivo) return null;
+  const [perche, setPerche] = useState(false);
+  if (!ctx || !visibile || !ctx.effettivo) return null;
   const { effettivo } = ctx;
+  // PR 4.9: l'anno che si sta guardando è `in_chiusura` o `chiuso` (anche se è l'anno attivo): una riga fissa, in flusso, che lo dice.
+  const inChiusura = effettivo.stato === 'in_chiusura' || effettivo.stato === 'chiuso';
+  const rigaChiusura = inChiusura ? <AvvisoAnnoInChiusura etichetta={effettivo.etichetta} /> : null;
+  if (ctx.eAttivo) {
+    return rigaChiusura ? <div className="px-4 pt-3">{rigaChiusura}</div> : null;
+  }
   // `stato` è `null` quando le sedi attive non concordano: dicitura neutra (nel testo di `testoStato`).
   const stato = testoStato(effettivo.stato);
+  // In FLUSSO (mai `fixed`): spinge giù il contenuto invece di coprirlo. `sticky` perché resti visibile
+  // scorrendo, appoggiato sotto la barra: sul telefono quella verde (`--kv-appbar-h`), da 744 px la
+  // topbar desktop alta 64 px (`top-16`, la stessa che regge il binario e la sidebar). `z-30`: sotto le
+  // barre (z-40 / z-105) e i fogli (z-110).
   return (
-    // In FLUSSO (mai `fixed`): spinge giù il contenuto invece di coprirlo. `sticky` perché resti visibile
-    // scorrendo, appoggiato sotto la barra: sul telefono quella verde (`--kv-appbar-h`), da 744 px la
-    // topbar desktop alta 64 px (`top-16`, la stessa che regge il binario e la sidebar). `z-30`: sotto le
-    // barre (z-40 / z-105) e i fogli (z-110).
+    <>
     <div
       role="status"
       data-kv-anno-avviso
-      className="sticky top-[var(--kv-appbar-h)] z-30 flex flex-wrap tablet:top-16 items-center justify-between gap-3 border-b border-kidville-line bg-kidville-yellow-soft px-4 py-2.5 font-maven text-[14px] text-kidville-ink"
+      className="sticky top-[var(--kv-appbar-h)] z-30 flex flex-wrap tablet:top-16 items-center justify-between gap-x-3 gap-y-1 border-b border-kidville-line bg-kidville-yellow-soft px-4 py-2 font-maven text-[14px] text-kidville-ink min-[640px]:py-2.5"
     >
-      <p>{t('annoAvvisoTesto', { anno: effettivo.etichettaBreve, stato })}</p>
+      {/* Sotto i 640px (telefono) compatto: sopra l'anno guardato e il suo stato, sotto «Perché?» (il testo
+          lungo sta lì dietro) e il pulsante per tornare. `basis-full` costringe il pulsante ad andare a capo
+          invece di schiacciare il testo (con `flex-1` da solo restavano ~106px a 390 e ~36px a 320).
+          Da 640px in su l'avviso è quello intero di sempre, testo e pulsante sulla stessa riga. */}
+      <div className="min-w-0 basis-full min-[640px]:flex-1 min-[640px]:basis-0">
+        <p>
+          <span className="min-[640px]:hidden">{t('annoAvvisoBreve', { anno: effettivo.etichettaBreve, stato })}</span>
+          <span className="hidden min-[640px]:inline">{t('annoAvvisoTesto', { anno: effettivo.etichettaBreve, stato })}</span>
+        </p>
+        {perche && (
+          <p id="kv-anno-avviso-perche" className="mt-1 text-[13px] min-[640px]:hidden">
+            {t('annoAvvisoPercheTesto', { anno: effettivo.etichettaBreve })}
+          </p>
+        )}
+      </div>
+      {/* Area di tocco di 44px per COSTRUZIONE (min-h), non per un'estensione che dipende dal font: sta sulla sua
+          riga accanto a «Torna» (o sopra, a 320px) e le due aree non si sovrappongono mai. */}
+      <button
+        type="button"
+        onClick={() => setPerche((v) => !v)}
+        aria-expanded={perche}
+        aria-controls="kv-anno-avviso-perche"
+        aria-label={t('annoAvvisoPercheEtichetta', { anno: effettivo.etichettaBreve })}
+        className="min-h-[44px] px-2 font-bold underline min-[640px]:hidden"
+      >
+        {t('annoAvvisoPerche')}
+      </button>
       <button
         type="button"
         onClick={ctx.usaAttivo}
@@ -297,5 +332,7 @@ export function AnnoNotice() {
         {t('annoAvvisoTorna')}
       </button>
     </div>
+    {rigaChiusura ? <div className="px-4 pt-3">{rigaChiusura}</div> : null}
+    </>
   );
 }

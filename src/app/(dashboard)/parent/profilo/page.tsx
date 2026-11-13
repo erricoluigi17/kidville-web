@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useId, useState, useEffect, useCallback } from 'react';
+import { Suspense, useId, useState, useEffect, useCallback, useRef } from 'react';
 import { LinkInterno } from '@/components/ui/LinkInterno';
 import { IdCard, ShieldCheck, FileText, LifeBuoy, Loader2, AlertTriangle, Trash2, RotateCcw, Fingerprint, KeyRound, ChevronDown } from 'lucide-react';
 import { useTranslations } from 'next-intl';
@@ -8,6 +8,7 @@ import { CambiaPasswordCard } from '@/components/features/account/CambiaPassword
 import { ContrastSwitch } from '@/components/ui/ContrastSwitch';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { doLogout } from '@/lib/auth/logout';
+import { ConfermaUscita } from '@/components/ui/ConfermaUscita';
 import { LanguageSwitcher } from '@/components/features/i18n/LanguageSwitcher';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { biometriaDisponibile, biometriaAttiva, impostaBiometria, verificaBiometria } from '@/lib/native/biometric';
@@ -38,6 +39,10 @@ function Inner() {
   const [loading, setLoading] = useState(true);
   const [conferma, setConferma] = useState('');
   const [busy, setBusy] = useState(false);
+  // «Esci» apre la conferma (`ConfermaUscita`): esce solo il secondo tocco.
+  const [confermaUscita, setConfermaUscita] = useState(false);
+  const [uscendo, setUscendo] = useState(false);
+  const esciRef = useRef<HTMLButtonElement>(null);
   const [errore, setErrore] = useState<string | null>(null);
 
   // Sblocco biometrico opt-in (nativo). `bioSupportata`: null = in verifica,
@@ -314,11 +319,22 @@ function Inner() {
       </section>
 
       <button
-        onClick={() => doLogout()}
-        className="w-full rounded-pill px-4 py-2.5 font-barlow text-sm font-extrabold uppercase text-kidville-muted active:bg-kidville-cream"
+        ref={esciRef}
+        onClick={() => setConfermaUscita(true)}
+        className="min-h-[44px] w-full rounded-pill px-4 py-2.5 font-barlow text-sm font-extrabold uppercase text-kidville-muted active:bg-kidville-cream"
       >
         {t('esci')}
       </button>
+      <ConfermaUscita
+        open={confermaUscita}
+        busy={uscendo}
+        returnFocusRef={esciRef}
+        onAnnulla={() => setConfermaUscita(false)}
+        onConferma={() => {
+          setUscendo(true);
+          void doLogout();
+        }}
+      />
     </div>
   );
 }

@@ -3,29 +3,30 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 /**
- * COMPITO 4.5.12 · IL TICK CREA L'ANNO SUCCESSIVO; NON FA IL PASSAGGIO.
+ * COMPITO 4.9.1 (riscrive il lock del 4.5.12) · IL TICK PORTA L'ANNO A `in_chiusura` E A `chiuso`; NON FA IL PASSAGGIO.
  *
- * `anni_tick` gira ogni ora da solo. Crea l'anno successivo di una sede quando arriva il suo giorno e ne copia listino, moduli
- * e posti: è il PASSO 1, e non cambia lo stato di nessun anno. Il PASSAGGIO (l'anno corrente si chiude, il successivo diventa
- * corrente, i bambini passano alla classe dopo, le frequenze si chiudono) cambia migliaia di righe di minori, e per scelta del
- * titolare non è in questa PR né in un cron: lo lancia una persona, con i controlli del caso (PR 3-B). Se un giorno il tick lo
- * facesse da solo, il 1° settembre di un anno qualunque l'anno scolastico di tre scuole cambierebbe alle 00:10 senza che
- * nessuno l'abbia deciso.
+ * `anni_tick` gira ogni ora da solo. Il passo 1 crea l'anno successivo; il passo 2 (`anno_stati_aggiorna`, dalla PR 4.9) porta il
+ * vecchio anno a `in_chiusura` il giorno dopo l'ultimo giorno aperto e a `chiuso` il giorno dopo la fine. NON fa il PASSAGGIO:
+ * non promuove MAI un anno a `corrente`, non muove frequenze e non scrive in `passaggi_anno`. Il passaggio cambia migliaia di righe
+ * di minori e lo lancia una persona, con i controlli del caso (PR 4.8). Se un giorno il tick lo facesse da solo, il 1° settembre di
+ * un anno qualunque l'anno scolastico di tre scuole cambierebbe alle 00:10 senza che nessuno l'abbia deciso.
  *
- * Il lock legge l'ULTIMA definizione di `anni_tick` (il file con la version più alta che la contiene, l'ultima del file), non
- * la prima che capita, e vieta due cose nel suo testo, scritto senza commenti:
- *  - un `UPDATE … anni_sede SET … stato =` (il cambio di stato di un anno);
+ * Il lock legge l'ULTIMA definizione delle funzioni del tick (il file con la version più alta che la contiene, l'ultima del file),
+ * non la prima che capita, e nel suo testo, scritto senza commenti, vieta due cose:
+ *  - un `UPDATE … anni_sede SET … stato = X` dove X non sia un letterale `'in_chiusura'` o `'chiuso'` (in particolare `'corrente'`, ma
+ *    anche una variabile o un'espressione: il lock non saprebbe dire dove porta);
  *  - il nome `passaggi_anno` (la tabella dove il passaggio registra ciò che ha fatto).
- * Le stesse due cose valgono per le funzioni che il tick chiama, `anni_sede_crea_successivo` e `anno_copia_configurazione`.
+ * Valgono per le funzioni del tick: `anni_tick`, `anno_stati_aggiorna`, `anno_stati_log`, `anni_sede_crea_successivo` e
+ * `anno_copia_configurazione`.
  *
- * ⚠️ QUANDO QUESTO LOCK DEVE DIVENTARE ROSSO PER BUONE RAGIONI: la PR 3-B (il passaggio) aggiungerà il passo 2 al tick, con un
- * `CREATE OR REPLACE`. Quel giorno il lock si toglie o si riscrive di proposito, con la decisione del titolare scritta accanto;
- * non si aggira con un'eccezione.
+ * ⚠️ QUANDO QUESTO LOCK DEVE DIVENTARE ROSSO PER BUONE RAGIONI: il giorno in cui il titolare decide che il tick fa anche il passaggio.
+ * Quel giorno il lock si riscrive di proposito, con la decisione accanto; non si aggira con un'eccezione.
  *
  * ─── PERCHÉ NON È CIECO ───────────────────────────────────────────────────────
  * Dichiara quante migrazioni ha letto, quante definizioni ha trovato e quanto è lungo il testo che ha esaminato (un corpo
- * vuoto è verde per costruzione), e ha il suo controllo positivo su SQL finto. Non vede: un passaggio fatto da una funzione
- * chiamata da una funzione chiamata dal tick, o un nome di tabella costruito a pezzi.
+ * vuoto è verde per costruzione), conta gli `UPDATE … stato` che ha visto nel passo 2 (devono essere almeno due: se ne vedesse zero
+ * sarebbe cieco), e ha il suo controllo positivo su SQL finto. Non vede: un passaggio fatto da una funzione chiamata da una funzione
+ * chiamata dal tick, o un nome di tabella costruito a pezzi.
  */
 
 const CWD = process.cwd()
@@ -64,17 +65,26 @@ function ultimaDefinizione(nome: string, migrazioni: Migrazione[]): { migrazione
   return null
 }
 
-/** Ogni `UPDATE … anni_sede …` il cui SET (prima del WHERE) assegna `stato`. */
-function updateDelloStato(corpo: string): number {
-  let n = 0
+/**
+ * Ogni `UPDATE … anni_sede …` il cui SET (prima del WHERE) assegna `stato`, con il valore assegnato: il letterale (anche fra due
+ * apici raddoppiati, dentro una stringa di `EXECUTE`) oppure `null` se non è un letterale.
+ */
+function aggiornamentiDelloStato(corpo: string): Array<string | null> {
+  const out: Array<string | null> = []
   const re = /\bupdate\s+(?:only\s+)?(?:public\.)?anni_sede\b([^;]*)/gi
   let h: RegExpExecArray | null
   while ((h = re.exec(corpo)) !== null) {
     const set = h[1].split(/\bwhere\b/i)[0]
-    if (/\bstato\s*=/i.test(set)) n++
+    const assegna = /\bstato\s*=\s*([\s\S]*)$/i.exec(set)
+    if (!assegna) continue
+    const lett = /^('{1,2})([a-z_]+)\1\s*(?:,|$)/i.exec(assegna[1].trim())
+    out.push(lett ? lett[2].toLowerCase() : null)
   }
-  return n
+  return out
 }
+
+/** I due soli stati a cui il tick può portare un anno. `corrente` è del passaggio. */
+const STATI_DEL_TICK = ['in_chiusura', 'chiuso']
 
 const nominaPassaggi = (corpo: string) => /\bpassaggi_anno\b/i.test(corpo)
 
@@ -82,13 +92,18 @@ function violazioni(nome: string, migrazioni: Migrazione[]): string[] {
   const d = ultimaDefinizione(nome, migrazioni)
   if (!d) return [`${nome} — nessuna definizione trovata nelle migrazioni`]
   const out: string[] = []
-  const u = updateDelloStato(d.corpo)
-  if (u > 0) out.push(`${nome} (ultima definizione: ${d.migrazione}) — ${u} \`UPDATE anni_sede SET stato\`: il cambio di stato di un anno è il passaggio, e non è del tick`)
+  for (const valore of aggiornamentiDelloStato(d.corpo)) {
+    if (valore === null) {
+      out.push(`${nome} (ultima definizione: ${d.migrazione}) — un \`UPDATE anni_sede SET stato\` con un valore che non è un letterale: il lock non sa dove porta l'anno`)
+    } else if (!STATI_DEL_TICK.includes(valore)) {
+      out.push(`${nome} (ultima definizione: ${d.migrazione}) — porta un anno a \`${valore}\`: il tick può solo chiudere (\`in_chiusura\`, \`chiuso\`), il passaggio è di una persona`)
+    }
+  }
   if (nominaPassaggi(d.corpo)) out.push(`${nome} (ultima definizione: ${d.migrazione}) — nomina \`passaggi_anno\`: il passaggio non è del tick`)
   return out
 }
 
-const FUNZIONI = ['anni_tick', 'anni_sede_crea_successivo', 'anno_copia_configurazione'] as const
+const FUNZIONI = ['anni_tick', 'anno_stati_aggiorna', 'anno_stati_log', 'anni_sede_crea_successivo', 'anno_copia_configurazione'] as const
 const MIGRAZIONI = leggiMigrazioni()
 const elenco = (v: string[]) => (v.length ? '\n  - ' + v.join('\n  - ') : '')
 
@@ -98,22 +113,30 @@ const fn = (nome: string, corpo: string): Migrazione => ({
 })
 
 describe('anni-tick-non-fa-il-passaggio — il controllo positivo, su SQL finto', () => {
-  it('un UPDATE dello stato di un anno nel tick fa rosso, in tutte le forme di scrittura', () => {
-    expect(violazioni('anni_tick', [fn('anni_tick', "UPDATE public.anni_sede SET stato = 'chiuso' WHERE id = v_id;")])).toHaveLength(1)
+  it('portare un anno a `corrente` nel tick fa rosso, in tutte le forme di scrittura', () => {
+    expect(violazioni('anni_tick', [fn('anni_tick', "UPDATE public.anni_sede SET stato = 'corrente' WHERE id = v_id;")])).toHaveLength(1)
     expect(violazioni('anni_tick', [fn('anni_tick', "UPDATE anni_sede\n   SET inizio = inizio, stato = 'corrente'\n WHERE id = v_id;")])).toHaveLength(1)
     expect(violazioni('anni_tick', [fn('anni_tick', "EXECUTE 'UPDATE public.anni_sede SET stato = ''corrente''';")])).toHaveLength(1)
+    expect(violazioni('anni_tick', [fn('anni_tick', "UPDATE public.anni_sede SET domande_aperte = false, stato = 'corrente';")])).toHaveLength(1)
+  })
+
+  it('un valore dello stato che non è un letterale (variabile, espressione, CASE) fa rosso: il lock non sa dove porta l’anno', () => {
+    expect(violazioni('anni_tick', [fn('anni_tick', 'UPDATE public.anni_sede SET stato = v_nuovo WHERE id = v_id;')])).toHaveLength(1)
+    expect(violazioni('anni_tick', [fn('anni_tick', "UPDATE public.anni_sede SET stato = CASE WHEN x THEN 'chiuso' ELSE 'corrente' END;")])).toHaveLength(1)
   })
 
   it('il nome della tabella dei passaggi nel tick fa rosso', () => {
     expect(violazioni('anni_tick', [fn('anni_tick', 'INSERT INTO public.passaggi_anno (a) VALUES (1);')])).toHaveLength(1)
   })
 
-  it('un UPDATE di anni_sede che non tocca lo stato, o una condizione sullo stato, non fa rosso; un commento neppure', () => {
+  it('`UPDATE … SET stato = \'in_chiusura\'` e `\'chiuso\'` passano, come un UPDATE che non tocca lo stato; un commento non conta', () => {
+    expect(violazioni('anni_tick', [fn('anni_tick', "UPDATE public.anni_sede SET stato = 'in_chiusura', domande_aperte = false WHERE id = v_id AND stato = 'corrente';")])).toEqual([])
+    expect(violazioni('anni_tick', [fn('anni_tick', "UPDATE public.anni_sede SET stato = 'chiuso' WHERE id = v_id;")])).toEqual([])
     expect(violazioni('anni_tick', [fn('anni_tick', "UPDATE public.anni_sede SET prepara_successivo_dal = d WHERE stato = 'corrente';")])).toEqual([])
-    expect(violazioni('anni_tick', [fn('anni_tick', "-- UPDATE public.anni_sede SET stato = 'chiuso'\n/* passaggi_anno */ PERFORM 1;")])).toEqual([])
+    expect(violazioni('anni_tick', [fn('anni_tick', "-- UPDATE public.anni_sede SET stato = 'corrente'\n/* passaggi_anno */ PERFORM 1;")])).toEqual([])
   })
 
-  it('vale l’ULTIMA definizione: una ridefinizione più recente con il passaggio fa rosso, anche se la prima era pulita', () => {
+  it('vale l’ULTIMA definizione: una ridefinizione più recente che promuove a `corrente` fa rosso, anche se la prima era pulita', () => {
     const pulita: Migrazione = { nome: '20260101000000_a.sql', testo: fn('anni_tick', 'PERFORM 1;').testo }
     expect(violazioni('anni_tick', [pulita])).toEqual([])
     const v = violazioni('anni_tick', [pulita, fn('anni_tick', "UPDATE public.anni_sede SET stato = 'corrente';")])
@@ -124,23 +147,39 @@ describe('anni-tick-non-fa-il-passaggio — il controllo positivo, su SQL finto'
   it('un corpo che non si trova non passa per verde', () => {
     expect(violazioni('anni_tick', [])).toHaveLength(1)
   })
+
+  it('conta gli UPDATE dello stato che vede: due letterali, e un letterale su due righe diverse', () => {
+    expect(aggiornamentiDelloStato("UPDATE public.anni_sede SET stato = 'in_chiusura' WHERE id = a; UPDATE public.anni_sede SET stato = 'chiuso' WHERE id = b;"))
+      .toEqual(['in_chiusura', 'chiuso'])
+    expect(aggiornamentiDelloStato('UPDATE public.anni_sede SET stato = v WHERE id = a;')).toEqual([null])
+    expect(aggiornamentiDelloStato('UPDATE public.anni_sede SET inizio = d WHERE id = a;')).toEqual([])
+  })
 })
 
 describe('anni-tick-non-fa-il-passaggio — le migrazioni vere', () => {
-  it('ha letto abbastanza: almeno 269 migrazioni (misurate 269 il 2026-11-09), e le tre funzioni hanno una definizione con un corpo vero', () => {
-    expect(MIGRAZIONI.length, `migrazioni lette: ${MIGRAZIONI.length}`).toBeGreaterThanOrEqual(269)
+  it('ha letto abbastanza: almeno 274 migrazioni (misurate 274 il 2026-11-09), e le funzioni del tick hanno una definizione con un corpo vero', () => {
+    expect(MIGRAZIONI.length, `migrazioni lette: ${MIGRAZIONI.length}`).toBeGreaterThanOrEqual(274)
     for (const nome of FUNZIONI) {
       const d = ultimaDefinizione(nome, MIGRAZIONI)
       expect(d, `${nome}: nessuna definizione`).not.toBeNull()
-      expect(d!.corpo.trim().length, `${nome}: corpo vuoto in ${d!.migrazione}: il lock sarebbe cieco`).toBeGreaterThan(200)
+      // `anno_stati_log` è la più corta: un INSERT e un blocco di eccezione
+      expect(d!.corpo.trim().length, `${nome}: corpo vuoto in ${d!.migrazione}: il lock sarebbe cieco`).toBeGreaterThan(150)
     }
   })
 
-  it('il testo di anni_tick, e delle funzioni che chiama, non fa il passaggio', () => {
+  it('vede gli UPDATE dello stato del passo 2 (almeno due: `in_chiusura` e `chiuso`) e nessuno che porti a `corrente`', () => {
+    const visti = FUNZIONI.flatMap((nome) => aggiornamentiDelloStato(ultimaDefinizione(nome, MIGRAZIONI)!.corpo))
+    expect(visti.length, `UPDATE dello stato visti nel tick: ${visti.length} — se fossero zero il lock sarebbe cieco`).toBeGreaterThanOrEqual(2)
+    expect(visti).toContain('in_chiusura')
+    expect(visti).toContain('chiuso')
+    expect(visti).not.toContain('corrente')
+  })
+
+  it('il testo del tick, e delle funzioni che chiama, non fa il passaggio', () => {
     const v = FUNZIONI.flatMap((nome) => violazioni(nome, MIGRAZIONI))
     expect(
       v,
-      `Il tick ha un pezzo del passaggio (${v.length}). Il passaggio è della PR 3-B e lo lancia una persona: ` +
+      `Il tick ha un pezzo del passaggio (${v.length}). Il passaggio è della PR 4.8 e lo lancia una persona: ` +
         `se il titolare ha deciso che il tick lo fa da solo, riscrivi questo lock con la decisione accanto.` + elenco(v),
     ).toEqual([])
   })

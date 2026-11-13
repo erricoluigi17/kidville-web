@@ -73,6 +73,7 @@ vi.mock('@/lib/auth/require-staff', () => ({
 }))
 vi.mock('@/lib/auth/scope', () => ({
   assertAlunnoInScope: vi.fn(async () => null),
+  assertAlunnoScrivibile: vi.fn(async () => null),
   assertClasseNomeInScope: vi.fn(async () => null),
   // Il gemello per UUID: da quando la classe si identifica con `section_id`
   // (2026-09-02) `risolviSezione` sceglie fra i due, e un mock che ne conosce

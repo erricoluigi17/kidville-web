@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { ChevronDown, LogOut } from 'lucide-react';
 import { doLogout } from '@/lib/auth/logout';
+import { ConfermaUscita } from '@/components/ui/ConfermaUscita';
 
 // Menu utente della TopBar cockpit (Direzione/Segreteria): rende cliccabile il
 // blocco avatar+ruolo e apre un piccolo dropdown con "Esci". Prima non esisteva
@@ -14,7 +15,12 @@ export function UserMenu({ ruoloLabel }: { ruoloLabel: string }) {
   const t = useTranslations('shared');
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // «Esci» apre la conferma (`ConfermaUscita`): esce solo il secondo tocco.
+  const [conferma, setConferma] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  // Il menuitem «Esci» si smonta quando si apre la conferma: dopo «Annulla» il focus torna al pulsante del menu,
+  // che resta montato (altrimenti finirebbe su <body>).
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -38,6 +44,7 @@ export function UserMenu({ ruoloLabel }: { ruoloLabel: string }) {
   return (
     <div ref={ref} className="relative pl-1.5">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
@@ -70,7 +77,10 @@ export function UserMenu({ ruoloLabel }: { ruoloLabel: string }) {
           <button
             type="button"
             role="menuitem"
-            onClick={onLogout}
+            onClick={() => {
+              setOpen(false);
+              setConferma(true);
+            }}
             disabled={busy}
             className="flex w-full items-center gap-2.5 px-4 py-2.5 font-maven text-sm font-semibold text-kidville-error transition-colors hover:bg-kidville-error-soft disabled:opacity-60"
           >
@@ -79,6 +89,7 @@ export function UserMenu({ ruoloLabel }: { ruoloLabel: string }) {
           </button>
         </div>
       )}
+      <ConfermaUscita open={conferma} busy={busy} returnFocusRef={triggerRef} onAnnulla={() => setConferma(false)} onConferma={onLogout} />
     </div>
   );
 }

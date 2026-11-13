@@ -217,6 +217,13 @@ describe('fotografa-anno-nuovo-demo.sql · sola lettura', () => {
       expect(j.partenza.etichetta).toBe('2026/27')
       expect(j.partenza.frequenze).toHaveLength(5)
       expect(JSON.stringify(j.partenza)).not.toMatch(/nome|cognome|codice_fiscale/)
+      // O-r4-2: per ogni frequenza anche la data d'INGRESSO (uuid e date di una sede di prova): serve a rimetterla a mano
+      const dal_db = (await b.db.query<{ id: string; data_ingresso: string | null }>(`SELECT id, data_ingresso::text AS data_ingresso FROM public.frequenze WHERE anno_sede_id = $1`, [annoVecchio])).rows
+      for (const fr of j.partenza.frequenze as { id: string; data_ingresso: string | null; data_uscita: string | null }[]) {
+        expect(Object.keys(fr).sort(), 'solo uuid, date, stato e «no»').toEqual(['data_ingresso', 'data_uscita', 'id', 'non_rinnova_il', 'non_rinnova_motivo', 'stato'])
+        expect(fr.data_ingresso, 'la data d’ingresso come sta nel database').toBe(dal_db.find((r) => r.id === fr.id)!.data_ingresso)
+      }
+      expect(FOTOGRAFA).not.toMatch(/\b(nome|cognome|codice_fiscale|email)\b[^\n]*jsonb_build_object|jsonb_build_object[^\n]*\b(nome|cognome|codice_fiscale)\b/i)
       expect(j.conteggi).toEqual({ frequenze: 0, pagamenti: 1, sezioni: 1, domande: 1 })
       expect(FOTOGRAFA).not.toMatch(/\b(INSERT|UPDATE|DELETE|TRUNCATE|DROP|ALTER)\b/i)
     })
@@ -982,10 +989,15 @@ describe('azzera-anno-nuovo-demo.sql · la prova a secco (B-n1)', () => {
     expect(dopoTabella).toMatch(/`23P01`/)
     expect(dopoTabella).toMatch(/anni_sede_domande_solo_aperto/)
     expect(dopoTabella).toMatch(/non (?:è cambiato niente|c'è il riassunto)/)
+    expect(dopoTabella, 'prima di rilanciare (O-r4-4)').toMatch(/prima di rilanciare serve un `ROLLBACK;` da solo, oppure una scheda nuova/)
+    expect(manuale.slice(manuale.indexOf('| `AZZERA_CONFINE_CON_RIGHE`'), manuale.indexOf('| `AZZERA_FREQUENZA_SPARITA`')), 'anche per i confini').toMatch(/`ROLLBACK;` da solo/)
     const date = manuale.slice(manuale.indexOf('**Le date degli anni.**'), manuale.indexOf('**Quello che nasce accogliendo'))
     expect(date, 'le nate si tolgono').toMatch(/\*\*nate\*\* nel collaudo si tolgono/)
     expect(date, 'le cambiate si rimettono').toMatch(/cambiate[^.]*si rimette la data/)
     expect(date, 'perché non si cancellano').toMatch(/AZZERA_DATA/)
+    expect(date, 'la data si prende dalla fotografia').toMatch(/fotografia[^.]*`partenza`[^.]*`data_ingresso`/)
+    expect(date, 'AZZERA_DATA vale solo per le tabelle che la fotografia conta').toMatch(/`AZZERA_DATA` vale solo per le tabelle che la fotografia conta/)
+    expect(manuale.slice(manuale.indexOf('**Che cosa non rimette.**'), manuale.indexOf('**Che cosa non rimette.**') + 700), 'l’ingresso non si rimette').toMatch(/`data_ingresso`/)
   })
 
   it('una riga di conteggio con NULL fa cadere lo script, non sparisce in silenzio dal messaggio (O-r4-1)', async () => {

@@ -1,16 +1,21 @@
 import { haCookieSessioneNellIntestazione } from '@/lib/auth/session-cookie';
-import { conContesto, contesto, erroreAnnoDellaRichiesta, erroreGiaLoggato } from './context';
+import {
+    conContesto, conContestoCrmAi, conContestoCompletamentoCrmAi,
+    contesto, erroreAnnoDellaRichiesta, erroreGiaLoggato, pathTecnicoChiaviCrm,
+} from './context';
 import { erroreAnno } from '@/lib/anno/errori';
+import { rispostaCrmNonRiuscita } from '@/lib/crm/errori';
+import { erroreDbSoloCodice } from '@/lib/supabase/errore-tecnico';
 import { logErrore, logEvento, logOk } from './logger';
 
 /**
- * `withRoute`: avvolge l'export di una route e ne osserva l'esito. Nient'altro.
+ * `withRoute`: avvolge l'export di una route e ne osserva l'esito.
  *
  * È il wrapper che andrà sulle 239 route del progetto, quindi vale prima di tutto la
  * regola d'oro del modulo: NIENTE qui dentro può lanciare. Un throw del wrapper
  * trasformerebbe una 200 in 500 su TUTTE le route insieme — un guasto totale causato
  * dall'osservabilità. L'unico throw che esce di qui è quello dell'HANDLER, rilanciato
- * tale e quale.
+ * tale e quale per le route ordinarie.
  *
  * COSA NON FA, E PERCHÉ (il contratto è fatto soprattutto di divieti):
  *
@@ -34,7 +39,8 @@ import { logErrore, logEvento, logOk } from './logger';
  *
  * - NON inghiotte le eccezioni: le logga e le RILANCIA. Inghiottirle cambierebbe la
  *   semantica in produzione (Next non vedrebbe più l'errore) e romperebbe i test che
- *   asseriscono i 500 espliciti delle route.
+ *   asseriscono i 500 espliciti delle route. Le route CRM AI e delle chiavi usano un
+ *   500 di catalogo perché l'errore grezzo può contenere dati riservati.
  *
  * POLITICA DEI LIVELLI (un 4xx non è un guasto del server — ma non sono tutti uguali):
  *
@@ -93,6 +99,8 @@ type Handler<A extends unknown[]> = (...args: A) => Response | Promise<Response>
  * il traffico di 239 route.
  */
 const ANOMALIE_4XX = new Set([408, 409, 413, 429]);
+const NOME_CRM_AI = /^crm\/ai(?=[:/]|$)/;
+const PATH_CRM_AI = /^\/api\/crm\/ai(?:\/|$)/;
 
 /**
  * `A` è inferito dall'handler, quindi la firma della funzione avvolta è IDENTICA a quella
@@ -107,40 +115,18 @@ export function withRoute<A extends [Request, ...unknown[]]>(
 ): (...args: A) => Promise<Response> {
     return async (...args: A): Promise<Response> => {
         const t0 = Date.now();
+        const path = pathDi(args[0]);
+        const nomeCrmAi = NOME_CRM_AI.test(nome);
+        const pathChiavi = pathTecnicoChiaviCrm(nome, path);
+        const pathProtetto = nomeCrmAi ? '/api/' + nome.split(':', 1)[0]
+            : PATH_CRM_AI.test(path) ? '/api/crm/ai'
+            : pathChiavi;
 
-        const esegui = async (): Promise<Response> => {
-            // L'id NORMALIZZATO, cioè quello che finirà davvero nei log. È questo che si
-            // riflette sulla risposta: rimandare indietro l'header grezzo del client
-            // significherebbe promettergli una correlazione che non esiste (nei log c'è
-            // un altro id) — e riflettergli un valore arbitrario che lui controlla.
-            const rid = contesto()?.requestId;
-
-            // `unknown` e non `Response`: la firma lo PROMETTE, il runtime no. Il quinto
-            // collaudo ha misurato otto rotte in cui questo valore era la stringa
-            // «TURBOPACK unreachable» (vedi `sospensione.ts`). Dichiararlo `Response`
-            // qui significherebbe che il controllo poche righe più sotto è codice morto
-            // per il compilatore — e non lo è: è l'unica cosa fra un guasto e un 500 muto.
-            let res: unknown;
-            try {
-                res = await handler(...args);
-            } catch (err) {
-                // Loggato con l'errore VERO (stack vero) e RILANCIATO: il wrapper osserva,
-                // non decide. `senzaLanciare` perché un logger che esplode non deve poter
-                // sostituire l'errore della route con il proprio.
-                senzaLanciare(() => logErrore({ operazione: nome, ms: Date.now() - t0, stato: 500 }, err));
-                // La rete dell'anno vale anche qui: un'eccezione dopo una scrittura rifiutata
-                // dal database con `ANNO_CHIUSO` è il 500 che la tabella in `retiAnno` traduce.
-                const tradotta = retiAnno(undefined, nome);
-                if (tradotta) {
-                    senzaLanciare(() => rifletti(tradotta, rid));
-                    return tradotta;
-                }
-                throw err;
-            }
-
+        const completa = (res: unknown, delegata: boolean): Response => {
             // LA RETE DELL'ANNO (Compito 3.4, D4): prima di registrare l'esito, perché la riga
             // deve dire lo stato che il client vedrà (409), non il 500 che la route ha costruito.
-            res = retiAnno(res, nome) ?? res;
+            // Una risposta delegata ha già attraversato questa traduzione nel wrapper interno.
+            if (!delegata) res = retiAnno(res, nome) ?? res;
 
             // Si registra il valore VERO, quello che l'handler ha davvero restituito:
             // è `registraEsito` a riconoscere «senza Response» e a scriverne la riga.
@@ -150,7 +136,7 @@ export function withRoute<A extends [Request, ...unknown[]]>(
              * ⚠️ E QUI IL WRAPPER, PER UNA VOLTA, DECIDE.
              *
              * La regola di questo file è «osserva, non decide» — il ramo ECCEZIONE
-             * rilancia apposta. Questo è l'unico caso in cui non basta, e la ragione è
+             * di norma rilancia. Qui non basta, e la ragione è
              * che non c'è nessuna risposta da proteggere: se l'handler non ne ha
              * restituita una, Next solleva «No response is returned from route handler»
              * e manda al client **500 con corpo vuoto e zero byte**. Non stiamo
@@ -173,11 +159,35 @@ export function withRoute<A extends [Request, ...unknown[]]>(
              * risposta. La difesa sta dove sta il collo di bottiglia.
              */
             const finale: Response =
-                statoDi(res) === undefined ? rispostaSenzaHandler(rid) : (res as Response);
+                statoDi(res) === undefined ? rispostaSenzaHandler(contesto()?.requestId) : (res as Response);
 
-            senzaLanciare(() => rifletti(finale, rid));
-            return finale;
+            return rifletti(finale, contesto()?.requestId, pathProtetto !== null || delegata);
         };
+
+        const esegui = async (): Promise<Response> => {
+            // Il runtime può restituire un valore diverso da Response (vedi sospensione.ts).
+            let res: unknown;
+            try {
+                res = await handler(...args);
+            } catch (err) {
+                return conContestoCompletamentoCrmAi(args[0], delegata => {
+                    const protetta = pathProtetto !== null || delegata;
+                    senzaLanciare(() => logErrore(
+                        { operazione: nome, ms: Date.now() - t0, stato: 500 },
+                        protetta ? erroreRottaProtetta(err, pathChiavi !== null) : err,
+                    ));
+                    // Anche un'eccezione può seguire una scrittura rifiutata con ANNO_CHIUSO.
+                    const risposta = retiAnno(undefined, nome) ?? (protetta ? rispostaCrmNonRiuscita() : null);
+                    if (risposta) return rifletti(risposta, contesto()?.requestId, protetta);
+                    throw err;
+                });
+            }
+            return conContestoCompletamentoCrmAi(args[0], delegata => completa(res, delegata));
+        };
+
+        // Protegge anche il primo rifiuto del gate, e non riusa un contesto ordinario.
+        // Il nome canonico preserva la distinzione fra rotte nel registro senza usare l'URL.
+        if (pathProtetto) return conContestoCrmAi(args[0], nome, pathProtetto, esegui);
 
         // Rientranza: se siamo GIÀ dentro una richiesta (una route wrappata invocata come
         // funzione da un'altra), si RIUSA il contesto aperto. Aprirne un secondo conierebbe
@@ -191,7 +201,20 @@ export function withRoute<A extends [Request, ...unknown[]]>(
         // plausibile. Due vantaggi: la logica anti-forgiatura sta in un posto solo, e non
         // serve `crypto.randomUUID()`, che non è garantito ovunque (sotto jsdom il repo lo
         // polyfilla a mano su `window`) e che qui sarebbe un throw del wrapper.
-        return conContesto({ requestId: requestIdGrezzo(args[0]), path: pathDi(args[0]), route: nome }, esegui);
+        return conContesto({ requestId: requestIdGrezzo(args[0]), path, route: nome }, esegui);
+    };
+}
+
+function erroreRottaProtetta(err: unknown, chiavi: boolean): { code: string; message: string } {
+    let code: string | undefined;
+    try {
+        code = erroreDbSoloCodice(err).code;
+    } catch {
+        // Anche un valore lanciato con un getter ostile deve produrre un log tecnico.
+    }
+    return {
+        code: code ?? 'CRM_OPERAZIONE_NON_RIUSCITA',
+        message: chiavi ? 'Eccezione durante la gestione delle chiavi CRM' : 'Eccezione durante una richiesta CRM AI',
     };
 }
 
@@ -354,14 +377,26 @@ function conSessione(req: unknown): boolean {
 }
 
 /**
- * Rimette l'id di correlazione sulla risposta. `headers.set` LANCIA su una Response con
- * headers immutabili (`Response.redirect`, e le risposte che arrivano da un fetch): in quel
- * caso si perde l'header, non la risposta.
+ * Rimette l'id di correlazione sulla risposta. Se gli header sono immutabili, per una rotta protetta
+ * serve comunque l'id del server: riusa lo stream con una copia degli header. Per le altre
+ * route resta la risposta originale.
  */
-function rifletti(res: unknown, rid: string | undefined): void {
-    if (!rid) return;
-    const headers = (res as { headers?: { set?: (n: string, v: string) => void } } | null | undefined)?.headers;
-    headers?.set?.('x-request-id', rid);
+function rifletti(res: Response, rid: string | undefined, protetta: boolean): Response {
+    if (!rid) return res;
+    try {
+        res.headers?.set?.('x-request-id', rid);
+    } catch {
+        if (protetta) {
+            try {
+                const headers = new Headers(res.headers);
+                headers.set('x-request-id', rid);
+                return new Response(res.body, { headers, status: res.status, statusText: res.statusText });
+            } catch {
+                // Una risposta non ricostruibile deve restare utilizzabile dal chiamante.
+            }
+        }
+    }
+    return res;
 }
 
 /**

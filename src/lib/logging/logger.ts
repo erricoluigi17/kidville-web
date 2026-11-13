@@ -1,7 +1,8 @@
-import { contesto, inLogger, entraNelLogger, segnalaErroreLoggato, logSoloConsole } from './context';
+import { contesto, contestoCrmAiAttivo, inLogger, entraNelLogger, segnalaErroreLoggato, logSoloConsole } from './context';
 import { descriviErrore, sanificaMessaggio, serializza, type ErroreDescritto } from './serialize';
 import { redact, valoreDistintivo } from './redact';
 import { appLog, type RigaLog } from './app-log';
+import { campiCrmAi, erroreCrmAi, leggiProprieta } from './crm-ai-privacy';
 
 /**
  * Il logger: marker atomico + logfmt.
@@ -482,28 +483,33 @@ export function logErrore(
         // rinuncia alla propria riga di esito sul 5xx, che sarebbe un doppione più povero.
         segnalaErroreLoggato();
 
-        const d = descriviErrore(err);
-        const c = contesto();
+        const protetto = contestoCrmAiAttivo();
+        const evento = protetto ? eventoNoto(leggiProprieta(campi, 'evento')) : campi.evento;
+        const campiLog: Record<string, Valore> = protetto ? campiCrmAi(evento ?? 'route', campi) : campi;
+        const d = protetto ? erroreCrmAi(evento ?? 'route', campiLog, err) : descriviErrore(err);
+        const payload = protetto ? undefined : contesto()?.payload;
         // Un errore Supabase avvolto (`new Error('…', { cause })`) ha il codice sulla CAUSA:
         // senza questo fallback la riga uscirebbe senza il dato più utile che ha.
-        const codice = d.codice ?? d.causa?.codice;
+        const codice = d.codice ?? d.causa?.codice ?? (protetto ? codiceDaCampi(campiLog) : undefined);
 
         persisti({
             livello: 'error',
-            evento: campi.evento ?? 'route',
+            evento: evento ?? 'route',
             messaggio: d.messaggio,
             stack: d.stack,
             codice,
-            statoHttp: campi.stato,
+            statoHttp: protetto ? numeroDi(campiLog, 'stato') : campi.stato,
             sorgente: 'server',
+            bersaglio: protetto ? bersaglioCrmAi(campiLog) : undefined,
             contestoExtra: {
-                operazione: campi.operazione,
+                operazione: campiLog.operazione,
+                ...(protetto ? { esito: campiLog.esito, ms: campiLog.ms } : {}),
                 dettagli: d.dettagli,
                 suggerimento: d.suggerimento,
                 causa: d.causa,
                 // GIÀ redatto da `impostaPayload`: una seconda passata di `redact` riscriverebbe
                 // `[redatto:str/40]` come `[redatto:str/16]` e cancellerebbe i marcatori.
-                payload: c?.payload,
+                payload,
             },
         });
 
@@ -518,19 +524,20 @@ export function logErrore(
             // `rt`, non `op`: una chiave sola per il nome della rotta su tutti e tre i marker
             // (vedi la doc in testa al modulo). In TABELLA la stessa cosa viaggia come
             // `operazione`, che è la chiave che sopravvive alla lista bianca di `redact`.
-            rt: campi.operazione,
-            evt: campi.evento,
+            rt: campiLog.operazione,
+            evt: evento,
             code: codice,
-            ms: campi.ms,
+            ms: campiLog.ms,
+            ...(protetto ? { esito: campiLog.esito } : {}),
             digest: d.digest ?? d.causa?.digest,
             msg: d.messaggio,
             // Come per `code`: in un errore Supabase AVVOLTO (`new Error('…', { cause })`) —
             // la forma più comune nel repo — `details` sta sulla causa, non in cima.
             det: d.dettagli ?? d.causa?.dettagli,
             causa: d.causa?.messaggio,
-            payload: c?.payload ? serializza(c.payload, PAYLOAD_MAX) : undefined,
+            payload: payload ? serializza(payload, PAYLOAD_MAX) : undefined,
         }));
-        scriviErrore(erroreNativo(err, d));
+        scriviErrore(protetto ? daDescrizione(d) : erroreNativo(err, d));
     } catch {
         // Fail-open, sempre.
     }
@@ -573,6 +580,9 @@ export function logErrore(
  *
  * Il default è invariato (si persiste secondo `vaPersistito`): la valvola va aperta a mano,
  * e chi la apre deve poter dire perché.
+ *
+ * Nelle richieste CRM protette vale il contratto più stretto di `campiCrmAi`: solo metadati
+ * tecnici in entrambi i sink, senza usare testo o payload per comporre il messaggio.
  */
 export function logEvento(
     evento: string,
@@ -582,16 +592,20 @@ export function logEvento(
     opzioni?: OpzioniEvento,
 ): void {
     try {
-        const d = err !== undefined ? descriviErrore(err) : undefined;
+        const dati = preparaEvento(evento, livello, campi, err);
+        const { d, protetto } = dati;
 
         if (opzioni?.persisti !== false) {
-            const riga = rigaEvento(evento, livello, campi, err, opzioni);
-            if (riga) persisti(riga);
+            try {
+                persisti(componiRigaEvento(dati, opzioni));
+            } catch {
+                // Un guasto nella composizione del registro non costa la riga su console.
+            }
         }
 
         if (SILENZIOSO) return;
 
-        const riga = unisci({ ...campiDelContesto(), evt: evento }, perLaRiga(campi));
+        const riga = unisci({ ...campiDelContesto(), evt: dati.evento }, perLaRiga(dati.campi));
         if (d) {
             // Assegnati DOPO l'unione: quando c'è un errore, è l'errore la verità, non i campi.
             // Sulla riga di console il `code` resta quello dell'ERRORE: `error_code` dei campi
@@ -605,11 +619,11 @@ export function logEvento(
             if (d.causa?.messaggio) riga.causa = d.causa.messaggio;
         }
 
-        const marker = livello === 'error' ? 'KV_ERR' : livello === 'warn' ? 'KV_WARN' : 'KV_EVT';
+        const marker = dati.livello === 'error' ? 'KV_ERR' : dati.livello === 'warn' ? 'KV_WARN' : 'KV_EVT';
         const testo = formattaRiga(marker, riga);
         // `console.warn` non c'è, e non è una svista: nelle funzioni non-streaming Vercel lo
         // classifica `error`. Un warn scritto con `console.warn` sporcherebbe il filtro degli errori.
-        if (livello === 'info') scriviInfo(testo);
+        if (dati.livello === 'info') scriviInfo(testo);
         else scriviErrore(testo);
 
         // L'Error nativo SOLO per `error`. Un Error su console entra nel flusso errori di Vercel
@@ -617,7 +631,7 @@ export function logEvento(
         // che per definizione non è un guasto) inquinerebbe il filtro degli errori — esattamente
         // il motivo per cui questo modulo rifiuta `console.warn`. Lo stack di un warn non si perde:
         // finisce in tabella (`app_log.stack`), che è dove un warn si va a leggere.
-        if (d && livello === 'error') scriviErrore(erroreNativo(err, d));
+        if (d && dati.livello === 'error') scriviErrore(protetto ? daDescrizione(d) : erroreNativo(err, d));
     } catch {
         // Fail-open, sempre.
     }
@@ -680,6 +694,28 @@ function bersaglioDa(campi: Record<string, Valore>, distingui?: readonly string[
     }
 }
 
+// Senza il testo e lo stack originali, il bersaglio tiene distinti i guasti
+// di operazioni/esiti diversi. Non include conteggi o campi esclusi dalla proiezione.
+function bersaglioCrmAi(campi: Record<string, Valore>, distingui?: readonly string[]): string | undefined {
+    const chiavi = new Set(['operazione', 'esito', 'tipo', 'azione', ...(distingui ?? [])]);
+    return bersaglioDa(campi, [...chiavi]);
+}
+
+function eventoNoto(v: unknown): string | undefined {
+    return typeof v === 'string' && EVENTI_NOTI.has(v) ? v : undefined;
+}
+
+function preparaEvento(evento: string, livello: Livello, campi: Record<string, Valore>, err: unknown) {
+    const protetto = contestoCrmAiAttivo();
+    if (protetto) {
+        evento = eventoNoto(evento) ?? 'sconosciuto';
+        livello = livello === 'info' || livello === 'warn' ? livello : 'error';
+        campi = campiCrmAi(evento, campi);
+    }
+    const d = err === undefined ? undefined : protetto ? erroreCrmAi(evento, campi, err) : descriviErrore(err);
+    return { evento, livello, campi, d, protetto };
+}
+
 /**
  * IL CODICE DI UN RIFIUTO VA IN COLONNA, non solo dentro `campi` (rilievo T11).
  *
@@ -720,33 +756,36 @@ export function rigaEvento(
     opzioni?: OpzioniEvento,
 ): RigaLog | undefined {
     try {
-        const d = err !== undefined ? descriviErrore(err) : undefined;
-        const c = contesto();
-        return {
-            livello,
-            evento,
-            messaggio: d ? d.messaggio : testoEvento(evento, campi),
-            stack: d?.stack,
-            codice: d?.codice ?? d?.causa?.codice ?? codiceDaCampi(campi),
-            // Lo status HTTP va in COLONNA, non solo dentro `campi`: è il primo filtro di
-            // qualunque query ("dammi i 5xx di ieri"), e sepolto in un JSONB non è né ovvio
-            // né indicizzabile. Solo se `stato` è un NUMERO: negli eventi di dominio la stessa
-            // chiave vale anche 'inviata', 'scaduto' — quello non è uno status HTTP.
-            statoHttp: numeroDi(campi, 'stato'),
-            sorgente: 'server',
-            bersaglio: bersaglioDa(campi, opzioni?.distingui),
-            contestoExtra: {
-                campi: redact(campi),
-                dettagli: d?.dettagli,
-                suggerimento: d?.suggerimento,
-                causa: d?.causa,
-                payload: c?.payload, // già redatto: vedi logErrore
-            },
-        };
+        return componiRigaEvento(preparaEvento(evento, livello, campi, err), opzioni);
     } catch {
         // Fail-open: un guasto nella composizione non deve rompere il chiamante.
         return undefined;
     }
+}
+
+function componiRigaEvento(
+    { evento, livello, campi, d, protetto }: ReturnType<typeof preparaEvento>,
+    opzioni?: OpzioniEvento,
+): RigaLog {
+    return {
+        livello,
+        evento,
+        messaggio: d ? d.messaggio : testoEvento(evento, campi),
+        stack: d?.stack,
+        codice: d?.codice ?? d?.causa?.codice ?? codiceDaCampi(campi),
+        // Lo status HTTP resta in colonna per le query; negli eventi ordinari
+        // la stessa chiave può anche indicare un esito testuale (es. 'inviata').
+        statoHttp: numeroDi(campi, 'stato'),
+        sorgente: 'server',
+        bersaglio: protetto ? bersaglioCrmAi(campi, opzioni?.distingui) : bersaglioDa(campi, opzioni?.distingui),
+        contestoExtra: {
+            campi: redact(campi),
+            dettagli: d?.dettagli,
+            suggerimento: d?.suggerimento,
+            causa: d?.causa,
+            payload: protetto ? undefined : contesto()?.payload, // già redatto: vedi logErrore
+        },
+    };
 }
 
 /**

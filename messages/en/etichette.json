@@ -173,6 +173,8 @@
   "notifica_video_liberatoria_revocata_desc": "When a video is published with children who have since lost their photo release",
   "notifica_crm_visita_assegnata_label": "CRM: visit assigned",
   "notifica_crm_visita_assegnata_desc": "When a colleague assigns you a visit in the agenda (the text only shows day and time)",
+  "notifica_crm_visita_annullata_label": "CRM: visit cancelled",
+  "notifica_crm_visita_annullata_desc": "When the assistant cancels a visit assigned to you",
   "campoPersonale_gender": "Gender",
   "campoPersonale_birth_date": "Date of birth",
   "campoPersonale_codice_belfiore_nascita": "Town of birth",

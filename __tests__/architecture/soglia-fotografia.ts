@@ -443,7 +443,15 @@ export function posterioriCheContengono(
 // `ADD CONSTRAINT` e nessuna guardia la vede.)
 // SVUOTATA il 2026-11-13 nella PR-B della 4.9 (#308, `631c9fac`): `20261112181554` e' applicata in produzione, la fotografia delle migrazioni la contiene
 // (277) e la voce si e' tolta, come chiedeva il lock «nessuna chiave e' gia' applicata».
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+// 2026-11-11 · CRM Assistente Famiglie (`20261113212650_crm_accesso_ai.sql`): due tabelle private, chiavi e indici, e funzioni che scrivono
+// nei bambini del CRM. La applica l’integrazione al merge. Fotografie da aggiornare nella PR-B.
+// 2026-11-13 · CRM, servizi offerti dalla sede (`20261113212652_crm_servizi_sede.sql`): una tabella privata con i valori iniziali. Stessa regola.
+// Rinominate il 13/11 allineando il ramo a main: le version erano 20261111225125 e 20261113100000, la prima PIÙ VECCHIA delle due migrazioni
+// del 12/11 già in produzione (l'integrazione applica in ordine) e la seconda con un orario tondo.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+  '20261113212650_crm_accesso_ai.sql': 'L’integrazione applica al merge tabelle private, vincoli e funzioni CRM; fotografie nella PR-B.',
+  '20261113212652_crm_servizi_sede.sql': 'L’integrazione applica al merge la tabella privata dei servizi per sede (RLS accesa, solo service-role); fotografie nella PR-B.',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

@@ -3468,6 +3468,27 @@ export const CODICI_ERRORE = {
      */
     CONTATTO_OBBLIGATORIO: 'erroreCrmContattoObbligatorio',
     /**
+     * CRM Assistente Famiglie: accesso per chiave e risposte delle sue operazioni.
+     *  · 401 `TOKEN_NON_VALIDO` — chiave assente, malformata, sconosciuta o revocata;
+     *  · 403 `SEDE_NON_AMMESSA` — la sede della chiave non è fra quelle abilitate;
+     *  · 404 `CRM_AI_SPENTO` — l'accesso dell'assistente è spento;
+     *  · 409 `GIA_PRENOTATO` — la famiglia ha già una visita in programma;
+     *  · 422 `FUORI_DISPONIBILITA` — l'orario non è fra quelli disponibili;
+     *  · 422 `CHIAVE_RIUSATA` — stessa chiave di richiesta per un corpo diverso;
+     *  · 422 `ETA_NON_COPERTA` — codice di compatibilità per la fascia d'età;
+     *  · 409 `INTEGRAZIONE_ESISTENTE` — la sede ha già una chiave attiva;
+     *  · 409 `NESSUN_RESPONSABILE` — il richiamo non si può assegnare nella sede.
+     */
+    TOKEN_NON_VALIDO: 'erroreCrmAiTokenNonValido',
+    SEDE_NON_AMMESSA: 'erroreCrmAiSedeNonAmmessa',
+    CRM_AI_SPENTO: 'erroreCrmAiSpento',
+    GIA_PRENOTATO: 'erroreCrmAiGiaPrenotato',
+    FUORI_DISPONIBILITA: 'erroreCrmAiFuoriDisponibilita',
+    CHIAVE_RIUSATA: 'erroreCrmAiChiaveRiusata',
+    ETA_NON_COPERTA: 'erroreCrmAiEtaNonCoperta',
+    INTEGRAZIONE_ESISTENTE: 'erroreCrmAiIntegrazioneEsistente',
+    NESSUN_RESPONSABILE: 'erroreCrmAiNessunResponsabile',
+    /**
      * La quota d'iscrizione del CRM (31/10/2026, `PUT`/`DELETE …/bambini/[bambinoId]/quota`):
      *  · 422 `QUOTA_GIORNO_FUTURO` — il giorno del pagamento è dopo oggi (a Roma);
      *  · 422 `QUOTA_ANNO_MANCANTE` — il bambino non ha l'anno di ingresso: l'anno della quota si ricava da lì;

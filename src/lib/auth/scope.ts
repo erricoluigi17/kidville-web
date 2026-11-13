@@ -2,7 +2,9 @@ import { NextResponse, type NextRequest } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from './require-staff'
 import { sezioniDiUtente, sezioniVisibiliDiUtente } from '@/lib/sezioni/docenti'
+import { contestoCrmAiAttivo } from '@/lib/logging/context'
 import { logEvento } from '@/lib/logging/logger'
+import { erroreDbSoloCodice } from '@/lib/supabase/errore-tecnico'
 import { rifiutoSede } from './rifiuto-sede'
 import { erroreAnno } from '@/lib/anno/errori'
 import { schemaAnnoIndietro } from '@/lib/anno/schema'
@@ -69,17 +71,18 @@ export async function scuoleDiUtente(
     .eq('utente_id', user.id)
   if (error) {
     const codice = (error as { code?: string }).code ?? ''
+    const erroreLog = contestoCrmAiAttivo() ? erroreDbSoloCodice(error) : error
     if (TABELLA_ASSENTE.has(codice)) {
       logEvento('auth', 'warn', {
         tipo: 'sedi-utente-ponte-assente', azione: 'scuoleDiUtente',
         utente: user.id, ruolo: user.role,
-      }, error)
+      }, erroreLog)
       return own
     }
     logEvento('auth', 'error', {
       tipo: 'sedi-utente-non-risolte', azione: 'scuoleDiUtente',
       utente: user.id, ruolo: user.role,
-    }, error)
+    }, erroreLog)
     return []
   }
   const extra = (data ?? []).map((r) => r.scuola_id as string)

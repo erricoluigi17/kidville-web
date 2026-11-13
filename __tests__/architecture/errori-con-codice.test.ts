@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 import { CODICI_ERRORE } from '@/lib/ui/esito-fetch';
 import itShared from '../../messages/it/shared.json';
 import enShared from '../../messages/en/shared.json';
@@ -483,6 +484,7 @@ const SORGENTI_DEL_RIFIUTO = [
 const CODICE_NON_LETTERALE_AMMESSO = new Map<string, string>([
     ['src/lib/auth/rifiuto-sede.ts', 'codice'],
 ]);
+const COSTRUTTORE_RIFIUTO_AI = 'src/lib/crm/ai/accesso.ts';
 
 /* ────────────────────────────────────────────────────────────────────────────────
  * LA MISURA. Testuale, come nel lock sui catch muti e per lo stesso motivo: far girare un
@@ -521,8 +523,8 @@ function mascheraCommenti(sorgente: string): string {
 }
 
 /** Il PRIMO argomento (oggetto letterale) di ogni `NextResponse.json(`, a parentesi bilanciate. */
-function corpiJson(src: string): { testo: string; riga: number }[] {
-    const out: { testo: string; riga: number }[] = [];
+function corpiJson(src: string): { testo: string; riga: number; inizio: number }[] {
+    const out: { testo: string; riga: number; inizio: number }[] = [];
     const re = /NextResponse\.json\(\s*/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(src)) !== null) {
@@ -540,7 +542,7 @@ function corpiJson(src: string): { testo: string; riga: number }[] {
                 while (j < src.length && src[j] !== a) { if (src[j] === '\\') j++; j++; }
             }
         }
-        out.push({ testo: src.slice(i, j), riga: src.slice(0, i).split('\n').length });
+        out.push({ testo: src.slice(i, j), riga: src.slice(0, i).split('\n').length, inizio: i });
     }
     return out;
 }
@@ -615,6 +617,8 @@ type Errore = {
     conCodice: boolean;
     /** Il codice: letterale, oppure risolto da un `const X = '…'` dello stesso file. */
     codice: string | null;
+    /** Per il solo costruttore CRM AI: tutti i letterali ammessi dal parametro. */
+    codiciDelParametro: string[];
     /**
      * L'espressione del `codice` quando NON si è potuta leggere (una chiamata, un
      * campo di un oggetto, una costante importata da altrove). Valorizzata, dice
@@ -634,41 +638,72 @@ function sorgenti(dir = SRC): string[] {
     return out;
 }
 
+/**
+ * Legge l'unione di letterali del solo `rifiutoAi`, senza esentare il file.
+ * L'offset lega i codici al corpo effettivamente restituito dal costruttore:
+ * un altro `NextResponse.json({ error, codice })` nello stesso modulo resta opaco.
+ */
+function parametroRifiutoAi(src: string): { inizio: number; codici: string[] } | null {
+    const albero = ts.createSourceFile(COSTRUTTORE_RIFIUTO_AI, src, ts.ScriptTarget.Latest, true);
+    const tipo = albero.statements.find((n): n is ts.TypeAliasDeclaration => ts.isTypeAliasDeclaration(n) && n.name.text === 'CodiceAi');
+    const fn = albero.statements.find((n): n is ts.FunctionDeclaration => ts.isFunctionDeclaration(n) && n.name?.text === 'rifiutoAi');
+    const parametro = fn?.parameters[0];
+    if (!tipo || !ts.isUnionTypeNode(tipo.type) || parametro?.name.getText(albero) !== 'codice' ||
+        parametro.type?.getText(albero) !== 'CodiceAi') return null;
+    const ritorni = fn?.body?.statements.filter(ts.isReturnStatement);
+    const risposta = ritorni?.length === 1 ? ritorni[0].expression : undefined;
+    if (!risposta || !ts.isCallExpression(risposta) || risposta.expression.getText(albero) !== 'NextResponse.json') return null;
+    const corpo = risposta.arguments[0];
+    if (!corpo || !ts.isObjectLiteralExpression(corpo)) return null;
+    // Solo lo spread degli extra può precedere i due campi riservati. In coda una
+    // proprietà calcolata, duplicata o uno spread potrebbe sovrascriverli.
+    const prefisso = corpo.properties.slice(0, -2);
+    const [errore, codice] = corpo.properties.slice(-2);
+    if (prefisso.length > 1 || prefisso.some((p) => !ts.isSpreadAssignment(p) || p.expression.getText(albero) !== 'extra')) return null;
+    if (!errore || !ts.isPropertyAssignment(errore) || errore.name.getText(albero) !== 'error' ||
+        !/^catalogoIt\s*\[\s*CODICI_ERRORE\s*\[\s*codice\s*\]\s*\]$/.test(errore.initializer.getText(albero))) return null;
+    if (!codice || !ts.isShorthandPropertyAssignment(codice) || codice.name.text !== 'codice' || codice.objectAssignmentInitializer) return null;
+    const codici: string[] = [];
+    for (const valore of tipo.type.types) {
+        if (!ts.isLiteralTypeNode(valore) || !ts.isStringLiteral(valore.literal)) return null;
+        codici.push(valore.literal.text);
+    }
+    return { inizio: corpo.getStart(albero), codici };
+}
+
+function inventarioSorgente(file: string, src: string): Errore[] {
+    const parametroAi = file === COSTRUTTORE_RIFIUTO_AI ? parametroRifiutoAi(src) : null;
+    return corpiJson(src).flatMap((corpo) => {
+        const props = proprieta(corpo.testo);
+        const err = props.find((p) => p.nome === 'error');
+        if (!err) return [];
+        const cod = props.find((p) => p.nome === 'codice');
+        const codice = cod?.valore ?? (cod ? costanteLetterale(src, cod.grezzo ?? '') : null);
+        const codiciDelParametro = parametroAi?.inizio === corpo.inizio ? parametroAi.codici : [];
+        return [{
+            file,
+            riga: corpo.riga,
+            testo: err.valore,
+            conCodice: Boolean(cod),
+            codice,
+            codiciDelParametro,
+            codiceOpaco: cod && codice === null && codiciDelParametro.length === 0 ? cod.grezzo ?? '(illeggibile)' : null,
+        }];
+    });
+}
+
 /** Tutte le risposte JSON che portano un `error` all'utente, con e senza `codice`. */
 function inventario(): Errore[] {
-    const out: Errore[] = [];
-    for (const f of sorgenti()) {
-        const src = mascheraCommenti(fs.readFileSync(path.join(RADICE, f), 'utf8'));
-        for (const corpo of corpiJson(src)) {
-            const props = proprieta(corpo.testo);
-            const err = props.find((p) => p.nome === 'error');
-            if (!err) continue;
-            const cod = props.find((p) => p.nome === 'codice');
-            // `codice: UNA_COSTANTE` si risolve nel file; ciò che resta illeggibile
-            // NON diventa `null` in silenzio (era il buco: un valore che il lettore
-            // non capisce smetteva di essere confrontato con qualunque cosa).
-            let codice = cod?.valore ?? null;
-            let codiceOpaco: string | null = null;
-            if (cod && codice === null) {
-                codice = costanteLetterale(src, cod.grezzo ?? '');
-                if (codice === null) codiceOpaco = cod.grezzo ?? '(illeggibile)';
-            }
-            out.push({
-                file: f,
-                riga: corpo.riga,
-                testo: err.valore,
-                conCodice: Boolean(cod),
-                codice,
-                codiceOpaco,
-            });
-        }
-    }
-    return out;
+    return sorgenti().flatMap((f) => inventarioSorgente(f, mascheraCommenti(fs.readFileSync(path.join(RADICE, f), 'utf8'))));
+}
+
+function codiciRifiutoAiChiamati(src: string): string[] {
+    return [...src.matchAll(/\brifiutoAi\s*\(\s*(['"])([^'"\n]+)\1\s*,/g)].map((m) => m[2]);
 }
 
 /**
  * I codici che escono davvero verso il client: quelli scritti dentro un corpo che porta
- * `error`, più gli argomenti di `rifiutoSede('X')`.
+ * `error`, più quelli dei costruttori `rifiutoSede` e `rifiutoAi`.
  *
  * NON si cerca `codice:` in tutto il file: `codice` è una parola comune e in
  * `src/lib/competenze/modello.ts` sono i livelli di competenza («A», «B», «C», «D»). Un lock
@@ -679,12 +714,24 @@ function codiciUsati(): { file: string; codice: string }[] {
     const out: { file: string; codice: string }[] = [];
     for (const e of inventario()) {
         if (e.codice) out.push({ file: `${e.file}:${e.riga}`, codice: e.codice });
+        for (const codice of e.codiciDelParametro) out.push({ file: `${e.file}:${e.riga}`, codice });
     }
     for (const f of sorgenti()) {
         const src = mascheraCommenti(fs.readFileSync(path.join(RADICE, f), 'utf8'));
         for (const m of src.matchAll(/rifiutoSede\(\s*'([A-Z0-9_]+)'\s*\)/g)) out.push({ file: f, codice: m[1] });
+        for (const codice of codiciRifiutoAiChiamati(src)) out.push({ file: f, codice });
     }
     return out;
+}
+
+function codiciSconosciuti(usati: { file: string; codice: string }[]): string[] {
+    return usati.filter((u) => !Object.hasOwn(CODICI_ERRORE, u.codice)).map((u) => `${u.file}: ${u.codice}`);
+}
+
+function codiciOpachi(errori: Errore[]): string[] {
+    return errori
+        .filter((e) => e.codiceOpaco && CODICE_NON_LETTERALE_AMMESSO.get(e.file) !== e.codiceOpaco)
+        .map((e) => `${e.file}:${e.riga} → codice: ${e.codiceOpaco}`);
 }
 
 type Voce = { path: string; n: number };
@@ -708,13 +755,13 @@ describe('lock — i messaggi d’errore del server hanno un codice', () => {
         const noti = tutti.filter((e) => e.file === 'src/lib/auth/rifiuto-sede.ts');
         expect(noti, 'il costruttore dei dinieghi di sede non è più visto dalla misura').toHaveLength(1);
         expect(noti[0].conCodice, 'il corpo di `rifiutoSede` non risulta portare `codice`').toBe(true);
+        const crm = tutti.filter((e) => e.file === COSTRUTTORE_RIFIUTO_AI && e.codiciDelParametro.length > 0);
+        expect(crm, 'la misura deve leggere il corpo di `rifiutoAi` e tutti i codici del suo parametro').toHaveLength(1);
     });
 
     it('ogni codice usato in src/ è DICHIARATO e tradotto in entrambe le lingue', () => {
         const dichiarati = CODICI_ERRORE as Record<string, string>;
-        const sconosciuti = codiciUsati()
-            .filter((u) => !dichiarati[u.codice])
-            .map((u) => `${u.file}: ${u.codice}`);
+        const sconosciuti = codiciSconosciuti(codiciUsati());
 
         expect(
             sconosciuti,
@@ -748,9 +795,7 @@ describe('lock — i messaggi d’errore del server hanno un codice', () => {
         // Adesso la costante si RISOLVE quando è un `const X = '…'` dello stesso
         // file, e ciò che resta illeggibile ferma il lock invece di farlo tacere.
         // Un valore che il lock non sa leggere è un valore che nessuno controlla.
-        const opachi = inventario()
-            .filter((e) => e.codiceOpaco && CODICE_NON_LETTERALE_AMMESSO.get(e.file) !== e.codiceOpaco)
-            .map((e) => `${e.file}:${e.riga} → codice: ${e.codiceOpaco}`);
+        const opachi = codiciOpachi(inventario());
 
         expect(
             opachi,
@@ -773,6 +818,43 @@ describe('lock — i messaggi d’errore del server hanno un codice', () => {
                     '`rifiutoSede` non è più coperta da niente',
             ).toContain(atteso);
         }
+    });
+
+    it('rifiutoAi è leggibile solo nel costruttore CRM e solo con un insieme finito di codici', () => {
+        const risposta = 'return NextResponse.json({ error: catalogoIt[CODICI_ERRORE[codice]], codice }, { status: stato })';
+        const src = [
+            "export type CodiceAi = 'CRM_AI_SPENTO' | 'TOKEN_NON_VALIDO'",
+            `export function rifiutoAi(codice: CodiceAi, stato: number) { ${risposta} }`,
+            `function altraRisposta(codice: string, stato: number) { ${risposta} }`,
+        ].join('\n');
+        const crm = inventarioSorgente(COSTRUTTORE_RIFIUTO_AI, src);
+        expect(crm[0].codiciDelParametro).toEqual(['CRM_AI_SPENTO', 'TOKEN_NON_VALIDO']);
+        expect(codiciOpachi(crm)).toEqual([`${COSTRUTTORE_RIFIUTO_AI}:3 → codice: codice`]);
+        expect(codiciOpachi(inventarioSorgente('src/lib/altro.ts', src))).toHaveLength(2);
+        expect(codiciOpachi(inventarioSorgente(COSTRUTTORE_RIFIUTO_AI, src.replace("'TOKEN_NON_VALIDO'", 'string')))).toHaveLength(2);
+    });
+
+    it('un codice inventato in una chiamata a rifiutoAi resta un errore', () => {
+        const file = 'src/app/api/finta/route.ts';
+        const src = `rifiutoAi('CRM_AI_SPENTO', 404); rifiutoAi("CODICE_INVENTATO", 401)`;
+        const usati = codiciRifiutoAiChiamati(src).map((codice) => ({ file, codice }));
+        expect(codiciSconosciuti(usati)).toEqual([`${file}: CODICE_INVENTATO`]);
+    });
+
+    it.each([
+        '...extra',
+        "['codice']: extra.codice",
+        "['error']: extra.error",
+        'codice: extra.codice',
+    ])('il costruttore con %s dopo i campi riservati rimane opaco', (coda) => {
+        const src = [
+            "export type CodiceAi = 'CRM_AI_SPENTO' | 'TOKEN_NON_VALIDO'",
+            'export function rifiutoAi(codice: CodiceAi, stato: number, extra: Record<string, string>) {',
+            `    return NextResponse.json({ error: catalogoIt[CODICI_ERRORE[codice]], codice, ${coda} }, { status: stato })`,
+            '}',
+        ].join('\n');
+        expect(codiciOpachi(inventarioSorgente(COSTRUTTORE_RIFIUTO_AI, src)))
+            .toEqual([`${COSTRUTTORE_RIFIUTO_AI}:3 → codice: codice`]);
     });
 
     it('la lettura delle costanti FUNZIONA (controllo positivo del lettore)', () => {

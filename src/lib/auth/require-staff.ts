@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient, createClient } from '@/lib/supabase/server-client'
-import { impostaUtente } from '@/lib/logging/context'
+import { contestoCrmAiAttivo, impostaUtente } from '@/lib/logging/context'
+import { erroreDbSoloCodice } from '@/lib/supabase/errore-tecnico'
 import { logEvento, type Livello } from '@/lib/logging/logger'
 import { ACTIVE_ROLE_COOKIE, leggiCookie, risolviRuoloAttivo } from './active-role'
 // Dei cinque predicati si importano per nome solo i DUE che il corpo di questo
@@ -181,6 +182,12 @@ export interface Identita {
   ponteGenitore?: boolean
 }
 
+/** Nel contesto protetto registra il codice DB o un esito fisso di autenticazione. */
+function erroreIdentitaPerLog(errore: unknown, codiceAuth?: string): unknown {
+  if (!contestoCrmAiAttivo()) return errore
+  return codiceAuth ? { code: codiceAuth } : erroreDbSoloCodice(errore)
+}
+
 /**
  * Mappa un `auth.uid()` (Supabase Auth) all'id applicativo, e porta con sé ciò che
  * ha letto per farlo.
@@ -213,12 +220,11 @@ async function risolviDaAuthUid(authUid: string): Promise<{
   // PostgREST NON LANCIA: ritorna `{ error }`. Un try/catch qui attorno non
   // scatterebbe mai, e finora l'errore veniva scartato dal destructuring — quindi
   // «la colonna ponte non esiste» e «il permesso è negato» erano lo stesso silenzio.
-  // L'errore va al logger INTERO: porta `code`/`details`/`hint`, ed è quella terna
-  // che distingue un 42703 (colonna assente sul DB E2E non migrato) da un permesso.
+  // Nei log ordinari resta la diagnosi completa. Le rotte protette ricevono il codice tecnico.
   if (staffRes.error)
-    logEvento('auth', 'warn', { operazione: 'resolveIdentity', esito: 'utenti-non-letti' }, staffRes.error)
+    logEvento('auth', 'warn', { operazione: 'resolveIdentity', esito: 'utenti-non-letti' }, erroreIdentitaPerLog(staffRes.error))
   if (parentRes.error)
-    logEvento('auth', 'warn', { operazione: 'resolveIdentity', esito: 'parents-non-letti' }, parentRes.error)
+    logEvento('auth', 'warn', { operazione: 'resolveIdentity', esito: 'parents-non-letti' }, erroreIdentitaPerLog(parentRes.error))
 
   const riga = (staffRes.data ?? null) as RigaUtenti | null
   const parentId = (parentRes.data as { id?: string } | null)?.id ?? null
@@ -271,7 +277,10 @@ export async function resolveIdentity(request: Request): Promise<Identita> {
     const supabase = await createClient()
     const { data, error } = await supabase.auth.getUser()
     const livello = livelloErroreSessione(error)
-    if (livello) logEvento('auth', livello, { operazione: 'resolveIdentity', esito: 'sessione-non-verificata' }, error)
+    if (livello) {
+      logEvento('auth', livello, { operazione: 'resolveIdentity', esito: 'sessione-non-verificata' },
+        erroreIdentitaPerLog(error, 'auth_sessione_non_verificata'))
+    }
     sessionUid = data?.user?.id ?? null
   } catch (err) {
     // Errore IGNORABILE, e per questo si logga a `info` invece di tacere (AGENTS
@@ -282,7 +291,8 @@ export async function resolveIdentity(request: Request): Promise<Identita> {
     // PRODUZIONE vorrebbe dire che la lettura della sessione è rotta per tutti, e
     // senza il log l'unico sintomo sarebbe un'app che rimanda al login senza
     // motivo apparente. È la stessa scelta, con le stesse parole, di `me:GET`.
-    logEvento('auth', 'info', { operazione: 'resolveIdentity', esito: 'sessione-non-leggibile' }, err)
+    logEvento('auth', 'info', { operazione: 'resolveIdentity', esito: 'sessione-non-leggibile' },
+      erroreIdentitaPerLog(err, 'auth_sessione_non_leggibile'))
     sessionUid = null
   }
   if (sessionUid) {
@@ -290,7 +300,8 @@ export async function resolveIdentity(request: Request): Promise<Identita> {
     // lanciare (config assente), e un gate non deve morire per questo — ma nemmeno
     // tacere, perché senza identità applicativa ogni route risponderà 403.
     const risolto = await risolviDaAuthUid(sessionUid).catch((err) => {
-      logEvento('auth', 'error', { operazione: 'resolveIdentity', esito: 'lookup-identita-fallito' }, err)
+      logEvento('auth', 'error', { operazione: 'resolveIdentity', esito: 'lookup-identita-fallito' },
+        erroreIdentitaPerLog(err, 'auth_lookup_identita_fallito'))
       return { appId: null, rigaUtenti: null, ponteGenitore: false }
     })
     return {

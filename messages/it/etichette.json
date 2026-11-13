@@ -173,6 +173,8 @@
   "notifica_video_liberatoria_revocata_desc": "Quando viene pubblicato un video con bambini che nel frattempo hanno perso la liberatoria fotografica",
   "notifica_crm_visita_assegnata_label": "CRM: visita assegnata",
   "notifica_crm_visita_assegnata_desc": "Quando una collega ti assegna una visita in agenda (il testo porta solo giorno e ora)",
+  "notifica_crm_visita_annullata_label": "CRM: visita annullata",
+  "notifica_crm_visita_annullata_desc": "Quando l’assistente annulla una visita assegnata a te",
   "campoPersonale_gender": "Sesso",
   "campoPersonale_birth_date": "Data di nascita",
   "campoPersonale_codice_belfiore_nascita": "Comune di nascita",

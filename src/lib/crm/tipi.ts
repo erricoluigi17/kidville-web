@@ -336,3 +336,61 @@ export interface IndisponibilitaRow {
   creata_da: string | null
   creata_il: string
 }
+
+/** Una chiave dell'assistente AI (`crm_integrazioni`). Il token in chiaro non c'è: solo l'impronta. */
+export interface IntegrazioneRow {
+  id: string
+  scuola_id: string
+  nome: string
+  token_impronta: string
+  /** gli ultimi 4 caratteri del token, per riconoscerlo a schermo */
+  token_coda: string
+  creata_da: string
+  creata_il: string
+  revocata_il: string | null
+  revocata_da: string | null
+  ultimo_uso_il: string | null
+}
+
+/** Una prenotazione chiesta dall'assistente (`crm_ai_richieste`). */
+export interface RichiestaAiRow {
+  id: string
+  scuola_id: string
+  integrazione_id: string
+  chiave: string
+  operazione: 'prenota'
+  impronta: string
+  risposta: Record<string, unknown> | null
+  scheda_id: string | null
+  appuntamento_id: string | null
+  creata_il: string
+  conclusa_il: string | null
+}
+
+/** Quello che `crm_ai_prenota` restituisce. */
+export type EsitoPrenotaAi =
+  | { esito: 'creata'; appuntamento_id: string; inizio: string; fine: string; scheda_id: string; scheda_creata: boolean; assegnata_a: string; ripetuta?: true }
+  | { esito: 'gia_prenotato'; appuntamento_id: string; inizio: string; fine: string; scheda_id: string; ripetuta?: true }
+  | { esito: 'slot_occupato'; scheda_id: string; ripetuta?: true }
+  | { esito: 'chiave_riusata' }
+  | { esito: 'in_corso' }
+  | { esito: 'fuori_disponibilita' }
+  | { esito: 'token_non_valido' }
+
+export type EsitoAnnullaAi =
+  | { esito: 'annullata'; appuntamento_id: string; gia_annullata: boolean }
+  | { esito: 'non_trovato' | 'stato_non_ammesso' | 'token_non_valido' }
+
+/** Argomenti della RPC: l’origine è obbligatoria se il richiamo parte dal telefono. */
+export type ParametriRichiamoAi = {
+  p_integrazione_id: string
+  p_scuola_id: string
+  p_motivo: string
+} & (
+  | { p_scheda_id: string; p_telefono: null; p_telefono_norm: null; p_genitore_nome: null; p_origine: null }
+  | { p_scheda_id: null; p_telefono: string; p_telefono_norm: string; p_genitore_nome: string | null; p_origine: Origine }
+)
+
+export type EsitoRichiamoAi =
+  | { esito: 'ok'; azione_id: string; scheda_id: string; creata: boolean }
+  | { esito: 'non_trovata' | 'nessun_responsabile' | 'token_non_valido' }

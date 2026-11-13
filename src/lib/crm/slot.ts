@@ -35,7 +35,9 @@ import type { AppuntamentoRow, IndisponibilitaRow } from './tipi'
  * entro `oraFine` (9:00–11:00 da 45 minuti → 9:00 e 9:45, non 10:30: sforerebbe di un quarto d'ora). La
  * fine di uno slot è `inizio + durata` in tempo reale, la stessa aritmetica del vincolo EXCLUDE del
  * database (`tstzrange(inizio, fine)`): due intervalli che si toccano soltanto (la fine dell'uno è
- * l'inizio dell'altro) NON si sovrappongono, né qui né là.
+ * l'inizio dell'altro) NON si sovrappongono, né qui né là. Nel salto di primavera si saltano gli inizi
+ * civili inesistenti. La fine effettiva di ogni slot deve stare entro la fine della fascia anche dopo
+ * la conversione: 01:30 + 60 minuti porta alle 03:30 e sfora una fascia che finisce alle 03:15.
  */
 
 export interface SlotLibero {
@@ -172,16 +174,26 @@ export function calcolaSlotLiberi(i: {
       const da = minutiDaOra(f.oraInizio)
       const fino = minutiDaOra(f.oraFine)
       const durata = f.durataSlotMin
-      if (da === null || fino === null || !(durata > 0)) continue
+      if (da === null || fino === null || !(durata > 0) || da + durata > fino) continue
+
+      const oraFine = oraDaMinuti(fino)
+      const fineFascia = istanteCivile(giorno, oraFine)
+      if (fineFascia === null) continue
+      const fineFasciaMs = Date.parse(fineFascia)
 
       for (let inizioMin = da; inizioMin + durata <= fino && inizioMin < MINUTI_GIORNO; inizioMin += durata) {
-        const inizio = istanteCivile(giorno, oraDaMinuti(inizioMin))
+        const oraInizio = oraDaMinuti(inizioMin)
+        const inizio = istanteCivile(giorno, oraInizio)
         if (inizio === null) continue
         const inizioMs = Date.parse(inizio)
-        if (inizioMs < adessoMs) continue
+        if (inizioMs < adessoMs || oraCivile(inizio) !== oraInizio) continue
 
         const slot: Intervallo = { da: inizioMs, a: inizioMs + durata * MS_MINUTO }
+        if (slot.a > fineFasciaMs) continue
         const fine = new Date(slot.a).toISOString()
+        // Se la fine della fascia cade nell'ora saltata, istanteCivile la sposta avanti.
+        // Il limite scritto sull'orologio continua a valere.
+        if (oraCivile(fine) > oraFine) continue
 
         if (f.utenteId === null) {
           // La sede: lo slot c'è se almeno una persona è libera, e dice chi.

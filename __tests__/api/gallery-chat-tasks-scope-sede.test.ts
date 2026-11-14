@@ -56,6 +56,11 @@ const h = vi.hoisted(() => ({
   errori: {} as Record<string, { code: string; message?: string }>,
 }))
 
+// Il controllo dell'anno della riga (lotto 8) ha i suoi test in `gallery-classe-passata`: qui le righe del finto non portano `anno_id`.
+vi.mock('@/lib/auth/scope', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/auth/scope')>()),
+  assertRigaDiAnnoScrivibile: async () => null,
+}))
 vi.mock('@/lib/auth/require-staff', async (orig) => ({
   ...(await orig<typeof import('@/lib/auth/require-staff')>()),
   requireDocente: h.requireDocente,

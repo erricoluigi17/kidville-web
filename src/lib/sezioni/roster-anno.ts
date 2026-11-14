@@ -67,7 +67,8 @@ export async function docenteVedeLaSezione(db: SupabaseClient, userId: string, s
 /**
  * Il periodo (primo e ultimo giorno) dell'anno di una classe PASSATA, `anni_sede` della sua sede (lotto 8). Serve a tenere la
  * lettura in sola lettura dentro le date di quell'anno: una classe passata non mostra le foto e il diario di un anno diverso.
- * `null` = non è una classe di un anno passato, o il periodo non c'è: chi chiama non restringe niente (ma ha già il roster).
+ * `null` = non è una classe di un anno passato, oppure il periodo non c'è (date assenti): chi chiama risponde VUOTO e logga l'errore
+ * (`periodo-anno-assente`), non legge senza finestra.
  */
 export async function periodoDellAnnoPassato(db: SupabaseClient, sectionId: string): Promise<{ inizio: string; fine: string } | null> {
   const sez = await db.from('sections').select('anno_id, scuola_id').eq('id', sectionId).maybeSingle()

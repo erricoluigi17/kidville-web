@@ -1245,8 +1245,9 @@ export async function assertClasseNomeScrivibile(
  * Una riga che appartiene a un ANNO (la foto di galleria: `anno_id` + `scuola_id`) non si modifica né si elimina quando
  * l'anno della sua sede è `in_chiusura` o `chiuso`: dopo la chiusura i docenti solo leggono (lotto 8). L'anno si ricava dalla
  * RIGA, non dai bambini taggati. Direzione e segreteria (`vedeTutteLeClassi`) non hanno mai sola lettura qui: l'anno chiuso
- * per loro lo difende il database. Riga senza anno (o DB senza lo schema dell'anno) = nessun controllo. Se lo stato non si
- * legge si NEGA con 500 (fail-closed): mai una scrittura sull'ipotesi che l'anno sia aperto.
+ * per loro lo difende il database. Per il docente è tutto fail-closed: riga senza `anno_id` o senza `scuola_id` → 403
+ * `ANNO_RIGA_NON_DETERMINATO` con log `error` di soli uuid (in produzione oggi non ce ne sono: se compare, il riempimento dell'anno
+ * si è rotto e va saputo); stato non leggibile → 500; stato non trovato (nessuna riga in `anni_sede` per quella sede e quell'anno) → 500.
  */
 export async function assertRigaDiAnnoScrivibile(
   supabase: SupabaseClient,
@@ -1257,9 +1258,17 @@ export async function assertRigaDiAnnoScrivibile(
   if (vedeTutteLeClassi(user)) return null
   const annoId = riga?.anno_id
   const scuolaId = riga?.scuola_id
-  if (!annoId || !scuolaId) return null
+  if (!annoId || !scuolaId) {
+    logEvento('auth', 'error', { tipo: 'riga-anno-non-determinato', azione, utente: user.id, sede: scuolaId ?? null, anno: annoId ?? null, codice: 'ANNO_RIGA_NON_DETERMINATO' })
+    return NextResponse.json(
+      { error: 'Non si sa a quale anno appartiene questo elemento: chiedi alla segreteria', codice: 'ANNO_RIGA_NON_DETERMINATO' },
+      { status: 403 },
+    )
+  }
   const st = await supabase.from('anni_sede').select('stato').eq('scuola_id', scuolaId).eq('anno_id', annoId).maybeSingle()
   if (st.error) return scopeNonRisolto('scope-anno-riga-non-letto', st.error, { utente: user.id, azione })
+  // L'anno della riga non ha uno stato nella sua sede: non si sa se è chiuso → fail-closed, come per l'errore di lettura.
+  if (!st.data) return scopeNonRisolto('scope-anno-riga-senza-stato', 'anni_sede senza riga', { utente: user.id, azione, sede: scuolaId, anno: annoId })
   const stato = (st.data as { stato?: string | null } | null)?.stato ?? null
   if (stato === 'in_chiusura' || stato === 'chiuso') {
     logEvento('auth', 'warn', { tipo: 'riga-anno-sola-lettura', azione, utente: user.id, sede: scuolaId, anno: annoId })

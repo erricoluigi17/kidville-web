@@ -88,6 +88,11 @@ const h = vi.hoisted(() => ({
 }))
 
 // I gate: le identità si iniettano, il resto della route è reale.
+// Il controllo dell'anno della riga (lotto 8) ha i suoi test in `gallery-classe-passata`: qui le righe del finto non portano `anno_id`.
+vi.mock('@/lib/auth/scope', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/auth/scope')>()),
+  assertRigaDiAnnoScrivibile: async () => null,
+}))
 vi.mock('@/lib/auth/require-staff', () => ({
     requireStaff: h.requireStaff,
     requireDocente: h.requireDocente,

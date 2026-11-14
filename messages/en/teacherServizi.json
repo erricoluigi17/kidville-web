@@ -225,6 +225,7 @@
   "galleryApplicaAlleAltre": "✨ Apply to {n, plural, one {# other photo} other {# other photos}}",
   "galleryApplicaSostituisci": "✨ Replace in all",
   "galleryConfermaApplicaParziale": "Apply this photo’s children to {n, plural, one {the other untagged photo} other {the other # untagged photos}}?\n\n{gia, plural, one {# photo already has its own tags and will NOT be touched} other {# photos already have their own tags and will NOT be touched}}.",
+  "galleryConfermaCambiaClasse": "You have already chosen {n, plural, one {# file} other {# files}} to publish. Changing class discards your selection: change anyway?",
   "galleryConfermaSostituisci": "{gia, plural, one {The other photo already has its own tags} other {The other # photos already have their own tags}}.\n\nReplace them with this photo’s children? The per-photo work will be lost.",
   "galleryVideoLavorazioneTitolo": "Videos being prepared",
   "galleryVideoFaseCaricamento": "Uploading…",

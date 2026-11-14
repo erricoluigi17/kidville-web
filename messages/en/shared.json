@@ -839,6 +839,7 @@
   "erroreParametroMancante": "A required value is missing. Check and try again.",
   "erroreCalendarioNonDisponibile": "School-year settings are not available yet. Try again shortly.",
   "erroreFrequenzaNonScritta": "The change was not saved: the record has been left as it was. Try again shortly.",
+  "erroreAnnoRigaNonDeterminato": "We can’t tell which school year this item belongs to: ask the office to sort it out.",
   "erroreSezioneSolaLettura": "This class is closed to changes: you can view it but not change it.",
   "annoSelettoreAria": "Change school year",
   "annoOgniSede": "Current year",

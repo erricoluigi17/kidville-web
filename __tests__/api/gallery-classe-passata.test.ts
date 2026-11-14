@@ -30,6 +30,8 @@ const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
   db: {} as DBFinto,
   visibili: null as null | (() => { data: unknown; error: unknown }),
+  errori: {} as Record<string, unknown>,
+  filtriOr: [] as string[],
 }))
 
 vi.mock('@/lib/logging/logger', async (importOriginal) => ({
@@ -48,7 +50,21 @@ vi.mock('@/lib/gallery/storage', async (importOriginal) => ({
 vi.mock('@/lib/supabase/server-client', async () => {
   const { creaFintoSupabase } = await import('../fixtures/finto-supabase')
   const rpc = { sezioni_visibili_docente: () => (h.visibili ? h.visibili() : { data: [], error: null }) }
-  const crea = async () => creaFintoSupabase(h.db, [], { rpc })
+  const crea = async () => {
+    const c = creaFintoSupabase(h.db, [], { rpc, errori: h.errori as never })
+    const from = c.from.bind(c)
+    // Si registra la stringa ESATTA del filtro `.or()` della galleria: il finto la interpreta, PostgREST la leggerebbe così com'è.
+    c.from = ((tabella: string) => {
+      const b = from(tabella)
+      if (tabella === 'galleria_media_v2') {
+        const g = b as unknown as { or: (...a: unknown[]) => unknown }
+        const o = g.or.bind(b)
+        g.or = (...a: unknown[]) => { h.filtriOr.push(String(a[0])); return o(...a) }
+      }
+      return b
+    }) as typeof c.from
+    return c
+  }
   return { createAdminClient: crea, createClient: crea }
 })
 
@@ -89,6 +105,8 @@ const ids = async (res: Response) => ((await res.json()) as { media: { id: strin
 
 beforeEach(() => {
   vi.clearAllMocks()
+  h.errori = {}
+  h.filtriOr = []
   h.db = dbBase()
   h.visibili = () => ({
     data: [{ section_id: SEC_NUOVA, sola_lettura: false }, { section_id: SEC_VECCHIA, sola_lettura: true }],
@@ -108,6 +126,15 @@ describe('GET /api/gallery — classe di un anno passato, in sola lettura', () =
     const trovate = await ids(await GET(lettura()))
     expect(trovate).not.toContain(FOTO_NOTTE_UTC)
     expect(trovate).toContain(FOTO_COMPETENZA)
+  })
+
+  it('🔴 N6 · il filtro mandato a PostgREST è ESATTO: giorno_competenza dentro l’anno, oppure created_at fra le mezzanotti di Roma', async () => {
+    await GET(lettura())
+    // anno 2025-09-01 → 2026-08-31: a settembre/agosto Roma è UTC+2, quindi la giornata comincia alle 22:00Z del giorno prima e
+    // finisce alle 21:59:59.999Z. Nessun «+» nei timestamp (spezzerebbe il filtro), nessuna virgola fuori dalla struttura.
+    expect(h.filtriOr).toContain(
+      'and(giorno_competenza.gte.2025-09-01,giorno_competenza.lte.2026-08-31),and(giorno_competenza.is.null,created_at.gte.2025-08-31T22:00:00.000Z,created_at.lte.2026-08-31T21:59:59.999Z)',
+    )
   })
 
   it('🔴 R3 · senza le date dell’anno (anni_sede senza `fine`) la lettura è VUOTA e l’errore è loggato col solo codice', async () => {
@@ -192,17 +219,63 @@ describe('R2 · foto già esistenti di un anno chiuso o in chiusura: il docente 
   }
 
   it('l’anno si ricava dalla RIGA: una foto dell’anno in corso (anno_id nuovo) non è toccata dal controllo', async () => {
-    const res = await PATCH(modifica(FOTO_NOTTE_UTC))
-    expect(res.status).not.toBe(403)
+    const res = await PATCH(modifica(FOTO_NOTTE_UTC, { caption: 'nuova didascalia' }))
+    expect(res.status).toBe(200)
+    expect(h.db.galleria_media_v2.find((r) => r.id === FOTO_NOTTE_UTC)?.caption).toBe('nuova didascalia')
+  })
+
+  it('🔴 il docente elimina una foto dell’anno in corso: 200 e la riga va nel cestino', async () => {
+    const res = await DELETE(elimina(FOTO_NOTTE_UTC))
+    expect(res.status).toBe(200)
+    expect(h.db.galleria_media_v2.find((r) => r.id === FOTO_NOTTE_UTC)?.eliminato_il).toBeTruthy()
   })
 
   it('🔴 la Direzione NON ha sola lettura: la stessa DELETE e la stessa PATCH superano il controllo', async () => {
     h.db.anni_sede[1].stato = 'chiuso'
     h.db.utenti[0].ruolo = 'admin'
     h.requireDocente.mockResolvedValue({ user: { id: DOCENTE, role: 'admin', scuola_id: SEDE_A } })
-    const del = await DELETE(elimina(FOTO_ANNO))
     const pat = await PATCH(modifica(FOTO_ANNO))
-    for (const res of [del, pat]) expect(res.status).not.toBe(403)
+    const del = await DELETE(elimina(FOTO_ANNO))
+    expect(del.status).toBe(200)
+    expect(pat.status).toBe(200)
+    const riga = h.db.galleria_media_v2.find((r) => r.id === FOTO_ANNO)
+    expect(riga?.eliminato_il).toBeTruthy()
+    expect(riga?.caption).toBe('x')
     expect(h.logEvento).not.toHaveBeenCalledWith('auth', 'warn', expect.objectContaining({ tipo: 'riga-anno-sola-lettura' }))
+  })
+
+  it('🔴 N3 · lo stato dell’anno non si legge: 500 e NIENTE scritto (fail-closed)', async () => {
+    h.errori = { anni_sede: { code: '57014' } }
+    const res = await DELETE(elimina(FOTO_ANNO))
+    expect(res.status).toBe(500)
+    expect(h.db.galleria_media_v2.find((r) => r.id === FOTO_ANNO)?.eliminato_il).toBeFalsy()
+  })
+
+  it('🔴 N3 · l’anno della foto non ha riga in anni_sede per la sua sede: 500 e niente scritto', async () => {
+    h.db.anni_sede = h.db.anni_sede.filter((r) => r.anno_id !== ANNO_VECCHIO)
+    const res = await PATCH(modifica(FOTO_ANNO))
+    expect(res.status).toBe(500)
+    expect(h.db.galleria_media_v2.find((r) => r.id === FOTO_ANNO)?.caption).toBeUndefined()
+  })
+
+  it('🔴 N4 · foto senza `anno_id`: al docente 403 ANNO_RIGA_NON_DETERMINATO, log error di soli uuid, niente scritto', async () => {
+    for (const r of h.db.galleria_media_v2) if (r.id === FOTO_FUORI) r.anno_id = null
+    const del = await DELETE(elimina(FOTO_FUORI))
+    const pat = await PATCH(modifica(FOTO_FUORI))
+    for (const res of [del, pat]) {
+      expect(res.status).toBe(403)
+      expect(await codice(res)).toBe('ANNO_RIGA_NON_DETERMINATO')
+    }
+    expect(h.db.galleria_media_v2.find((r) => r.id === FOTO_FUORI)?.eliminato_il).toBeNull()
+    const log = h.logEvento.mock.calls.find((c) => c[0] === 'auth' && c[1] === 'error' && (c[2] as { tipo?: string }).tipo === 'riga-anno-non-determinato')
+    expect(log).toBeTruthy()
+    expect(Object.keys(log![2] as object).sort()).toEqual(['anno', 'azione', 'codice', 'sede', 'tipo', 'utente'])
+  })
+
+  it('N4 · la Direzione, invece, passa anche con la foto senza `anno_id`', async () => {
+    h.requireDocente.mockResolvedValue({ user: { id: DOCENTE, role: 'admin', scuola_id: SEDE_A } })
+    h.db.utenti[0].ruolo = 'admin'
+    const res = await DELETE(elimina(FOTO_FUORI))
+    expect(res.status).toBe(200)
   })
 })

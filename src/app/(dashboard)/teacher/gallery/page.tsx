@@ -486,6 +486,12 @@ function TeacherGalleryContent() {
     // l'elenco (con i comandi di scrittura) della classe di prima, e un caricamento a metà non passa alla classe nuova.
     const cambiaClasse = (chiave: string) => {
         if (chiave === chiaveSezione) return;
+        // Un giro di caricamento in corso non si tocca: `annullaCaricamento` cancellerebbe le copie dei video nativi che si
+        // stanno spedendo (lo stesso motivo per cui «Annulla» è spento mentre `uploading`).
+        if (uploading) return;
+        // File già scelti e non ancora caricati: non si buttano in silenzio. Se la maestra rinuncia, il selettore (controllato)
+        // resta sulla classe di prima e non cambia niente.
+        if (uploadedFiles.length > 0 && !confirm(t('galleryConfermaCambiaClasse', { n: uploadedFiles.length }))) return;
         annullaCaricamento();
         chiaveCorrenteRef.current = chiave;
         setMedia([]);
@@ -962,6 +968,7 @@ function TeacherGalleryContent() {
                             id="section-select"
                             value={chiaveSezione}
                             onChange={(e) => cambiaClasse(e.target.value)}
+                            disabled={uploading}
                             className="min-h-11 rounded-xl border border-kidville-line bg-white px-3 py-1.5 font-barlow text-sm font-bold uppercase text-kidville-green shadow-sm focus:outline-none focus:ring-1 focus:ring-kidville-green"
                         >
                             {sezioniDocente.map((sec) => (

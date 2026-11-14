@@ -331,5 +331,6 @@
   "anagraficaErroreOffline": "You need a connection: try again when you are back online.",
   "anagraficaRiprova": "Try again",
   "anagraficaErroreSessione": "Your session has expired: please sign in again.",
-  "anagraficaAccedi": "Sign in"
+  "anagraficaAccedi": "Sign in",
+  "galleryAnnoPassatoAiuto": "Photos are view-only: they cannot be uploaded or changed."
 }

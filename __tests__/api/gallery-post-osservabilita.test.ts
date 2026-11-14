@@ -49,6 +49,8 @@ vi.mock('@/lib/anagrafiche/legami', () => ({ genitoreHasFiglio: h.genitoreHasFig
 vi.mock('@/lib/auth/scope', () => ({
   resolveScuolaScrittura: h.resolveScuolaScrittura,
   resolveScuoleAttive: h.resolveScuoleAttive,
+  assertClasseNomeScrivibile: async () => null,
+  assertSezioneInScope: async () => null,
   scuoleDiUtente: h.scuoleDiUtente,
 }))
 vi.mock('@/lib/gallery/privacy', () => ({ alunniSenzaConsenso: h.alunniSenzaConsenso }))

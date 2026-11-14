@@ -218,7 +218,7 @@
   "lockerCaricaMateriale": "Registra un carico",
   "lockerChiudiCarico": "Chiudi",
   "galleryErrTroppoGrande": "Il file supera i 50 MB. Scegli un file più piccolo e riprova.",
-  "galleryErrFormatoNonAmmesso": "Questo formato non \u00e8 supportato. Carica una foto JPG, PNG o WebP, oppure un video MP4 o WebM.",
+  "galleryErrFormatoNonAmmesso": "Questo formato non è supportato. Carica una foto JPG, PNG o WebP, oppure un video MP4 o WebM.",
   "galleryErrFirma": "Non è stato possibile preparare il caricamento. Riprova fra qualche minuto.",
   "galleryErrTrasferimento": "Il caricamento si è interrotto. Riprova.",
   "galleryErrRete": "Connessione assente o instabile: il file non è partito. Riprova quando torna la rete.",
@@ -331,5 +331,6 @@
   "anagraficaErroreOffline": "Serve la connessione: riprova quando sei di nuovo in rete.",
   "anagraficaRiprova": "Riprova",
   "anagraficaErroreSessione": "La sessione è scaduta: accedi di nuovo.",
-  "anagraficaAccedi": "Accedi"
+  "anagraficaAccedi": "Accedi",
+  "galleryAnnoPassatoAiuto": "Le foto si possono solo consultare: non si caricano né si modificano."
 }

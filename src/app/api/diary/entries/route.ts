@@ -11,6 +11,7 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { assertAlunnoScrivibile, resolveScuoleAttive } from '@/lib/auth/scope';
 import { risolviSezione } from '@/lib/sezioni/risoluzione';
+import { docenteVedeLaSezione, periodoDellAnnoPassato, rosterDellAnnoDellaSezione } from '@/lib/sezioni/roster-anno';
 import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaTitolariScrittura, enqueueDiarioGenitori, ritiraDiarioGenitori } from '@/lib/primaria/notifiche';
@@ -42,6 +43,9 @@ const getTeacherQuerySchema = z.object({
     date: zDataYMD.optional(),
     // La sede scelta nel SedeSelector (R70): il nome-classe da solo non basta più.
     scuola_id: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
+    // `dellAnno=1` (lotto 8): con `sectionId` di una classe di un anno PASSATO, i bambini sono quelli di quell'anno e la data
+    // deve cadere dentro l'anno. Senza, la lettura è quella di sempre.
+    dellAnno: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['0', '1']).optional()),
 });
 
 // Un evento diario: campi pass-through verso il DB lasciati permissivi
@@ -309,8 +313,30 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
         catch (error) { logEvento('registro', 'error', { operazione: 'diary/entries:GET', esito: 'appartenenze-non-lette' }, error); return rispostaErroreStorico(error, 'diary/entries:GET'); }
         if (!idsStorici.length) return NextResponse.json([]);
     }
+    // Una classe di un anno PASSATO (sola lettura del docente, lotto 8): i bambini sono quelli dell'ANNO di quella classe
+    // (`frequenze`) e la data deve stare dentro l'anno. Mai una scrittura: il POST resta su `assertAlunnoScrivibile`.
+    let delloAnnoPassato = false;
+    if (!idsStorici && q.data.dellAnno === '1' && q.data.sectionId && classe.sectionIds.length === 1) {
+        try {
+            const delloAnno = await rosterDellAnnoDellaSezione(admin, q.data.sectionId);
+            if (delloAnno !== null) {
+                if (!puoCorreggereStorico(auth.user) && !(await docenteVedeLaSezione(admin, auth.user.id, q.data.sectionId))) {
+                    return NextResponse.json([]);
+                }
+                const periodo = await periodoDellAnnoPassato(admin, q.data.sectionId);
+                if (periodo && (date < periodo.inizio || date > periodo.fine)) return NextResponse.json([]);
+                if (!delloAnno.length) return NextResponse.json([]);
+                idsStorici = delloAnno;
+                delloAnnoPassato = true;
+            }
+        } catch (error) {
+            logEvento('registro', 'error', { operazione: 'diary/entries:GET', esito: 'roster-anno-non-letto' }, error);
+            return NextResponse.json({ error: 'Lettura dei bambini non riuscita', codice: 'LETTURA_FALLITA' }, { status: 500 });
+        }
+        if (delloAnnoPassato) logEvento('diary', 'info', { operazione: 'diary/entries:GET', esito: 'classe-passata-letta', utente: auth.user.id, sezione: q.data.sectionId });
+    }
     const queryAlunni = idsStorici
-        ? admin.from('alunni').select('id').in('id', idsStorici).is('anonimizzato_il', null)
+        ? admin.from('alunni').select('id').in('id', idsStorici).in('scuola_id', plessi).is('anonimizzato_il', null)
         : admin.from('alunni').select('id').in('section_id', classe.sectionIds).in('scuola_id', plessi).is('anonimizzato_il', null);
     const { data: alunni, error: erroreAlunni } = await queryAlunni;
 

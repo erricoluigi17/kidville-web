@@ -63,3 +63,27 @@ export async function docenteVedeLaSezione(db: SupabaseClient, userId: string, s
   }
   return esito.sezioni.some((s) => s.sectionId === sectionId)
 }
+
+/**
+ * Il periodo (primo e ultimo giorno) dell'anno di una classe PASSATA, `anni_sede` della sua sede (lotto 8). Serve a tenere la
+ * lettura in sola lettura dentro le date di quell'anno: una classe passata non mostra le foto e il diario di un anno diverso.
+ * `null` = non è una classe di un anno passato, o il periodo non c'è: chi chiama non restringe niente (ma ha già il roster).
+ */
+export async function periodoDellAnnoPassato(db: SupabaseClient, sectionId: string): Promise<{ inizio: string; fine: string } | null> {
+  const sez = await db.from('sections').select('anno_id, scuola_id').eq('id', sectionId).maybeSingle()
+  if (sez.error) {
+    if (schemaAssente(sez.error, 'sections')) return null
+    throw sez.error
+  }
+  const annoId = (sez.data as { anno_id?: string | null } | null)?.anno_id
+  const scuolaId = (sez.data as { scuola_id?: string | null } | null)?.scuola_id
+  if (!annoId || !scuolaId) return null
+  const sede = await db.from('anni_sede').select('stato, inizio, fine').eq('anno_id', annoId).eq('scuola_id', scuolaId).maybeSingle()
+  if (sede.error) {
+    if (schemaAssente(sede.error, 'anni_sede')) return null
+    throw sede.error
+  }
+  const r = sede.data as { stato?: string; inizio?: string | null; fine?: string | null } | null
+  if (!r?.stato || !STATI_PASSATI.includes(r.stato) || !r.inizio || !r.fine) return null
+  return { inizio: r.inizio.slice(0, 10), fine: r.fine.slice(0, 10) }
+}

@@ -5,7 +5,7 @@ const h = vi.hoisted(() => ({
   notify: vi.fn(), destinatari: vi.fn(), insert: vi.fn(), log: vi.fn(),
 }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.auth, requireStaff: h.auth }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuolaScrittura: h.sede, resolveScuoleAttive: vi.fn(), scuoleDiUtente: vi.fn() }))
+vi.mock('@/lib/auth/scope', () => ({ resolveScuolaScrittura: h.sede, resolveScuoleAttive: vi.fn(), assertClasseNomeScrivibile: async () => null, assertSezioneInScope: async () => null, scuoleDiUtente: vi.fn() }))
 vi.mock('@/lib/gallery/tag-scope', () => ({ assertTagStudentsInScope: h.scope }))
 vi.mock('@/lib/gallery/privacy', () => ({ alunniSenzaConsenso: h.consenso }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: h.notify }))

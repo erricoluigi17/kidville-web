@@ -11,7 +11,9 @@ import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { useDiaryDay, DiaryEventEditor } from '@/components/features/teacher/diary/DiaryEventEditor';
 import { fetchDiarioConfig } from '@/lib/diary/config-cache';
-import { fetchEducatorSections, sezioniDallaRisposta, type SezioneDocente } from '@/lib/sezioni/educator-sections-cache';
+import { DiarioSolaLettura } from '@/components/features/teacher/diary/DiarioSolaLettura';
+import { fetchEducatorSections, nomeConAnno, scadiEducatorSections, sezioniDallaRisposta, type SezioneDocente } from '@/lib/sezioni/educator-sections-cache';
+import { useRipresaApp } from '@/lib/auth/use-parent-identity';
 import { COLONNA_DOCENTE, COLONNA_DOCENTE_LARGA } from '@/lib/ui/larghezza-pagina';
 
 // Pagina mobile del docente: chrome (header, selettore sezione, filtri) attorno
@@ -22,6 +24,7 @@ const chiaveDi = (s: SezioneDocente): string => s.id ?? `nome:${s.name}`;
 
 function TeacherDiaryInner() {
     const t = useTranslations('teacherDiario');
+    const tPresenze = useTranslations('teacherPresenze');
     const f = useDateFormat();
     const search = useSearchParams();
     const userId = getCurrentTeacherId(search);
@@ -57,12 +60,18 @@ function TeacherDiaryInner() {
     const sezioneScelta = sezioni.find((s) => chiaveDi(s) === chiaveSezione);
     const sezione = sezioneScelta?.name ?? null;
     const sectionId = sezioneScelta?.id;
+    // Una classe di un anno passato (o che si sta chiudendo) si CONSULTA e basta (lotto 8): nessun editor, nessuna scrittura.
+    const solaLettura = sezioneScelta?.solaLettura === true;
+    const etichettaSezione = (s: SezioneDocente) => nomeConAnno(s, (nome, anno) => tPresenze('sezioneConAnno', { nome, anno }));
+    // Alla ripresa dell'app l'elenco si rilegge (come l'appello): a cavallo del passaggio d'anno la classe nuova compare da sola.
+    const ripresa = useRipresaApp(scadiEducatorSections);
     // Le routine del diario sono della SEDE DELLA SEZIONE (2026-09-28): prima valevano quelle della
     // sede principale di chi compila. Finché le sezioni non sono arrivate la sede non si sa (`null`:
     // l'editor aspetta invece di mostrare le routine di un'altra sede); con la risposta vecchia,
     // senza sede, vale quella dell'utente (`undefined`).
     const scuolaId = !sezioniLoaded ? null : sezioneScelta?.scuolaId;
-    const day = useDiaryDay(userId, sezione, { sectionId, scuolaId });
+    // In sola lettura il giorno di OGGI non si carica: la classe passata ha il suo componente, e l'editor non nasce.
+    const day = useDiaryDay(userId, solaLettura ? null : sezione, { sectionId, scuolaId });
 
     useEffect(() => {
         let active = true;
@@ -71,7 +80,7 @@ function TeacherDiaryInner() {
         // StrictMode raddoppia ogni effect. Erano 4 config + 2 sezioni per un
         // solo ingresso in pagina — ~14 s prima di poter toccare un pulsante.
         Promise.all([
-            fetchEducatorSections(userId),
+            fetchEducatorSections(userId, { passati: true }),
             fetchDiarioConfig(userId),
         ])
             .then(([sec, conf]) => {
@@ -81,12 +90,12 @@ function TeacherDiaryInner() {
                 const primariaVisibile = conf?.diario_primaria_visibile === true; // fail-closed: primaria esposta solo se attivata dall'admin
                 const filtered = primariaVisibile ? raw : raw.filter(s => s.school_type !== 'primaria');
                 setSezioni(filtered);
-                setChiaveSezione(cur => cur ?? (filtered[0] ? chiaveDi(filtered[0]) : null));
+                setChiaveSezione(cur => (cur && filtered.some((x) => chiaveDi(x) === cur) ? cur : (filtered[0] ? chiaveDi(filtered[0]) : null)));
                 setSoloPrimariaNascosta(!primariaVisibile && raw.length > 0 && filtered.length === 0);
             })
             .finally(() => { if (active) setSezioniLoaded(true); });
         return () => { active = false; };
-    }, [userId]);
+    }, [userId, ripresa]);
 
     // Listener connettività (una volta).
     useEffect(() => {
@@ -120,7 +129,7 @@ function TeacherDiaryInner() {
         );
     }
 
-    if (day.isLoading) {
+    if (day.isLoading && !solaLettura) {
         return (
             <div className="max-w-2xl mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
@@ -144,8 +153,8 @@ function TeacherDiaryInner() {
                 // di ogni parola — regola inglese — e deformava sia la data sia
                 // il nome della sezione. Vedi src/lib/i18n/date.ts (`conIniziale`).
                 subtitle={t('sottotitoloSezione', {
-                    sezione: sezione ?? '',
-                    data: oggiEsteso,
+                    sezione: sezioneScelta ? etichettaSezione(sezioneScelta) : '',
+                    data: solaLettura ? '' : oggiEsteso,
                 })}
             />
 
@@ -156,21 +165,31 @@ function TeacherDiaryInner() {
                         <button
                             key={chiaveDi(sez)}
                             onClick={() => switchSezione(chiaveDi(sez))}
-                            className={`rounded-pill border px-3 py-1.5 font-maven text-xs font-semibold transition-colors ${
+                            className={`min-h-11 rounded-pill border px-3 py-1.5 font-maven text-xs font-semibold transition-colors ${
                                 chiaveSezione === chiaveDi(sez)
                                     ? 'border-kidville-green/20 bg-kidville-green text-kidville-yellow'
                                     : 'border-kidville-line bg-white text-kidville-muted'
                             }`}
                             aria-pressed={chiaveSezione === chiaveDi(sez)}
                         >
-                            {sez.name}
+                            {etichettaSezione(sez)}
                         </button>
                     ))}
                 </div>
             )}
 
+            {solaLettura && (
+                <p role="status" data-sola-lettura className="mt-3 rounded-2xl border border-kidville-line bg-kidville-cream px-4 py-2 font-maven text-sm text-kidville-ink">
+                    <strong>{sezioneScelta?.annoStato === 'in_chiusura' ? tPresenze('annoInChiusura') : tPresenze('annoPassato')}.</strong> {t('slAnnoAiuto')}
+                </p>
+            )}
+
+            {solaLettura && sectionId && (
+                <DiarioSolaLettura key={chiaveSezione} sectionId={sectionId} scuolaId={sezioneScelta?.scuolaId} annoInizio={sezioneScelta?.annoInizio} annoFine={sezioneScelta?.annoFine} />
+            )}
+
             {/* Controlli (filtro presenze + offline) */}
-            <div className="mt-3 flex items-center gap-2">
+            {!solaLettura && <div className="mt-3 flex items-center gap-2">
                 <button
                     onClick={day.toggleShowAll}
                     className={`flex items-center gap-1.5 rounded-pill border px-3 py-1.5 font-maven text-xs font-semibold transition-colors ${
@@ -187,9 +206,9 @@ function TeacherDiaryInner() {
                         <WifiOff size={12} strokeWidth={1.5} /> {t('offline')}
                     </div>
                 )}
-            </div>
+            </div>}
 
-            <DiaryEventEditor day={day} sezione={sezione} />
+            {!solaLettura && <DiaryEventEditor day={day} sezione={sezione} />}
         </div>
     );
 }

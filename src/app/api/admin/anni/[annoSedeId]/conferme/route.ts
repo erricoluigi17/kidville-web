@@ -357,6 +357,27 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
     }
   }
 
+  // La voce della quota ancora da pagare: la pagina la passa alla finestra «Registra incasso» della Contabilità, che vuole importo, già
+  // incassato e sconto. Solo per le righe «da pagare» della pagina, con UNA lettura. Nessun dato personale: id, importi e stato.
+  type Voce = { id: string; alunno_id: string | null; descrizione: string | null; importo: number; importo_pagato: number; sconto?: number | null; stato: string; tipo: string | null; parent_payment_id: string | null }
+  const voci = new Map<string, Voce>()
+  const idVoci = [...new Set(nuove.filter((n) => !n.quota_saldata && n.quota_pagamento_id).map((n) => n.quota_pagamento_id as string))]
+  if (idVoci.length > 0) {
+    const colonneVoce = 'id, alunno_id, descrizione, importo, importo_pagato, stato, tipo, parent_payment_id'
+    // Le voci sono della sede dell'anno: il filtro di sede c'è anche se gli uuid vengono già dalle frequenze di quell'anno.
+    let conSconto = supabase.from('pagamenti').select(`${colonneVoce}, sconto`).in('id', idVoci)
+    if (letta.scuolaId) conSconto = conSconto.eq('scuola_id', letta.scuolaId)
+    let v: { data: unknown; error: ErroreDb | null } = await conSconto
+    if (v.error?.code === '42703') {
+      let senzaSconto = supabase.from('pagamenti').select(colonneVoce).in('id', idVoci)
+      if (letta.scuolaId) senzaSconto = senzaSconto.eq('scuola_id', letta.scuolaId)
+      v = await senzaSconto
+    }
+    if (v.error) return lettura(v.error, ctx)
+    for (const x of (Array.isArray(v.data) ? v.data : []) as unknown as Voce[]) voci.set(x.id, x)
+  }
+  const voceDi = (n: Nuova): Voce | null => (!n.quota_saldata && n.quota_pagamento_id ? (voci.get(n.quota_pagamento_id) ?? null) : null)
+
   const righe =
     vista === 'nuove'
       ? nuove.map((n) => ({
@@ -372,6 +393,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
           moduli: { fatti: fatti.get(n.id) ?? 0, richiesti: richiestiDi(n.tipo).size },
           quota: quotaDi(n),
           quota_piu_voci: piuVoci.has(n.id),
+          quota_voce: voceDi(n),
           cambia_grado: false,
           stato_frequenza: n.stato,
           nome: nomi.get(n.alunno_id)?.nome ?? null,
@@ -395,6 +417,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
             // Una frequenza ritirata con la voce ancora attaccata (pagata) la famiglia la vede: la vista non deve dire «assente» (4.7.4).
             quota: n ? quotaDi(n) : ('assente' as StatoQuota),
             quota_piu_voci: confermata ? piuVoci.has(n.id) : false,
+            quota_voce: n ? voceDi(n) : null,
             cambia_grado: confermata ? cambiaGrado(p.section_id, n.section_id) : false,
             grado_partenza: p.section_id ? (sezioni.get(p.section_id)?.school_type ?? null) : null,
             stato_frequenza: confermata ? n.stato : null,

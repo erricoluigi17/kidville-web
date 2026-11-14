@@ -69,6 +69,7 @@ vi.mock('@/lib/supabase/server-client', async () => {
 })
 
 import { GET, POST, PATCH, DELETE } from '@/app/api/gallery/route'
+import { assertRigaDiAnnoScrivibile } from '@/lib/auth/scope'
 
 const dbBase = (): DBFinto => ({
   sections: [
@@ -194,6 +195,23 @@ describe('scritture della galleria su una classe in sola lettura', () => {
   })
 })
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+/** La riga di log di livello `error` di quel `tipo` (categoria `auth`), e la prova che porta SOLO uuid e costanti: nessun dato personale. */
+function logErrore(tipo: string): Record<string, unknown> {
+  const chiamata = h.logEvento.mock.calls.find((c) => c[0] === 'auth' && c[1] === 'error' && (c[2] as { tipo?: string }).tipo === tipo)
+  expect(chiamata, `log error «${tipo}»`).toBeTruthy()
+  const campi = chiamata![2] as Record<string, unknown>
+  for (const [chiave, valore] of Object.entries(campi)) {
+    if (valore === null) continue
+    if (['tipo', 'azione', 'codice', 'operazione'].includes(chiave)) expect(valore, chiave).toMatch(/^[A-Za-z_:.\-]+$/)
+    else expect(String(valore), chiave).toMatch(UUID)
+  }
+  // l'errore passato al logger è quello di PostgREST (il logger ne tiene il solo codice); qui si controlla che ci sia il codice iniettato
+  const errore = chiamata![3] as { code?: string } | string | undefined
+  if (errore && typeof errore === 'object') expect(errore.code).toBe('57014')
+  return campi
+}
+
 describe('R2 · foto già esistenti di un anno chiuso o in chiusura: il docente non le elimina né le modifica', () => {
   const elimina = (id: string) => new NextRequest(`http://localhost/api/gallery?id=${id}`, { method: 'DELETE' })
   const modifica = (id: string, extra: Record<string, unknown> = { caption: 'x' }) => new NextRequest('http://localhost/api/gallery', {
@@ -249,6 +267,9 @@ describe('R2 · foto già esistenti di un anno chiuso o in chiusura: il docente 
     const res = await DELETE(elimina(FOTO_ANNO))
     expect(res.status).toBe(500)
     expect(h.db.galleria_media_v2.find((r) => r.id === FOTO_ANNO)?.eliminato_il).toBeFalsy()
+    // il 500 viene da QUESTA lettura fallita (non da un altro guasto), col solo codice dell'errore e uuid
+    const campi = logErrore('scope-anno-riga-non-letto')
+    expect(campi).toMatchObject({ utente: DOCENTE, azione: 'gallery:DELETE' })
   })
 
   it('🔴 N3 · l’anno della foto non ha riga in anni_sede per la sua sede: 500 e niente scritto', async () => {
@@ -256,20 +277,31 @@ describe('R2 · foto già esistenti di un anno chiuso o in chiusura: il docente 
     const res = await PATCH(modifica(FOTO_ANNO))
     expect(res.status).toBe(500)
     expect(h.db.galleria_media_v2.find((r) => r.id === FOTO_ANNO)?.caption).toBeUndefined()
+    const campi = logErrore('scope-anno-riga-senza-stato')
+    expect(campi).toMatchObject({ utente: DOCENTE, azione: 'gallery:PATCH', sede: SEDE_A, anno: ANNO_VECCHIO })
   })
 
-  it('🔴 N4 · foto senza `anno_id`: al docente 403 ANNO_RIGA_NON_DETERMINATO, log error di soli uuid, niente scritto', async () => {
+  it('🔴 N4 · foto senza `anno_id`: al docente 403 ANNO_RIGA_ASSENTE, log error di soli uuid, niente scritto', async () => {
     for (const r of h.db.galleria_media_v2) if (r.id === FOTO_FUORI) r.anno_id = null
     const del = await DELETE(elimina(FOTO_FUORI))
     const pat = await PATCH(modifica(FOTO_FUORI))
     for (const res of [del, pat]) {
       expect(res.status).toBe(403)
-      expect(await codice(res)).toBe('ANNO_RIGA_NON_DETERMINATO')
+      expect(await codice(res)).toBe('ANNO_RIGA_ASSENTE')
     }
     expect(h.db.galleria_media_v2.find((r) => r.id === FOTO_FUORI)?.eliminato_il).toBeNull()
-    const log = h.logEvento.mock.calls.find((c) => c[0] === 'auth' && c[1] === 'error' && (c[2] as { tipo?: string }).tipo === 'riga-anno-non-determinato')
-    expect(log).toBeTruthy()
-    expect(Object.keys(log![2] as object).sort()).toEqual(['anno', 'azione', 'codice', 'sede', 'tipo', 'utente'])
+    const campi = logErrore('riga-anno-assente')
+    expect(Object.keys(campi).sort()).toEqual(['anno', 'azione', 'codice', 'sede', 'tipo', 'utente'])
+    expect(campi.codice).toBe('ANNO_RIGA_ASSENTE')
+  })
+
+  it('🔴 M3 · foto senza sede (ma con anno): codice SEDE_RIGA_ASSENTE, distinto da ANNO_RIGA_ASSENTE, log error di soli uuid', async () => {
+    // In PATCH/DELETE una riga senza sede è respinta prima dal controllo di plesso: il controllo dell'anno si prova direttamente.
+    const res = await assertRigaDiAnnoScrivibile({} as never, { id: DOCENTE, role: 'educator' } as never, { anno_id: ANNO_VECCHIO, scuola_id: null }, 'gallery:PATCH')
+    expect(res!.status).toBe(403)
+    expect(await codice(res!)).toBe('SEDE_RIGA_ASSENTE')
+    const campi = logErrore('riga-sede-assente')
+    expect(campi).toMatchObject({ codice: 'SEDE_RIGA_ASSENTE', anno: ANNO_VECCHIO, sede: null })
   })
 
   it('N4 · la Direzione, invece, passa anche con la foto senza `anno_id`', async () => {

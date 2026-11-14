@@ -1245,9 +1245,13 @@ export async function assertClasseNomeScrivibile(
  * Una riga che appartiene a un ANNO (la foto di galleria: `anno_id` + `scuola_id`) non si modifica né si elimina quando
  * l'anno della sua sede è `in_chiusura` o `chiuso`: dopo la chiusura i docenti solo leggono (lotto 8). L'anno si ricava dalla
  * RIGA, non dai bambini taggati. Direzione e segreteria (`vedeTutteLeClassi`) non hanno mai sola lettura qui: l'anno chiuso
- * per loro lo difende il database. Per il docente è tutto fail-closed: riga senza `anno_id` o senza `scuola_id` → 403
- * `ANNO_RIGA_NON_DETERMINATO` con log `error` di soli uuid (in produzione oggi non ce ne sono: se compare, il riempimento dell'anno
- * si è rotto e va saputo); stato non leggibile → 500; stato non trovato (nessuna riga in `anni_sede` per quella sede e quell'anno) → 500.
+ * per loro lo difende il database. Per il docente è tutto fail-closed: riga senza `anno_id` → 403 `ANNO_RIGA_ASSENTE`, senza
+ * `scuola_id` → 403 `SEDE_RIGA_ASSENTE`, entrambi con log `error` di soli uuid (in produzione oggi non ce ne sono: se compare, il
+ * riempimento dell'anno si è rotto e va saputo); stato non leggibile → 500; stato non trovato (nessuna riga in `anni_sede` per quella
+ * sede e quell'anno) → 500.
+ *
+ * Il docente che non può correggere una foto senza anno è il fail-closed VOLUTO (se il trigger dell'anno lascia `anno_id` NULL):
+ * la segreteria la sistema, e il log `error` rende il guasto visibile. Oggi in produzione le foto senza anno sono 0.
  */
 export async function assertRigaDiAnnoScrivibile(
   supabase: SupabaseClient,
@@ -1258,10 +1262,17 @@ export async function assertRigaDiAnnoScrivibile(
   if (vedeTutteLeClassi(user)) return null
   const annoId = riga?.anno_id
   const scuolaId = riga?.scuola_id
-  if (!annoId || !scuolaId) {
-    logEvento('auth', 'error', { tipo: 'riga-anno-non-determinato', azione, utente: user.id, sede: scuolaId ?? null, anno: annoId ?? null, codice: 'ANNO_RIGA_NON_DETERMINATO' })
+  if (!annoId) {
+    logEvento('auth', 'error', { tipo: 'riga-anno-assente', azione, utente: user.id, sede: scuolaId ?? null, anno: null, codice: 'ANNO_RIGA_ASSENTE' })
     return NextResponse.json(
-      { error: 'Non si sa a quale anno appartiene questo elemento: chiedi alla segreteria', codice: 'ANNO_RIGA_NON_DETERMINATO' },
+      { error: 'Non si sa a quale anno appartiene questo elemento: chiedi alla segreteria', codice: 'ANNO_RIGA_ASSENTE' },
+      { status: 403 },
+    )
+  }
+  if (!scuolaId) {
+    logEvento('auth', 'error', { tipo: 'riga-sede-assente', azione, utente: user.id, sede: null, anno: annoId, codice: 'SEDE_RIGA_ASSENTE' })
+    return NextResponse.json(
+      { error: 'Non si sa a quale sede appartiene questo elemento: chiedi alla segreteria', codice: 'SEDE_RIGA_ASSENTE' },
       { status: 403 },
     )
   }

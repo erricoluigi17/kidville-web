@@ -511,7 +511,7 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId, solaLettura = 
 
             {/* ── Tabella ── */}
             <div className="w-full rounded-2xl overflow-hidden border border-kidville-line shadow-sm bg-white">
-                <div className="overflow-x-auto" style={{ maxHeight: 'calc(100vh - 320px)' }}>
+                <div className="relative overflow-x-auto" style={{ maxHeight: 'calc(100vh - 320px)' }}>
                     <table className="border-collapse w-full" style={{ minWidth: tableMinWidth }}>
                         <thead>
                             <tr>

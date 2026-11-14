@@ -52,7 +52,7 @@ export function OrarioGrid({
     orario.find((o) => o.campanella_id === campanellaId && o.giorno_settimana === giorno);
 
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
       <table className="w-full border-collapse text-sm font-maven">
         <thead>
           <tr>

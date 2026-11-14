@@ -55,7 +55,7 @@ export function FunzioniMatricePanel({ userId, scuolaId }: { userId: string; scu
             <p className="font-maven text-xs text-kidville-muted mb-3">
                 {t('fmDesc')}
             </p>
-            <div className="overflow-x-auto">
+            <div className="relative overflow-x-auto">
                 <table className="w-full text-sm font-maven">
                     <thead>
                         <tr className="text-kidville-muted">

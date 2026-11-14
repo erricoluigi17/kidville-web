@@ -182,7 +182,7 @@ export function MonthlyLockerTable({
                 className="bg-kidville-white backdrop-blur-xl border border-kidville-line
                            rounded-2xl overflow-hidden"
             >
-                <div className="overflow-x-auto">
+                <div className="relative overflow-x-auto">
                     <table className="min-w-full text-sm">
                         <thead>
                             <tr className="border-b border-kidville-line">

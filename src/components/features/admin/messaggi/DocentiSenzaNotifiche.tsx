@@ -196,7 +196,7 @@ export function DocentiSenzaNotifiche() {
             <p className="px-2 pb-2 font-maven text-sm font-semibold text-kidville-ink">
               {t('docentiSenzaPushConteggio', { n: totale, totale: docentiTotali })}
             </p>
-            <div className="overflow-x-auto">
+            <div className="relative overflow-x-auto">
               <table className="w-full min-w-[520px] border-collapse">
                 <caption className="sr-only">{t('docentiSenzaPushTitolo')}</caption>
                 <thead>

@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { creaFintoSupabase, type DBFinto, type Riga, type Scrittura } from '../fixtures/finto-supabase'
-import { SEDE_A, SEDE_B, SEDE_E2E } from '../fixtures/sedi'
+import { SEDE_A, SEDE_B, SEDE_C, SEDE_DEMO, SEDE_E2E } from '../fixtures/sedi'
 import { STANDARD_ENROLLMENT_MODEL_ID } from '@/lib/forms/enrollment-default-schema'
 
 /**
@@ -387,5 +387,56 @@ describe('La ricevuta dice l\'anno quando non è il corrente', () => {
     expect(con.testo).toContain('2027/28')
     expect(con.html).toContain('2027/28')
     expect(senza.testo).not.toContain('Anno scolastico')
+  })
+})
+
+
+/**
+ * Prova di facilità d'uso del 14/11: la domanda «di prova» finì in una sede VERA, perché l'unico link che la segreteria
+ * trovava era `/iscrizione` e il selettore pubblico non offre la Demo (di proposito). La Demo si raggiunge SOLO dal link
+ * della sede, `/iscrizione?scuola=<id>`: questi test fissano che il link funzioni e che l'elenco resti com'è.
+ */
+describe('la sede Demo: la domanda ci arriva solo col link della sede', () => {
+  const S_DEMO_PROSS = 'b7777777-7777-4777-8777-777777777777'
+  beforeEach(() => {
+    h.db.schools = [
+      { id: SEDE_A, nome: 'Sede Alfa' },
+      { id: SEDE_B, nome: 'Sede Beta' },
+      { id: SEDE_C, nome: 'Sede Gamma' },
+      { id: SEDE_DEMO, nome: 'Kidville Demo' },
+    ]
+    h.db.anni_sede = [
+      ...h.db.anni_sede,
+      { id: 'b6666666-6666-4666-8666-666666666666', scuola_id: SEDE_DEMO, anno_id: A_CORR, stato: 'corrente', domande_aperte: true },
+      { id: S_DEMO_PROSS, scuola_id: SEDE_DEMO, anno_id: A_PROSS, stato: 'iscrizioni_aperte', domande_aperte: true },
+    ]
+  })
+
+  it('col link della Demo e l\'anno scelto la domanda è accettata e scritta nella Demo, con quell\'anno', async () => {
+    const res = await invia(SEDE_DEMO, A_PROSS)
+    expect(res.status).toBe(201)
+    const righe = inserimenti()
+    expect(righe).toHaveLength(1)
+    // Sono le due colonne con cui «Moduli ricevuti» e le nuove iscrizioni dell'anno filtrano la lista (`.in('scuola_id', …)` + `anno_id`).
+    expect(righe[0].valori[0]).toMatchObject({ scuola_id: SEDE_DEMO, anno_id: A_PROSS })
+  })
+
+  it('la Demo NON compare nell\'elenco pubblico delle sedi', async () => {
+    const res = await ELENCO_SEDI(new NextRequest('http://localhost/api/iscrizione/sedi'))
+    const testo = JSON.stringify(await res.json())
+    expect(testo).not.toContain(SEDE_DEMO)
+    expect(testo).toContain(SEDE_A)
+  })
+
+  it('senza link di sede, con tre sedi vere e la Demo, nessuna domanda parte: né nella Demo né in una sede indovinata', async () => {
+    const res = await invia(undefined, A_PROSS)
+    expect(res.status).toBe(400)
+    expect(inserimenti()).toHaveLength(0)
+  })
+
+  it('un anno che la Demo non ha è un rifiuto, non un ripiego su un altro anno', async () => {
+    const res = await invia(SEDE_DEMO, A_ALTRO)
+    expect(res.status).toBe(422)
+    expect(inserimenti()).toHaveLength(0)
   })
 })

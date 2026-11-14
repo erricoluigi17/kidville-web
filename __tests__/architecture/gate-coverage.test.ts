@@ -355,6 +355,7 @@ const PUBBLICHE: Record<string, string> = {
     'iscrizione:POST': 'modulo pubblico: chi si iscrive non ha un account. Tetto 5 invii/10 min per IP + ri-validazione server-side dei campi contro il modello',
     'iscrizione/sedi:GET': 'modulo pubblico: elenco delle sole sedi reali (id e nome, niente anagrafica), tetto 30/10 min per IP. Il wizard deve poter scegliere il plesso PRIMA di esistere come utente',
     'iscrizione/anni:GET': 'modulo pubblico: gli anni scolastici che accettano domande per una sede (SOLO id, etichetta e tipo di ingresso: niente date, niente stati), sede validata contro `sediReali`, tetto 30/10 min per IP. Il wizard lo chiede prima che chi compila esista come utente',
+    'iscrizione/info-anno:GET': 'modulo pubblico: quota di nuova iscrizione e documenti richiesti (titoli) di UN anno che accetta domande per una sede — configurazione pubblica, nessuna riga di bambini o famiglie; sede validata contro `sediReali`, anno validato contro quelli con le domande aperte, tetto 30/10 min per IP. Il wizard lo chiede prima che chi compila esista come utente',
     'iscrizione/model:GET': "modulo pubblico: restituisce SOLO lo schema dei campi del modello standard, nessun dato personale",
     'iscrizione/upload:POST': 'modulo pubblico: allegato del wizard di iscrizione, su bucket dedicato con nome randomizzato e tetto di dimensione',
     // ── Modulo pubblico «Lavora con noi»: chi si candida non ha un account ───
@@ -941,12 +942,18 @@ describe('coverage-lock dei gate di autenticazione', () => {
         // `__tests__/api/iscrizione-anni.test.ts` (chiavi ESATTE di ogni voce). È il fratello di
         // `iscrizione/sedi:GET`, che il wizard chiede nello stesso istante e nelle stesse condizioni (chi compila
         // non ha un account), e come lui sta dietro un tetto per IP e valida la sede contro `sediReali`.
+        // 🔺 23 → 24 il 2026-11-14, una SALITA: `iscrizione/info-anno:GET` (modulo pubblico: anno, quota, documenti).
+        // Mi sono fermato, e la domanda è «cosa ottiene un anonimo che passa?»: per una sede del deployment e un anno
+        // che accetta domande, l'importo della quota di nuova iscrizione e i TITOLI dei documenti da consegnare — testo
+        // di configurazione che la segreteria ha già deciso di mostrare alle famiglie. Nessuna riga di bambini, famiglie
+        // o pagamenti (lo verifica `__tests__/api/iscrizione-info-anno.test.ts`). Fratello di `iscrizione/anni:GET`:
+        // stesso tetto per IP, stessa validazione della sede contro `sediReali`, anno rifiutato (422) se non offerto.
         expect(
             Object.keys(PUBBLICHE).length,
             'Il numero di handler senza gate è cambiato. Se è SALITO, fermati: hai appena ' +
             'tolto un pezzo di questo lock, e questo test esiste perché la cosa passi sotto ' +
             'gli occhi di qualcuno invece che in silenzio.',
-        ).toBe(23)
+        ).toBe(24)
     })
 
     it('la motivazione di `iscrizione/insegnanti/upload:POST` dichiara il tetto VERO', () => {

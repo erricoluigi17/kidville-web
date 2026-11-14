@@ -49,10 +49,11 @@ const INVENTARIO: readonly Voce[] = [
   { file: `${API}/admin/frequenze/[frequenzaId]/moduli/route.ts`, metodi: ['GET', 'PUT'], gate: true, sede: 'anno' },
   { file: `${API}/admin/iscrizioni/sposta-anno/route.ts`, metodi: ['POST'], gate: true, sede: 'domanda' },
   { file: `${API}/iscrizione/anni/route.ts`, metodi: ['GET'], gate: false, sede: 'pubblica' },
+  { file: `${API}/iscrizione/info-anno/route.ts`, metodi: ['GET'], gate: false, sede: 'pubblica' },
 ]
 
-const FILE_ATTESI = 11
-const FUNZIONI_ATTESE = 19
+const FILE_ATTESI = 12
+const FUNZIONI_ATTESE = 20
 
 const METODI = 'GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS'
 const NUDO = new RegExp(`export\\s+(?:async\\s+)?function\\s+(${METODI})\\b`, 'g')

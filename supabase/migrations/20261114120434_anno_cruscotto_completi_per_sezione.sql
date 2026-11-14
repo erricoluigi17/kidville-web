@@ -46,7 +46,10 @@ BEGIN
 
   -- Sezioni. PARTONO DALLE CLASSI DELL'ANNO (anche quelle senza nessuno: compaiono con 0), poi i senza classe in una riga a parte.
   -- `iscritti` = in lista (frequenze vive: chi ha confermato o ha una domanda nuova); `completi` = di questi, gli iscritti a tutti
-  -- gli effetti (stato `iscritto` = moduli completi + quota saldata, lo garantisce il CHECK della frequenza).
+  -- gli effetti: stato `iscritto` = moduli completi + quota saldata, ESCLUSE le righe `recupero` (il CHECK `frequenze_iscritto_a_posto`
+  -- le lascia passare senza moduli né quota: sono lo storico ricostruito, non un'iscrizione a posto).
+  -- Nei «senza classe» entra anche una frequenza viva la cui sezione NON è una classe di questo anno e di questa sede (un'incoerenza
+  -- che un trigger dovrebbe impedire): non sparisce dal conteggio, e la somma delle righe resta uguale al totale delle vive.
   SELECT coalesce(jsonb_agg(jsonb_build_object('section_id', x.section_id, 'nome', x.nome, 'fascia', x.fascia,
                                                'iscritti', x.n, 'completi', x.completi)
                             ORDER BY x.nome NULLS LAST, x.section_id NULLS LAST), '[]'::jsonb)
@@ -54,15 +57,19 @@ BEGIN
     FROM (
       SELECT s.id AS section_id, s.name::text AS nome, s.fascia::text AS fascia,
              count(f.id) FILTER (WHERE f.stato IN ('in_attesa', 'iscritto')) AS n,
-             count(f.id) FILTER (WHERE f.stato = 'iscritto') AS completi
+             count(f.id) FILTER (WHERE f.stato = 'iscritto' AND f.origine <> 'recupero') AS completi
         FROM public.sections s
         LEFT JOIN public.frequenze f ON f.section_id = s.id AND f.anno_sede_id = p_anno_sede
        WHERE s.scuola_id = v_a.scuola_id AND s.anno_id = v_a.anno_id
        GROUP BY s.id, s.name, s.fascia
       UNION ALL
-      SELECT NULL::uuid, NULL::text, NULL::text, count(*) AS n, count(*) FILTER (WHERE f.stato = 'iscritto') AS completi
+      SELECT NULL::uuid, NULL::text, NULL::text, count(*) AS n,
+             count(*) FILTER (WHERE f.stato = 'iscritto' AND f.origine <> 'recupero') AS completi
         FROM public.frequenze f
-       WHERE f.anno_sede_id = p_anno_sede AND f.section_id IS NULL AND f.stato IN ('in_attesa', 'iscritto')
+       WHERE f.anno_sede_id = p_anno_sede AND f.stato IN ('in_attesa', 'iscritto')
+         AND (f.section_id IS NULL
+              OR NOT EXISTS (SELECT 1 FROM public.sections s2
+                              WHERE s2.id = f.section_id AND s2.scuola_id = v_a.scuola_id AND s2.anno_id = v_a.anno_id))
       HAVING count(*) > 0
     ) x;
 

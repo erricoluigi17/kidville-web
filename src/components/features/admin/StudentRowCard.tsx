@@ -46,7 +46,8 @@ function getStatoBadge(stato: string) {
 export function nomeCompleto(student: Student): string {
     const cognome = student.cognome || student.last_name || '—';
     const nome = student.nome || student.first_name || '';
-    return `${cognome} ${nome}`.trim();
+    // «Nome Cognome»: l'ordine prevalente nell'app (misurato il 14/11/2026), lo stesso di ricerca, Contabilità e Passaggio.
+    return `${nome} ${cognome}`.trim();
 }
 
 interface Props {

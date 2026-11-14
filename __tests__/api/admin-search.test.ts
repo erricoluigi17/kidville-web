@@ -138,10 +138,10 @@ describe('GET /api/admin/search', () => {
   it('sanifica i metacaratteri ilike/or dal termine di ricerca', async () => {
     await GET(req(`q=${encodeURIComponent('ro,ss(i%_)')}`))
     const orAlunni = h.filters.find((f) => f.table === 'alunni' && f.method === 'or')
-    // Il termine ripulito è «ro ss i»: ogni parola ha il suo `or` (nome o cognome o codice fiscale), tutte in AND.
+    // Il termine ripulito è «ro ss i» (la «i» di una lettera si scarta): ogni parola ha il suo `or` (nome o cognome o codice fiscale), tutte in AND.
     expect(String(orAlunni?.args[0])).toContain('nome.ilike.%ro%')
     const orAlunniTutti = h.filters.filter((f) => f.table === 'alunni' && f.method === 'or').map((f) => String(f.args[0]))
-    expect(orAlunniTutti).toHaveLength(3)
+    expect(orAlunniTutti).toHaveLength(2) // «i» è di una lettera e ci sono altre parole: scartata
     expect(orAlunniTutti.every((x) => x.split(',').length === 3)).toBe(true) // ogni `or` ha le sue tre colonne
     expect(orAlunniTutti.some((x) => x.includes('%ss%'))).toBe(true)
   })
@@ -165,6 +165,21 @@ describe('GET /api/admin/search', () => {
     it('un ordine misto e le maiuscole non contano', async () => { expect(await ids('inf alunno1 test')).toEqual(['al-1']) })
     it('una parola sola funziona come prima: il solo cognome trova i fratelli', async () => { expect(await ids('Test')).toEqual(['al-1', 'al-2']) })
     it('tutte le parole devono corrispondere: una parola estranea non trova nessuno', async () => { expect(await ids('Alunno1 Rossi')).toEqual([]) })
+    const orDi = (tabella: string) => h.filters.filter((f) => f.table === tabella && f.method === 'or').map((f) => String(f.args[0]))
+    it('il jolly `*` non conta come parola: «Alunno1 *» si comporta come «Alunno1»', async () => {
+      expect(await ids('Alunno1 *')).toEqual(['al-1'])
+      expect(orDi('alunni')).toHaveLength(1)
+      expect(orDi('alunni').join('')).not.toContain('*')
+    })
+    it('le parole di UNA lettera si scartano se ce ne sono altre: «Alunno1 T» cerca solo «Alunno1»', async () => {
+      await ids('Alunno1 T')
+      expect(orDi('alunni')).toHaveLength(1)
+    })
+    it('se restano solo parole di una lettera («a b») non si cerca niente', async () => {
+      const res = await GET(req('q=a%20b'))
+      expect((await res.json()).data).toEqual({ alunni: [], utenti: [], sezioni: [], moduli: [] })
+      expect(h.filters).toHaveLength(0)
+    })
     it('lo stesso vale per lo staff', async () => {
       h.rows['utenti'] = [{ id: 'ut-1', nome: 'Remo', cognome: 'Rossini', role: 'educator', ruolo: null }]
       const { data } = await (await GET(req('q=Rossini%20Remo'))).json()

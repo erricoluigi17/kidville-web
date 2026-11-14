@@ -298,6 +298,45 @@ describe('anno_cruscotto: i cinque blocchi', () => {
     })
   })
 
+  // Rilievi della revisione (14/11): i «senza classe» con iscritti veri, le frequenze con una sezione fuori dall'anno, e le righe di recupero.
+  prova('i senza classe contano anche gli iscritti a tutti gli effetti (completi > 0)', async () => {
+    await inRollback(async () => {
+      const { f4 } = await seme()
+      await spunta(f4, 'conferma')
+      await collega(f4, await voce(P[3], 100, 'pagato', 100))
+      expect(await stato(f4)).toBe('iscritto')
+      const senza = (await cruscotto()).sezioni.find((x) => x.section_id === null)
+      expect(senza).toMatchObject({ iscritti: 1, completi: 1 })
+    })
+  })
+
+  prova('una frequenza con una sezione di un ALTRO ANNO non sparisce dal conteggio: finisce nei senza classe', async () => {
+    await inRollback(async () => {
+      const { f5 } = await seme()
+      const altroAnno = await una<string>(
+        `INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1, $2, 'Sezione Vecchia', 'infanzia', 'infanzia') RETURNING id`,
+        [S1, ANNO[2026]])
+      // Il database di norma lo vieta (un trigger): per provare il conteggio si spengono i trigger SOLO per questa scrittura, nel banco in memoria.
+      await db.exec('SET LOCAL session_replication_role = replica')
+      await db.query(`UPDATE public.frequenze SET section_id = $2 WHERE id = $1`, [f5, altroAnno])
+      await db.exec('SET LOCAL session_replication_role = origin')
+      const c = await cruscotto()
+      const vive = await una<number>(`SELECT count(*)::int FROM public.frequenze WHERE anno_sede_id = $1 AND stato IN ('in_attesa', 'iscritto')`, [A27()])
+      expect(c.sezioni.reduce((somma, x) => somma + x.iscritti, 0)).toBe(vive)
+      expect(c.sezioni.find((x) => x.section_id === null)?.iscritti).toBe(2)
+      expect(c.sezioni.some((x) => x.nome === 'Sezione Vecchia')).toBe(false)
+    })
+  })
+
+  prova('una riga di RECUPERO `iscritto` senza moduli né quota non è un iscritto a tutti gli effetti', async () => {
+    await inRollback(async () => {
+      const { f4 } = await seme()
+      await db.query(`UPDATE public.frequenze SET origine = 'recupero', stato = 'iscritto' WHERE id = $1`, [f4])
+      const senza = (await cruscotto()).sezioni.find((x) => x.section_id === null)
+      expect(senza).toMatchObject({ iscritti: 1, completi: 0 })
+    })
+  })
+
   prova('un anno vuoto dà tutti zero, senza divisioni e senza errori', async () => {
     await inRollback(async () => {
       const c = await cruscotto()

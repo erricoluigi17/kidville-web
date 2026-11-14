@@ -26,6 +26,10 @@
     - Gestite le FK composte.
     - L'esito conta la cascata sui periodi di scrutinio.
     - `anno_chiuso.oblio` torna al valore di prima, e si rimettono immediati solo i vincoli differiti.
+- **E2E della PR, due correzioni.**
+  - `teacher-anagrafica` cercava ancora «Cognome Nome» nell'elenco del docente.
+  - `assertRigaDiAnnoScrivibile` (lotto 8) rifiutava al docente la cancellazione di una foto appena caricata nel DB E2E della CI. Quel DB non ha le migrazioni dell'anno, quindi la riga arriva senza la chiave `anno_id`, e un `anni_sede` assente dà `42P01`. Ora la guardia non controlla nulla quando lo schema dell'anno manca, come fanno gli altri gate dell'anno (`schemaAnnoIndietro`). Resta fail-closed con `anno_id` presente e nullo, con `scuola_id` nullo, con un anno chiuso o in chiusura e con un guasto vero di lettura.
+  - Il test nuovo è in `gallery-classe-passata`: prima della correzione era rosso con 403 e 500.
 - **Dopo il merge.** Una PR-B rigenera le fotografie dalla produzione per le due migrazioni e svuota `MIGRAZIONI_ATTESE_AL_MERGE`. Poi si riporta la Demo alla partenza con `demo_ripristina` (prima a secco) e parte un agente 2 nuovo, che non conosce l'app.
 
 ## 🧹 Changelog — CRM per l’assistente: pulizia dopo il merge, accensione sulla Demo e collaudo — 2026-11-14 (ramo `crm-ai-pulizia`)

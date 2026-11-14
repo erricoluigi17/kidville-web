@@ -38,7 +38,10 @@ export async function conNotificaPropria(
   try {
     await prova(db, id, titolo);
   } finally {
-    await db.from('notifiche').delete().eq('id', id);
+    // La pulizia non deve far fallire il test: se non riesce, si dice perché (solo il codice).
+    const { error: errorePulizia } = await db.from('notifiche').delete().eq('id', id);
+    // Fuori da src/ il logger dell'app non c'è: `console.warn`, col solo codice.
+    if (errorePulizia) console.warn(`notifica propria non rimossa: ${errorePulizia.code ?? 'senza codice'}`);
   }
 }
 
@@ -60,7 +63,12 @@ export async function segnaTutteLette(page: Page, db: SupabaseClient, id: string
   // La NOSTRA notifica risulta letta sul database.
   await expect
     .poll(
-      async () => (await db.from('notifiche').select('letta_il').eq('id', id).single()).data?.letta_il ?? null,
+      async () => {
+        // Una lettura fallita deve far cadere il test col suo motivo, non farlo attendere 15 s un `null`.
+        const { data, error } = await db.from('notifiche').select('letta_il').eq('id', id).single();
+        if (error) throw new Error(`lettura della notifica propria: ${error.code ?? 'senza codice'}`);
+        return data?.letta_il ?? null;
+      },
       { timeout: 15_000 },
     )
     .not.toBeNull();

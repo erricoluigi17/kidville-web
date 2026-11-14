@@ -1,10 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
 import { btnPrimary, hint, input, label } from '@/components/features/admin/settings/ui';
+import { RegistraIncassoModal, type PagamentoRow } from '@/components/features/admin/pagamenti/RegistraIncassoModal';
 import { Tabs } from '@/components/ui/cockpit';
 import { useAdminIdentity, useRuoloCockpit } from '@/lib/context/admin-identity';
 import { useAnnoOpzionale } from '@/lib/context/anno-context';
@@ -54,6 +56,18 @@ type RigaApi = {
   quota: StatoQuota;
   /** Dal server (4.7.4): la quota non è nata perché il bambino ha più voci da guardare. Sopravvive al ricaricamento. */
   quota_piu_voci?: boolean;
+  /** La voce della quota ancora da pagare (solo se `quota` è «da_pagare»): serve alla finestra «Registra incasso» della Contabilità. */
+  quota_voce?: {
+    id: string;
+    alunno_id: string | null;
+    descrizione: string | null;
+    importo: number;
+    importo_pagato: number;
+    sconto?: number | null;
+    stato: string;
+    tipo: string | null;
+    parent_payment_id: string | null;
+  } | null;
   cambia_grado: boolean;
   /** Il grado (`school_type`) della classe di OGGI del bambino: chi è già in primaria non «va alla primaria». */
   grado_partenza?: string | null;
@@ -63,7 +77,7 @@ type RigaApi = {
   classe: string | null;
 };
 type Posti = { fascia: string; iscritti: number; posti: number | null; oltre: boolean };
-type Elenco = { righe: RigaApi[]; totale: number; limite: number; posti: Posti[] };
+type Elenco = { righe: RigaApi[]; totale: number; limite: number; posti: Posti[]; vociNonLette: boolean };
 type Sezione = { id: string; name: string; school_type: string; scuola_id?: string };
 type ModuloApi = {
   modulo_id: string;
@@ -135,6 +149,7 @@ const estraiElenco = (r: Risposta): Elenco | null => {
     totale: typeof d.totale === 'number' ? d.totale : (d.righe as unknown[]).length,
     limite: typeof d.limite === 'number' && d.limite > 0 ? d.limite : 100,
     posti: Array.isArray(d.posti) ? (d.posti as Posti[]) : [],
+    vociNonLette: d.voci_non_lette === true,
   };
 };
 
@@ -176,10 +191,21 @@ export function ConfermeClient() {
   if (!sedeCorrente) return <SedeNotice cosa={t('sedeCosa')} />;
   if (!effettivo || !effettivo.annoSedeId) return <p className="font-maven text-sm text-kidville-sub">{t('nessunAnno')}</p>;
   if (effettivo.attivo) {
+    // Se esiste un anno con le iscrizioni aperte, il pulsante lo sceglie nel selettore (che resta persistente: qui non si cambia da soli).
+    // Fra più anni aperti, il più vicino.
+    const annoAperto = (anno?.anni ?? []).filter((a) => !a.attivo && a.stato === 'iscrizioni_aperte').sort((a, b) => a.annoInizio - b.annoInizio)[0] ?? null;
     // (giro 1, B4) Il passaggio d'anno ha la sua pagina: dall'anno in corso ci si arriva da qui, non solo dall'indirizzo.
     return (
       <div className="space-y-2">
         <p className="m-0 font-maven text-sm text-kidville-sub">{t('annoAttivo')}</p>
+        {annoAperto && anno && (
+          <div className="flex flex-wrap items-center gap-3">
+            <button type="button" className={`${btnPrimary} min-h-11`} onClick={() => anno.scegli(annoAperto.annoId)}>
+              {t('lavoraSu', { anno: annoAperto.etichettaBreve })}
+            </button>
+            <span className={hint}>{t('lavoraSuAiuto')}</span>
+          </div>
+        )}
         <p className="m-0 font-maven text-sm text-kidville-sub">
           <Link href="/admin/students/passaggio" className="font-bold text-kidville-green underline underline-offset-2">{t('vaiAlPassaggio')}</Link>
         </p>
@@ -282,7 +308,7 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
     );
   }
 
-  const { righe, totale, limite, posti } = lettura.dati;
+  const { righe, totale, limite, posti, vociNonLette } = lettura.dati;
   const pagine = Math.max(1, Math.ceil(totale / limite));
   // Il filtro lo applica la route: `righe` è già la pagina giusta e `totale` è il totale del filtro.
   const visibili = righe;
@@ -372,18 +398,31 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
         <button type="button" className={secondario} onClick={rilegge}>{t('azioneAggiorna')}</button>
       </div>
 
+      {vociNonLette && <p role="status" className="mt-3 rounded-input border border-kidville-line bg-kidville-yellow-soft px-3 py-2 font-maven text-sm text-kidville-ink">{t('incassaNonLetta')}</p>}
+
       {esito && (
         <p
           role={esito.tipo === 'errore' ? 'alert' : 'status'}
           aria-label={t('esitoRegione')}
-          className={`mt-3 rounded-input border border-kidville-line px-3 py-2 font-maven text-sm ${esito.tipo === 'errore' ? 'text-kidville-error' : 'text-kidville-success'}`}
+          className={`sticky top-2 z-10 mt-3 rounded-input border border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm shadow-sm ${esito.tipo === 'errore' ? 'text-kidville-error' : 'text-kidville-success'}`}
         >
           {esito.testo}
         </p>
       )}
 
       {visibili.length === 0 ? (
-        <p className="mt-4 font-maven text-sm text-kidville-sub">{vista === 'nuove' ? t('vuotoNuove') : t('vuoto')}</p>
+        <div className="mt-4 space-y-2 font-maven text-sm text-kidville-sub">
+          <p className="m-0">{vista === 'nuove' ? t('vuotoNuove') : t('vuoto')}</p>
+          {/* Nessun filtro in corso: l'elenco è davvero vuoto, e la segreteria deve sapere dove arrivano le domande delle famiglie. */}
+          {vista === 'nuove' && filtro === 'tutti' && !ambito && (
+            <>
+              <p className="m-0">{t('vuotoNuoveDove')}</p>
+              <p className="m-0">
+                <Link href="/admin/modulistica?tab=ricevuti" className="font-bold text-kidville-green underline underline-offset-2">{t('vuotoNuoveLink')}</Link>
+              </p>
+            </>
+          )}
+        </div>
       ) : (
         <div className="relative mt-3 overflow-x-auto">
           <table className="w-full min-w-[720px] border-collapse text-left font-maven text-sm text-kidville-green">
@@ -410,6 +449,7 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
                   segnala={setEsito}
                   aggiorna={aggiorna}
                   esitoQuota={esitiQuota[r.frequenza_id] ?? (r.quota_piu_voci ? 'piu_voci' : null)}
+                  vociNonLette={vociNonLette}
                   ricordaQuota={ricordaQuota}
                 />
               ))}
@@ -443,6 +483,7 @@ function RigaConferma({
   segnala,
   aggiorna,
   esitoQuota,
+  vociNonLette,
   ricordaQuota,
 }: {
   r: RigaApi;
@@ -455,6 +496,7 @@ function RigaConferma({
   segnala: (e: Esito) => void;
   aggiorna: (frequenzaId: string, a: Aggiornamento) => void;
   esitoQuota: EsitoQuota | null;
+  vociNonLette: boolean;
   ricordaQuota: (frequenzaId: string, e: EsitoQuota | null) => void;
 }) {
   const t = useTranslations('annoConferme');
@@ -468,8 +510,9 @@ function RigaConferma({
   const puoRitirare = ['admin', 'segreteria'].includes(useRuoloCockpit());
   const [chiediRitiro, setChiediRitiro] = useState(false);
   const [moduliAperti, setModuliAperti] = useState(false);
+  const [incassoAperto, setIncassoAperto] = useState(false);
 
-  const nome = `${r.cognome ?? ''} ${r.nome ?? ''}`.trim() || t('bambinoSenzaNome');
+  const nome = `${r.nome ?? ''} ${r.cognome ?? ''}`.trim() || t('bambinoSenzaNome');
   const motivi: Array<[string, string]> = [
     ['', t('motivoNessuno')],
     [MOTIVI[0], t('motivoAltraScuola')],
@@ -481,9 +524,20 @@ function RigaConferma({
   const statoTesto = r.conferma === 'confermato' ? t('statoConfermato') : r.conferma === 'no' ? t('statoNo') : t('statoNonRisposto');
   // Quello che il server ha risposto a una spunta vale più della lettura di prima.
   const statoFrequenza = aggiornata?.stato ?? r.stato_frequenza;
-  const statoFrequenzaTesto = statoFrequenza === 'iscritto' ? t('statoIscritto') : statoFrequenza === 'in_attesa' ? t('statoInAttesa') : null;
   const fatti = aggiornata?.fatti ?? r.moduli.fatti;
   const quota: StatoQuota = aggiornata ? (aggiornata.quotaSaldata ? 'saldata' : r.quota === 'saldata' ? 'da_pagare' : r.quota) : r.quota;
+  // «In attesa» dice di cosa: i moduli che mancano e/o la quota da saldare.
+  const moduliMancanti = Math.max(0, r.moduli.richiesti - fatti);
+  const attesaTesto =
+    moduliMancanti > 0 && quota !== 'saldata'
+      ? t('inAttesaModuliQuota', { n: moduliMancanti })
+      : moduliMancanti > 0
+        ? t('inAttesaModuli', { n: moduliMancanti })
+        : quota !== 'saldata'
+          ? t('inAttesaQuota')
+          : t('statoInAttesa');
+  const statoFrequenzaTesto = statoFrequenza === 'iscritto' ? t('statoIscritto') : statoFrequenza === 'in_attesa' ? attesaTesto : null;
+  const motivoDelNo = r.conferma === 'no' && r.non_rinnova_motivo ? (motivi.find(([valore]) => valore === r.non_rinnova_motivo)?.[1] ?? t('motivoAltro')) : null;
   // «Assente» ha tre significati: la riga non è ancora confermata («Non ancora»), la quota non è nata perché il listino non c'era
   // («Quota da generare»), o ci sono più voci da guardare («Più voci»). Solo il secondo e il terzo hanno un'azione.
   const confermata = r.conferma === 'confermato' || vista === 'nuove';
@@ -569,7 +623,7 @@ function RigaConferma({
 
   return (
     <>
-      <tr className="border-b border-kidville-line align-top">
+      <tr className={`${moduliAperti && r.nuova_frequenza_id ? '' : 'border-b '}border-kidville-line align-top`}>
         <td className="py-3 pr-3">
           {/* Nelle «nuove» il bambino è `in_arrivo`: non sta in «Alunni» e la sua scheda si apre da qui (4.5.15, C2). */}
           {vista === 'nuove' ? (
@@ -587,20 +641,35 @@ function RigaConferma({
         </td>
         <td className="py-3 pr-3">
           {vista === 'conferme' && <span>{statoTesto}</span>}
+          {motivoDelNo && <span className="block text-xs text-kidville-sub">{t('motivoDelNo', { motivo: motivoDelNo })}</span>}
           {vista === 'conferme' && r.cambia_grado && <span className="block text-xs text-kidville-sub">{t('cambiaGrado')}</span>}
           {statoFrequenzaTesto && (vista === 'nuove' ? <span>{statoFrequenzaTesto}</span> : <span className="block text-xs text-kidville-sub">{statoFrequenzaTesto}</span>)}
         </td>
         <td className="py-3 pr-3">{t('moduliFatti', { fatti, richiesti: r.moduli.richiesti })}</td>
-        <td className="py-3 pr-3">{quotaTesto}</td>
+        <td className="py-3 pr-3">
+          <span className="block">{quotaTesto}</span>
+          {/* «Incassa» solo su una frequenza VIVA (in attesa o iscritto): su una ritirata/trasferita/uscita la segreteria incassa dalla Contabilità. */}
+          {quota === 'da_pagare' && (statoFrequenza === 'in_attesa' || statoFrequenza === 'iscritto') &&
+            (r.quota_voce ? (
+              <button type="button" className={`${secondario} mt-2 min-h-11`} onClick={() => setIncassoAperto(true)}>{t('azioneIncassa')}</button>
+            ) : vociNonLette ? (
+              <button type="button" className={`${secondario} mt-2 min-h-11`} disabled>{t('azioneIncassa')}</button>
+            ) : (
+              <span className="mt-2 block text-xs text-kidville-sub">{t('incassaVoceMancante')}</span>
+            ))}
+        </td>
         <td className="py-3">
           <div className="flex flex-col gap-2">
             {vista === 'conferme' && r.conferma !== 'confermato' && (
               <>
                 {r.grado_partenza !== 'primaria' && (
-                <label className="flex cursor-pointer items-center gap-2" htmlFor={`${id}-primaria`}>
-                  <input id={`${id}-primaria`} type="checkbox" className="h-4 w-4 rounded accent-kidville-green" checked={vaPrimaria} onChange={(e) => setVaPrimaria(e.target.checked)} />
-                  <span>{t('vaAllaPrimaria')}</span>
-                </label>
+                <div>
+                  <label className="flex cursor-pointer items-center gap-2" htmlFor={`${id}-primaria`}>
+                    <input id={`${id}-primaria`} type="checkbox" className="h-4 w-4 rounded accent-kidville-green" aria-describedby={`${id}-primaria-aiuto`} checked={vaPrimaria} onChange={(e) => setVaPrimaria(e.target.checked)} />
+                    <span>{t('vaAllaPrimaria')}</span>
+                  </label>
+                  <span id={`${id}-primaria-aiuto`} className="block text-xs text-kidville-sub">{t('vaAllaPrimariaAiuto')}</span>
+                </div>
                 )}
                 {vaPrimaria && (
                   primarie.length === 0 ? (
@@ -661,6 +730,17 @@ function RigaConferma({
           </div>
         </td>
       </tr>
+      {/* Fuori dalla tabella (portale): un <div> dentro <tbody> non è HTML valido. */}
+      {incassoAperto && r.quota_voce &&
+        createPortal(
+          <RegistraIncassoModal
+            pagamento={pagamentoDa(r.quota_voce, r)}
+            userId={userId}
+            onClose={() => { setIncassoAperto(false); rilegge(); }}
+            onDone={() => { setIncassoAperto(false); rilegge(); }}
+          />,
+          document.body,
+        )}
       {moduliAperti && r.nuova_frequenza_id && (
         <tr id={`${id}-moduli`} className="border-b border-kidville-line">
           <td colSpan={5} className="pb-3">
@@ -676,6 +756,22 @@ function RigaConferma({
       )}
     </>
   );
+}
+
+/** La voce della quota nella forma che la finestra «Registra incasso» della Contabilità già conosce. */
+function pagamentoDa(v: NonNullable<RigaApi['quota_voce']>, r: RigaApi): PagamentoRow {
+  return {
+    id: v.id,
+    descrizione: v.descrizione ?? '',
+    importo: Number(v.importo),
+    importo_pagato: Number(v.importo_pagato),
+    sconto: v.sconto == null ? undefined : Number(v.sconto),
+    stato: v.stato,
+    tipo: v.tipo ?? 'singolo',
+    alunno_id: v.alunno_id ?? r.alunno_id,
+    parent_payment_id: v.parent_payment_id,
+    alunni: { nome: r.nome ?? undefined, cognome: r.cognome ?? undefined },
+  };
 }
 
 function testoErrore(t: ReturnType<typeof useTranslations>, r: Risposta): string {
@@ -718,10 +814,13 @@ function PannelloModuli({
 
   const cambia = async (m: ModuloApi, moduli: ModuloApi[], nuovo: boolean): Promise<void> => {
     setOccupato(m.modulo_id);
+    // La spunta si vede SUBITO e la casella resta disabilitata finché il server non risponde: un secondo clic non la toglie.
+    setCambiati((c) => ({ ...c, [m.modulo_id]: nuovo }));
     const risposta = await chiama('PUT', url, userId, { modulo_id: m.modulo_id, spuntato: nuovo });
     setOccupato(null);
     if (!riuscita(risposta)) {
-      // La casella resta com'era: il rifiuto non cambia niente, e lo dice in italiano (`MODULO_NON_RICHIESTO`, `ANNO_CHIUSO`…).
+      setCambiati((c) => ({ ...c, [m.modulo_id]: !nuovo }));
+      // La casella torna com'era: il rifiuto non cambia niente, e lo dice in italiano (`MODULO_NON_RICHIESTO`, `ANNO_CHIUSO`…).
       segnala({ tipo: 'errore', testo: t('esitoDi', { nome, testo: testoErrore(t, risposta) }) });
       return;
     }

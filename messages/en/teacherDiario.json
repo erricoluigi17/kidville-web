@@ -107,5 +107,18 @@
   "attivitaOraFineAria": "End time of activity {n}",
   "attivitaOrarioIncoerente": "The end time can’t be before the start time.",
   "attivitaOrarioNonValido": "Invalid activity time: use the HH:MM format (e.g. 09:30).",
-  "attivitaOrarioSalvataggioBloccato": "Fix the activity times: the end is before the start."
+  "attivitaOrarioSalvataggioBloccato": "Fix the activity times: the end is before the start.",
+  "slGiorno": "Day:",
+  "slErrore": "The diary of this class could not be read. Try again shortly.",
+  "slNessunBambino": "No children in this class that year.",
+  "slNessunaVoce": "No entries recorded on this day.",
+  "slTipoRoutine": "Routine",
+  "slTipo_attivita": "Activity",
+  "slTipo_merenda": "Snack",
+  "slTipo_pranzo": "Lunch",
+  "slTipo_nanna_inizio": "Nap start",
+  "slTipo_nanna_fine": "Nap end",
+  "slTipo_bagno": "Bathroom",
+  "slTipo_umore": "Mood",
+  "slAnnoAiuto": "The diary is view-only."
 }

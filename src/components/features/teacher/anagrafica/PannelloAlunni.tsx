@@ -108,7 +108,7 @@ export function PannelloAlunni({ dati }: { dati: ElencoAlunniRisposta }) {
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-barlow text-sm font-extrabold uppercase text-kidville-green">
-                      {a.cognome} {a.nome}
+                      {a.nome} {a.cognome}
                     </p>
                     {a.dataNascita && <p className="font-maven text-xs text-kidville-sub">{isoToIt(a.dataNascita)}</p>}
                   </div>

@@ -457,7 +457,12 @@ export function posterioriCheContengono(
 // `dichiara`, e le quattro `passaggio_*` della 4.8, in produzione dal 12/11 ma mai fotografate: classe nuova `passaggio` per
 // `passaggio_conferma` e `passaggio_annulla`, che accendono `anno_passaggio.in_corso`). Tabelle dell'anno (46), bucket (21) e
 // schema delle candidature hanno solo l'istante nuovo.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
+// 2026-11-14 · Le funzioni `demo_*` (`20261114124928_demo_funzioni_ripristino.sql`): una tabella privata (`demo_fotografie`, con un CHECK che
+// ammette solo sedi `e2e00000…`), un vincolo UNIQUE, e funzioni `SECURITY DEFINER` che scrivono nelle tabelle dell'anno della sola sede di prova.
+// La applica l'integrazione al merge; le fotografie si aggiornano nella PR-B.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
+    '20261114124928_demo_funzioni_ripristino.sql': 'funzioni demo_*: tabella privata demo_fotografie (RLS accesa, un UNIQUE) e funzioni di ripristino della sola sede di prova; la applica l\'integrazione al merge, la voce si toglie nella PR-B (14/11/2026)',
+}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

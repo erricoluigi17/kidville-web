@@ -399,7 +399,7 @@ BEGIN
   INSERT INTO pg_temp._azzera_cand (tabella, id, bloccata)
     SELECT 'pagamenti', pg.id,
            (coalesce(pg.importo_pagato, 0) <> 0 OR pg.data_incasso IS NOT NULL
-            OR pg.fattura_aruba_id IS NOT NULL OR pg.fattura_stato IS NOT NULL OR pg.fattura_emessa_il IS NOT NULL OR coalesce(pg.stato, 'da_pagare') <> 'da_pagare')
+            OR pg.fattura_aruba_id IS NOT NULL OR coalesce(pg.fattura_stato::text, 'non_richiesta') <> 'non_richiesta' OR pg.fattura_emessa_il IS NOT NULL OR coalesce(pg.stato, 'da_pagare') <> 'da_pagare')
       FROM public.pagamenti pg
      WHERE pg.scuola_id = v_sede AND pg.anno_id = v_anno_id AND pg.creato_il >= v_dal;
   PERFORM pg_temp.azzera_blocca('pagamenti', ARRAY['pagamenti_quote', 'solleciti', 'fatture_coda'], 'parent_payment_id');

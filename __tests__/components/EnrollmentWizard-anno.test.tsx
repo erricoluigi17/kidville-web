@@ -169,7 +169,9 @@ describe('EnrollmentWizard · il passo anno', () => {
     fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
     await compilaFinoAlRiepilogo()
     // Il riepilogo nomina l'anno scelto.
-    expect(screen.getByText('Anno scolastico: 2027/28')).toBeInTheDocument()
+    // L'anno si dice UNA volta nel riepilogo: il titolo del pannello (non più anche la riga «Anno scolastico: …»).
+    expect(screen.getByText('Stai iscrivendo il bambino per l’anno scolastico 2027/28')).toBeInTheDocument()
+    expect(screen.queryByText('Anno scolastico: 2027/28')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: /invia richiesta/i }))
     await waitFor(() => expect(postBodies).toHaveLength(1))

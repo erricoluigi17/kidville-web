@@ -7,7 +7,7 @@ const AUTORE = '22000000-0000-4000-8000-000000000002'
 const STAFF = '33000000-0000-4000-8000-000000000003'
 const h = vi.hoisted(() => ({ db: {} as DBFinto, scritture: [] as Scrittura[], rpc: vi.fn(), log: vi.fn(), cestinoConcorrente: false }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: async () => ({ user: { id: STAFF, role: 'segreteria', scuola_id: SEDE_A } }) }))
-vi.mock('@/lib/auth/scope', () => ({ scuoleDiUtente: async () => [SEDE_A] }))
+vi.mock('@/lib/auth/scope', () => ({ scuoleDiUtente: async () => [SEDE_A], assertClasseNomeScrivibile: async () => null, assertRigaDiAnnoScrivibile: async () => null, assertSezioneInScope: async () => null }))
 vi.mock('@/lib/gallery/privacy', () => ({ alunniSenzaConsenso: async () => [] }))
 vi.mock('@/lib/logging/logger', () => ({ logEvento: h.log, logErrore: vi.fn(), logOk: vi.fn() }))
 vi.mock('@/lib/supabase/server-client', async () => {

@@ -104,15 +104,15 @@ describe('ElencoAlunniDocente', () => {
     const girasoli = await screen.findByRole('region', { name: /Girasoli/ })
     expect(within(girasoli).getAllByRole('link')).toHaveLength(2)
     expect(within(girasoli).getByText('2 bambini')).toBeTruthy()
-    const aurora = within(girasoli).getByRole('link', { name: /Arcobaleno-E2E Aurora/ })
+    const aurora = within(girasoli).getByRole('link', { name: /Aurora Arcobaleno-E2E/ })
     expect(aurora.getAttribute('href')).toBe('/teacher/alunni/a1a1a1a1-1111-4111-8111-aaaaaaaaaaaa')
     expect(within(aurora).getByText(T.anagraficaBadgeAllergie)).toBeTruthy()
     // il badge è solo di chi ha allergie
-    const bruno = within(girasoli).getByRole('link', { name: /Baleno-E2E Bruno/ })
+    const bruno = within(girasoli).getByRole('link', { name: /Bruno Baleno-E2E/ })
     expect(within(bruno).queryByText(T.anagraficaBadgeAllergie)).toBeNull()
     const tulipani = screen.getByRole('region', { name: /Tulipani/ })
     expect(within(tulipani).getByText('1 bambino')).toBeTruthy()
-    expect(within(tulipani).getByRole('link', { name: /Cometa-E2E Clara/ }).getAttribute('href')).toBe(
+    expect(within(tulipani).getByRole('link', { name: /Clara Cometa-E2E/ }).getAttribute('href')).toBe(
       '/teacher/alunni/a3a3a3a3-3333-4333-8333-aaaaaaaaaaaa',
     )
   })
@@ -131,8 +131,8 @@ describe('ElencoAlunniDocente', () => {
     render(<ElencoAlunniDocente />)
     const senza = await screen.findByRole('region', { name: new RegExp(T.anagraficaSenzaSezione) })
     expect(within(senza).getAllByRole('link').map((a) => a.textContent)).toEqual([
-      expect.stringContaining('Duna-E2E Dario'),
-      expect.stringContaining('Eclissi-E2E Elena'),
+      expect.stringContaining('Dario Duna-E2E'),
+      expect.stringContaining('Elena Eclissi-E2E'),
     ])
     expect(within(senza).getByText('2 bambini')).toBeTruthy()
     const titoli = screen.getAllByRole('heading', { level: 2 }).map((h2) => h2.querySelector('span')?.textContent)
@@ -142,10 +142,10 @@ describe('ElencoAlunniDocente', () => {
   it('la ricerca per nome restringe l’elenco, il contatore lo dice, e NON va nell’indirizzo', async () => {
     fetchMock.mockResolvedValue(risposta(200, DATI))
     render(<ElencoAlunniDocente />)
-    await screen.findByRole('link', { name: /Arcobaleno-E2E Aurora/ })
+    await screen.findByRole('link', { name: /Aurora Arcobaleno-E2E/ })
     cerca('clara')
-    expect(screen.queryByRole('link', { name: /Arcobaleno-E2E Aurora/ })).toBeNull()
-    expect(screen.getByRole('link', { name: /Cometa-E2E Clara/ })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: /Aurora Arcobaleno-E2E/ })).toBeNull()
+    expect(screen.getByRole('link', { name: /Clara Cometa-E2E/ })).toBeTruthy()
     // una sezione senza nessuno che passa i filtri non resta come titolo vuoto
     expect(screen.queryByRole('region', { name: /Girasoli/ })).toBeNull()
     expect(screen.getByTestId('conteggio-risultati').textContent).toBe('1 risultato su 3')
@@ -155,7 +155,7 @@ describe('ElencoAlunniDocente', () => {
   it('il conteggio della sezione è quello dei bambini che passano i filtri', async () => {
     fetchMock.mockResolvedValue(risposta(200, DATI))
     render(<ElencoAlunniDocente />)
-    await screen.findByRole('link', { name: /Arcobaleno-E2E Aurora/ })
+    await screen.findByRole('link', { name: /Aurora Arcobaleno-E2E/ })
     cerca('aurora')
     const girasoli = screen.getByRole('region', { name: /Girasoli/ })
     expect(within(girasoli).getByText('1 bambino')).toBeTruthy()
@@ -165,7 +165,7 @@ describe('ElencoAlunniDocente', () => {
   it('nessun risultato: «nessun risultato con questi filtri», non «nessun bambino»; «Pulisci filtri» li riporta', async () => {
     fetchMock.mockResolvedValue(risposta(200, DATI))
     render(<ElencoAlunniDocente />)
-    await screen.findByRole('link', { name: /Arcobaleno-E2E Aurora/ })
+    await screen.findByRole('link', { name: /Aurora Arcobaleno-E2E/ })
     cerca('zzz')
     const titolo = screen.getByText(S.filtriSenzaRisultatiTitolo)
     expect(screen.queryByText(T.anagraficaVuotoTitolo)).toBeNull()
@@ -180,15 +180,15 @@ describe('ElencoAlunniDocente', () => {
     window.history.replaceState(null, '', '/teacher/alunni?sezione=S2')
     fetchMock.mockResolvedValue(risposta(200, DATI))
     render(<ElencoAlunniDocente />)
-    expect(await screen.findByRole('link', { name: /Cometa-E2E Clara/ })).toBeTruthy()
-    expect(screen.queryByRole('link', { name: /Arcobaleno-E2E Aurora/ })).toBeNull()
+    expect(await screen.findByRole('link', { name: /Clara Cometa-E2E/ })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: /Aurora Arcobaleno-E2E/ })).toBeNull()
   })
 
   it('toccando un bambino salva i filtri per il ritorno (senza la ricerca per nome)', async () => {
     window.history.replaceState(null, '', '/teacher/alunni?sezione=S1')
     fetchMock.mockResolvedValue(risposta(200, DATI))
     render(<ElencoAlunniDocente />)
-    const aurora = await screen.findByRole('link', { name: /Arcobaleno-E2E Aurora/ })
+    const aurora = await screen.findByRole('link', { name: /Aurora Arcobaleno-E2E/ })
     expect(window.sessionStorage.getItem('kv-teacher-alunni-ritorno')).toBeNull()
     cerca('aur')
     fireEvent.click(aurora)
@@ -198,7 +198,7 @@ describe('ElencoAlunniDocente', () => {
   it('le righe NON chiedono il prefetch: con l’elenco della Direzione sarebbero centinaia di richieste', async () => {
     fetchMock.mockResolvedValue(risposta(200, DATI))
     render(<ElencoAlunniDocente />)
-    await screen.findByRole('link', { name: /Arcobaleno-E2E Aurora/ })
+    await screen.findByRole('link', { name: /Aurora Arcobaleno-E2E/ })
     const righe = screen.getAllByRole('link').filter((a) => a.getAttribute('href')?.startsWith('/teacher/alunni/'))
     expect(righe).toHaveLength(3)
     for (const a of righe) expect(a.getAttribute('data-prefetch')).toBe('false')
@@ -207,7 +207,7 @@ describe('ElencoAlunniDocente', () => {
   it('il link porta l’anello di fuoco DENTRO di sé: l’elenco con gli angoli tondi lo taglierebbe', async () => {
     fetchMock.mockResolvedValue(risposta(200, DATI))
     render(<ElencoAlunniDocente />)
-    const aurora = await screen.findByRole('link', { name: /Arcobaleno-E2E Aurora/ })
+    const aurora = await screen.findByRole('link', { name: /Aurora Arcobaleno-E2E/ })
     // Col `!`: la regola globale `:focus-visible` (globals.css) sta fuori dai layer e
     // batte qualunque utility Tailwind senza `!important` — misurato in Chromium.
     expect(aurora.className.split(/\s+/)).toContain('focus-visible:outline-offset-[-3px]!')
@@ -231,7 +231,7 @@ describe('ElencoAlunniDocente', () => {
     expect(h.logClient).toHaveBeenCalledTimes(1)
     expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'warn', evento: 'fetch', stato: 500 }))
     fireEvent.click(screen.getByRole('button', { name: S.paginaErroreRiprova }))
-    expect(await screen.findByRole('link', { name: /Arcobaleno-E2E Aurora/ })).toBeTruthy()
+    expect(await screen.findByRole('link', { name: /Aurora Arcobaleno-E2E/ })).toBeTruthy()
   })
 
   it('l’errore si annuncia da una regione `aria-live` montata da prima, non annidata nel `role="status"`', async () => {
@@ -277,7 +277,7 @@ describe('ElencoAlunniDocente', () => {
     expect(h.logClient).not.toHaveBeenCalled()
     onLine.mockReturnValue(true)
     fireEvent.click(screen.getByRole('button', { name: S.paginaErroreRiprova }))
-    expect(await screen.findByRole('link', { name: /Arcobaleno-E2E Aurora/ })).toBeTruthy()
+    expect(await screen.findByRole('link', { name: /Aurora Arcobaleno-E2E/ })).toBeTruthy()
   })
 
   it('rete giù ma «online»: errore, con un log `warn` (come il logger globale per la stessa fetch)', async () => {

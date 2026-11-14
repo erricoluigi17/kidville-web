@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { CalendarDays } from 'lucide-react';
+import { CalendarDays, CheckCircle2, Copy } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { annoAttivoDelCalendario, etichettaAnno, giornoValido, type RigaCalendario } from '@/lib/anno-scolastico';
 import { useAnnoOpzionale, useTestoStatoAnno } from '@/lib/context/anno-context';
@@ -179,6 +179,7 @@ export function AnnoScolasticoSettings({ userId, scuolaId, annoSedeIdIniziale = 
       <DettaglioAnno
         key={riga.annoSedeId}
         userId={userId}
+        scuolaId={scuolaId}
         riga={riga}
         successivo={successivo}
         occupato={loading}
@@ -194,12 +195,14 @@ const bloccatoClasse = 'aria-disabled:cursor-not-allowed aria-disabled:opacity-4
 
 function DettaglioAnno({
   userId,
+  scuolaId,
   riga,
   successivo,
   occupato,
   onModificato,
 }: {
   userId: string;
+  scuolaId: string;
   riga: RigaCalendario;
   successivo: RigaCalendario | null;
   /** Il calendario si sta rileggendo dopo un salvataggio. */
@@ -210,6 +213,14 @@ function DettaglioAnno({
   const testoStato = useTestoStatoAnno();
   const id = useId();
   const url = `/api/admin/anni/${riga.annoSedeId}`;
+  // Dopo «Apri le iscrizioni» riuscito la schermata non aspetta il calendario: il server ha già cambiato stato, aperto le
+  // domande e copiato le classi. Il calendario riletto, quando arriva, dice la stessa cosa.
+  const [apertaOra, setApertaOra] = useState(false);
+  const [riletturaConf, setRiletturaConf] = useState(0);
+  const [linkCopiato, setLinkCopiato] = useState(false);
+  const aperta = apertaOra && riga.stato === 'in_preparazione';
+  const statoVero = aperta ? 'iscrizioni_aperte' : riga.stato;
+  const domandeAperte = riga.domandeAperte || aperta;
   const chiuso = riga.stato === 'chiuso';
   const inChiusura = riga.stato === 'in_chiusura';
 
@@ -236,7 +247,7 @@ function DettaglioAnno({
   }, []);
 
   // I prerequisiti si chiedono solo per un anno in preparazione. `active` come per ogni lettura in volo.
-  const inPreparazione = riga.stato === 'in_preparazione';
+  const inPreparazione = statoVero === 'in_preparazione';
   useEffect(() => {
     if (!inPreparazione) return;
     let active = true;
@@ -301,6 +312,10 @@ function DettaglioAnno({
   const confermaApertura = async () => {
     setDialogo(false);
     const r = await esegui('iscrizioni', 'POST', `${url}/apri-iscrizioni`, {});
+    if (vivo.current && r && r.stato >= 200 && r.stato < 300) {
+      setApertaOra(true);
+      setRiletturaConf((v) => v + 1);
+    }
     // Il server può sapere più di quanto sapesse la schermata: se rifiuta per i prerequisiti, si aggiorna l'elenco.
     const aggiornato = r ? mancanoDa((r.corpo as { mancano?: unknown } | null)?.mancano) : null;
     if (vivo.current && aggiornato && aggiornato.length > 0) setLettura({ mancano: aggiornato });
@@ -384,6 +399,20 @@ function DettaglioAnno({
         {esito.tipo === 'salvato' ? salvato : t('annoNessunaModifica')}
       </p>
     );
+  };
+
+  // Il link con la sede dentro: il modulo si apre già sulla sede giusta (e funziona anche per la sede di prova, che
+  // dall'elenco pubblico è esclusa di proposito). `window.location.origin` nel render è innocuo: il componente è 'use client' e
+  // compare solo dopo che il calendario è arrivato da una fetch del browser, quindi non c'è mai un render lato server da far coincidere.
+  const linkModulo = `${typeof window !== 'undefined' ? window.location.origin : ''}/iscrizione?scuola=${scuolaId}`;
+  const copiaLink = async () => {
+    try {
+      await navigator.clipboard.writeText(linkModulo);
+      setLinkCopiato(true);
+      setTimeout(() => { if (vivo.current) setLinkCopiato(false); }, 2000);
+    } catch (err: unknown) {
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: `admin/anni: copia del link non riuscita — ${nomeErrore(err)}` });
+    }
   };
 
   const nuovoInizio = giornoDopo(fine);
@@ -479,7 +508,7 @@ function DettaglioAnno({
 
           {/* ── Quote, moduli, posti e classi (anno in preparazione o con le iscrizioni aperte) ── */}
           {/* Per l'anno in corso e in chiusura resta la sola scheda Rette (la retta si imposta qui, non più in Impostazioni). */}
-          <AnnoConfigurazione userId={userId} annoSedeId={riga.annoSedeId} stato={riga.stato} annoEtichetta={etichettaAnno(riga.annoInizio, 'breve')} onCambiata={configurazioneCambiata} />
+          <AnnoConfigurazione userId={userId} annoSedeId={riga.annoSedeId} stato={statoVero} riletturaEsterna={riletturaConf} annoEtichetta={etichettaAnno(riga.annoInizio, 'breve')} onCambiata={configurazioneCambiata} />
 
           {/* ── Aprire le iscrizioni (solo un anno in preparazione) ────────────────────── */}
           {inPreparazione && (
@@ -516,25 +545,53 @@ function DettaglioAnno({
             </fieldset>
           )}
 
+          {/* L'esito dell'apertura sopravvive al fieldset che sparisce: «Iscrizioni aperte ✓» resta sotto gli occhi. */}
+          {!inPreparazione && esito?.blocco === 'iscrizioni' && <div className="mt-3">{esitoDi('iscrizioni', t('annoApriFatto'))}</div>}
+
+          {/* ── Il link del modulo per le famiglie (solo con le iscrizioni aperte) ─────── */}
+          {statoVero === 'iscrizioni_aperte' && (
+            <fieldset className={gruppoClasse}>
+              <legend className={legenda}>{t('annoLinkTitolo')}</legend>
+              <p className={hint}>{t('annoLinkNota')}</p>
+              <p className="mt-2 break-all font-mono text-sm text-kidville-ink">{linkModulo}</p>
+              <div className="mt-3">
+                <button type="button" onClick={copiaLink} className={btnPrimary}>
+                  {linkCopiato ? (
+                    <><CheckCircle2 size={14} className="mr-1 inline" />{t('annoLinkCopiato')}</>
+                  ) : (
+                    <><Copy size={14} className="mr-1 inline" />{t('annoLinkCopia')}</>
+                  )}
+                </button>
+              </div>
+            </fieldset>
+          )}
+
           {/* ── Le domande dal sito: sospese o riaperte, anno per anno ─────────────────── */}
+          {/* Prima dell'apertura non è un comando: le domande si aprono da sole con le iscrizioni. */}
           <fieldset className={gruppoClasse}>
             <legend className={legenda}>{t('annoDomandeTitolo')}</legend>
-            <p id={`${id}-domande-stato`} role="status" className="font-maven text-sm text-kidville-ink">
-              {riga.domandeAperte ? t('annoDomandeAperte') : t('annoDomandeSospese')}
-            </p>
-            <p className={hint}>{t('annoDomandeNota')}</p>
-            <div className="mt-3">
-              <button
-                type="button"
-                onClick={() => impostaDomande(!riga.domandeAperte)}
-                disabled={occupatoOra}
-                aria-describedby={`${id}-domande-stato`}
-                className={btnPrimary}
-              >
-                {inCorso === 'domande' ? t('salvataggioInCorso') : riga.domandeAperte ? t('annoDomandeSospendi') : t('annoDomandeRiapri')}
-              </button>
-            </div>
-            {esitoDi('domande')}
+            {inPreparazione ? (
+              <p className="font-maven text-sm text-kidville-ink">{t('annoDomandeAutomatiche')}</p>
+            ) : (
+              <>
+                <p id={`${id}-domande-stato`} role="status" className="font-maven text-sm text-kidville-ink">
+                  {domandeAperte ? t('annoDomandeAperte') : t('annoDomandeSospese')}
+                </p>
+                <p className={hint}>{t('annoDomandeNota')}</p>
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={() => impostaDomande(!domandeAperte)}
+                    disabled={occupatoOra}
+                    aria-describedby={`${id}-domande-stato`}
+                    className={btnPrimary}
+                  >
+                    {inCorso === 'domande' ? t('salvataggioInCorso') : domandeAperte ? t('annoDomandeSospendi') : t('annoDomandeRiapri')}
+                  </button>
+                </div>
+                {esitoDi('domande')}
+              </>
+            )}
           </fieldset>
         </>
       )}

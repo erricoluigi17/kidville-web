@@ -107,5 +107,18 @@
   "attivitaOraFineAria": "Ora di fine dell’attività {n}",
   "attivitaOrarioIncoerente": "L’ora di fine non può essere prima dell’ora di inizio.",
   "attivitaOrarioNonValido": "Orario dell’attività non valido: usa il formato HH:MM (es. 09:30).",
-  "attivitaOrarioSalvataggioBloccato": "Correggi l’orario delle attività: la fine è prima dell’inizio."
+  "attivitaOrarioSalvataggioBloccato": "Correggi l’orario delle attività: la fine è prima dell’inizio.",
+  "slGiorno": "Giorno:",
+  "slErrore": "Non è stato possibile leggere il diario di questa classe. Riprova fra poco.",
+  "slNessunBambino": "Nessun bambino in questa classe in quell’anno.",
+  "slNessunaVoce": "Nessuna voce segnata in questo giorno.",
+  "slTipoRoutine": "Routine",
+  "slTipo_attivita": "Attività",
+  "slTipo_merenda": "Merenda",
+  "slTipo_pranzo": "Pranzo",
+  "slTipo_nanna_inizio": "Inizio nanna",
+  "slTipo_nanna_fine": "Fine nanna",
+  "slTipo_bagno": "Bagno",
+  "slTipo_umore": "Umore",
+  "slAnnoAiuto": "Il diario si può solo consultare."
 }

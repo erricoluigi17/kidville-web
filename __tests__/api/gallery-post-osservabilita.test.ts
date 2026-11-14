@@ -27,6 +27,7 @@ const log = vi.hoisted(() => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: v
 vi.mock('@/lib/logging/logger', () => log)
 
 const h = vi.hoisted(() => ({
+  nome: vi.fn(async (...a: unknown[]) => (a.length < 0 ? ({} as never) : null)),
   requireDocente: vi.fn(),
   requireParentOfStudent: vi.fn(),
   genitoreHasFiglio: vi.fn(),
@@ -49,6 +50,8 @@ vi.mock('@/lib/anagrafiche/legami', () => ({ genitoreHasFiglio: h.genitoreHasFig
 vi.mock('@/lib/auth/scope', () => ({
   resolveScuolaScrittura: h.resolveScuolaScrittura,
   resolveScuoleAttive: h.resolveScuoleAttive,
+  assertClasseNomeScrivibile: h.nome,
+  assertSezioneInScope: async () => null,
   scuoleDiUtente: h.scuoleDiUtente,
 }))
 vi.mock('@/lib/gallery/privacy', () => ({ alunniSenzaConsenso: h.alunniSenzaConsenso }))
@@ -186,6 +189,7 @@ describe('POST /api/gallery — il log di successo conta le famiglie annunciate'
     )
 
     expect(res.status).toBe(201)
+    expect(h.nome.mock.calls.map(c => c[2]).sort()).toEqual(['2 ANNI', '3 ANNI'])
     expect(pubblicata()[0].campi.n_destinatari).toBe(1)
   })
 })

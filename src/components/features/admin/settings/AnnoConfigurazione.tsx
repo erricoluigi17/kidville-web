@@ -145,9 +145,12 @@ export function AnnoConfigurazione({
   stato,
   annoEtichetta,
   onCambiata,
+  riletturaEsterna = 0,
 }: {
   userId: string;
   annoSedeId: string;
+  /** Sale quando chi sta sopra ha cambiato qualcosa senza passare da qui (l'apertura delle iscrizioni copia le classi): gli elenchi si rileggono. */
+  riletturaEsterna?: number;
   /** Tutti gli stati: con le iscrizioni non ancora aperte o aperte c'è tutta la configurazione, per l'anno in corso la sola retta
    *  (il server rifiuta il resto), per l'anno in chiusura o chiuso la retta si può solo leggere (il database rifiuta la scrittura). */
   stato: 'in_preparazione' | 'iscrizioni_aperte' | 'corrente' | 'in_chiusura' | 'chiuso';
@@ -238,7 +241,7 @@ export function AnnoConfigurazione({
   };
 
   const soloLettura = stato === 'in_chiusura' || stato === 'chiuso';
-  const comuni = { userId, base, versione, inCorso, scrivi, esitoDi, fasciaNome, setEsito, soloLettura, stato, annoEtichetta };
+  const comuni = { userId, base, versione: versione + riletturaEsterna, inCorso, scrivi, esitoDi, fasciaNome, setEsito, soloLettura, stato, annoEtichetta };
 
   // Anno in corso, in chiusura o chiuso: del listino resta la sola retta (le quote, i moduli e i posti li rifiuta il server).
   if (stato === 'corrente' || stato === 'in_chiusura' || stato === 'chiuso') {

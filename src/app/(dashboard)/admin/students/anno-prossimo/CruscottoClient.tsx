@@ -212,11 +212,14 @@ function Cruscotto({ annoSedeId }: { annoSedeId: string }) {
         {c.sezioni.length > 0 && (
           <>
             <h3 className="mb-1 mt-4 font-maven text-sm font-semibold text-kidville-ink">{t('sezioniTitolo')}</h3>
+            <p className="mb-2 font-maven text-xs text-kidville-sub">{t('sezioniLegenda')}</p>
             <ul className="grid gap-1 sm:grid-cols-2">
               {c.sezioni.map((s) => (
                 <li key={s.section_id ?? 'senza'} className="flex justify-between gap-2 font-maven text-sm text-kidville-ink">
                   <span>{s.nome ?? t('sezioneSenza')}</span>
-                  <span className="text-kidville-sub">{t('sezioneIscritti', { n: s.iscritti })}</span>
+                  <span className="text-right text-kidville-sub">
+                    {t('sezioneRiga', { n: s.iscritti, m: s.completi })}
+                  </span>
                 </li>
               ))}
             </ul>

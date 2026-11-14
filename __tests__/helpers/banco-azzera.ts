@@ -22,6 +22,11 @@ export async function creaBancoAzzera(): Promise<BancoPassaggio> {
     ALTER TABLE public.pagamenti
       ADD COLUMN IF NOT EXISTS fattura_aruba_id text, ADD COLUMN IF NOT EXISTS fattura_emessa_il timestamptz,
       ADD COLUMN IF NOT EXISTS fattura_pdf_path text, ADD COLUMN IF NOT EXISTS fattura_causale text;
+    -- In produzione \`pagamenti.fattura_stato\` è un enum NOT NULL con predefinito 'non_richiesta' (non_richiesta, in_attesa, emessa, scartata): il banco
+    -- lo aveva come text NULLABLE e la condizione «fattura_stato IS NOT NULL» dello script sembrava corretta. Stesso predefinito qui (text, con CHECK).
+    UPDATE public.pagamenti SET fattura_stato = 'non_richiesta' WHERE fattura_stato IS NULL;
+    ALTER TABLE public.pagamenti ALTER COLUMN fattura_stato SET DEFAULT 'non_richiesta', ALTER COLUMN fattura_stato SET NOT NULL;
+    ALTER TABLE public.pagamenti ADD CONSTRAINT pagamenti_fattura_stato_chk CHECK (fattura_stato IN ('non_richiesta', 'in_attesa', 'emessa', 'scartata'));
     ALTER TABLE public.parents ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
     ALTER TABLE public.utenti ADD COLUMN IF NOT EXISTS creato_il timestamptz NOT NULL DEFAULT now();
     -- i genitori: la chiave verso gli alunni c'è in produzione (il banco del passaggio non la metteva)

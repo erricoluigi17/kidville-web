@@ -29,7 +29,7 @@ const N2 = ALUNNO(22)
 type Rec = Record<string, unknown>
 type Cruscotto = {
   anno: { inizio: string; fine: string; stato: string }
-  sezioni: Array<{ section_id: string | null; nome: string | null; fascia: string | null; iscritti: number }>
+  sezioni: Array<{ section_id: string | null; nome: string | null; fascia: string | null; iscritti: number; completi: number }>
   fasce: Array<{ fascia: string; iscritti: number; posti: number | null; oltre: boolean }>
   risposte: { confermati: number; no: number; non_risposto: number; di_partenza: number }
   nuove: { totale: number }
@@ -123,6 +123,7 @@ async function seme() {
   await apri()
   const A = await sezione('Sezione A', 'infanzia')
   const B = await sezione('Sezione B', 'nido_1')
+  await sezione('Sezione C', 'infanzia') // una classe dell'anno senza nessuno: deve comparire con 0
   await db.query(`INSERT INTO public.posti_autorizzati (anno_sede_id, fascia, posti) VALUES ($1, 'infanzia', 2), ($1, 'nido_1', 5)`, [A27()])
   const f1 = await frequenza(P[0], 'conferma', A)
   const f2 = await frequenza(P[1], 'conferma', A)
@@ -145,7 +146,7 @@ async function seme() {
 
 beforeAll(async () => {
   db = await creaDbAnnoPr2({
-    sedi: [S1, S2], fino: 'M47', completo: true,
+    sedi: [S1, S2], fino: 'M47b', completo: true,
     codaPrima: SCHEMA_ISCRIZIONE_ANNO + `
       -- con \`completo\` il banco ha già archiviato_il e importo_retta_mensile su \`alunni\`, tipo e visibile_dal su \`pagamenti\`
       ALTER TABLE public.alunni
@@ -177,8 +178,10 @@ describe('anno_cruscotto: i cinque blocchi', () => {
 
       expect(c.anno).toMatchObject({ stato: 'iscrizioni_aperte' })
       // Posti: per sezione (il nome non è un dato personale) e per fascia, con l'avviso sui posti superati.
-      expect(c.sezioni.map((s) => [s.nome, s.fascia, s.iscritti])).toEqual([
-        ['Sezione A', 'infanzia', 3], ['Sezione B', 'nido_1', 2], [null, null, 1],
+      // `iscritti` = in lista (confermati o domanda nuova); `completi` = di questi, iscritti a tutti gli effetti (moduli + quota).
+      // La classe vuota compare con 0; i senza classe stanno in una riga loro.
+      expect(c.sezioni.map((s) => [s.nome, s.fascia, s.iscritti, s.completi])).toEqual([
+        ['Sezione A', 'infanzia', 3, 1], ['Sezione B', 'nido_1', 2, 0], ['Sezione C', 'infanzia', 0, 0], [null, null, 1, 0],
       ])
       expect(c.fasce).toEqual([
         { fascia: 'infanzia', iscritti: 3, posti: 2, oltre: true },
@@ -292,6 +295,45 @@ describe('anno_cruscotto: i cinque blocchi', () => {
       await db.query(`DELETE FROM public.listino_voci WHERE anno_sede_id = $1 AND voce = 'quota_nuova'`, [A27()])
       const c = await cruscotto()
       expect(c.quota).toMatchObject({ assenti: 3, senza_listino: 2, euro_assenti_stimati: 100 })
+    })
+  })
+
+  // Rilievi della revisione (14/11): i «senza classe» con iscritti veri, le frequenze con una sezione fuori dall'anno, e le righe di recupero.
+  prova('i senza classe contano anche gli iscritti a tutti gli effetti (completi > 0)', async () => {
+    await inRollback(async () => {
+      const { f4 } = await seme()
+      await spunta(f4, 'conferma')
+      await collega(f4, await voce(P[3], 100, 'pagato', 100))
+      expect(await stato(f4)).toBe('iscritto')
+      const senza = (await cruscotto()).sezioni.find((x) => x.section_id === null)
+      expect(senza).toMatchObject({ iscritti: 1, completi: 1 })
+    })
+  })
+
+  prova('una frequenza con una sezione di un ALTRO ANNO non sparisce dal conteggio: finisce nei senza classe', async () => {
+    await inRollback(async () => {
+      const { f5 } = await seme()
+      const altroAnno = await una<string>(
+        `INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1, $2, 'Sezione Vecchia', 'infanzia', 'infanzia') RETURNING id`,
+        [S1, ANNO[2026]])
+      // Il database di norma lo vieta (un trigger): per provare il conteggio si spengono i trigger SOLO per questa scrittura, nel banco in memoria.
+      await db.exec('SET LOCAL session_replication_role = replica')
+      await db.query(`UPDATE public.frequenze SET section_id = $2 WHERE id = $1`, [f5, altroAnno])
+      await db.exec('SET LOCAL session_replication_role = origin')
+      const c = await cruscotto()
+      const vive = await una<number>(`SELECT count(*)::int FROM public.frequenze WHERE anno_sede_id = $1 AND stato IN ('in_attesa', 'iscritto')`, [A27()])
+      expect(c.sezioni.reduce((somma, x) => somma + x.iscritti, 0)).toBe(vive)
+      expect(c.sezioni.find((x) => x.section_id === null)?.iscritti).toBe(2)
+      expect(c.sezioni.some((x) => x.nome === 'Sezione Vecchia')).toBe(false)
+    })
+  })
+
+  prova('una riga di RECUPERO `iscritto` senza moduli né quota non è un iscritto a tutti gli effetti', async () => {
+    await inRollback(async () => {
+      const { f4 } = await seme()
+      await db.query(`UPDATE public.frequenze SET origine = 'recupero', stato = 'iscritto' WHERE id = $1`, [f4])
+      const senza = (await cruscotto()).sezioni.find((x) => x.section_id === null)
+      expect(senza).toMatchObject({ iscritti: 1, completi: 0 })
     })
   })
 

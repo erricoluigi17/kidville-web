@@ -374,14 +374,16 @@ describe('Impostazioni → Anno scolastico: aprire le iscrizioni', () => {
     expect(chiamate('POST')).toHaveLength(0)
   })
 
-  it('se manca la fascia delle classi, il rimando dice che si sistema nella scheda Classi', async () => {
+  it('se manca la fascia delle classi, il rimando dice dove sono davvero le classi (non esiste una «scheda Classi»)', async () => {
     rispostaGet = ok({ mancano: ['classi_senza_fascia'] })
     monta()
     await screen.findByLabelText(itSettings.annoFineTitolo)
     scegli('2027/28')
     expect(await screen.findByText(/^Mancano: la fascia di ogni classe/)).toBeInTheDocument()
-    expect(screen.getByText(itSettings.annoListinoNelleRette)).toHaveTextContent(/scheda Classi/)
-    expect(itSettings.annoListinoNelleRette).not.toMatch(/Rette|Posti/)
+    expect(screen.getByText(itSettings.annoListinoNelleRette)).toHaveTextContent(/blocco «Classi dell’anno»/)
+    expect(itSettings.annoListinoNelleRette).not.toMatch(/scheda Classi/)
+    expect(itSettings.annoMancaClassiSenzaFascia).not.toMatch(/scheda Classi/)
+    expect(itAnno.classiTitolo).toBe('Classi dell’anno')
   })
 
   it('dice solo ciò che manca davvero', async () => {
@@ -532,6 +534,8 @@ describe('Impostazioni → Anno scolastico: le domande dal sito', () => {
   })
 
   it('«Riapri» manda aperte=true; vale per l’anno scelto, non per quello in corso', async () => {
+    // L'anno 2027/28 ha già le iscrizioni aperte ma le domande sospese: solo ora «Riapri» ha un senso.
+    h.perSede = { [SEDE_A]: [riga(2025, 'chiuso'), riga(2026, 'corrente'), riga(2027, 'iscrizioni_aperte')] }
     monta()
     await screen.findByLabelText(itSettings.annoFineTitolo)
     scegli('2027/28')
@@ -558,6 +562,74 @@ describe('Impostazioni → Anno scolastico: le domande dal sito', () => {
     await screen.findByText(itSettings.annoChiusoSolaLettura)
     expect(screen.queryByRole('button', { name: itSettings.annoDomandeSospendi })).toBeNull()
     expect(screen.queryByRole('button', { name: itSettings.annoDomandeRiapri })).toBeNull()
+  })
+})
+
+describe('Impostazioni → Anno scolastico: prima dell’apertura e dopo (prova di facilità d’uso, 14/11)', () => {
+  const apriConfermando = async () => {
+    rispostaGet = ok({ mancano: [] })
+    monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    scegli('2027/28')
+    const apri = () => screen.getByRole('button', { name: itSettings.annoIscrizioniTitolo })
+    await waitFor(() => expect(apri()).toHaveAttribute('aria-disabled', 'false'))
+    fireEvent.click(apri())
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: itSettings.annoApriConferma }))
+  }
+
+  it('1 · dopo «Apri le iscrizioni» il bottone sparisce e le classi copiate dal server si rileggono, anche se il calendario è ancora quello vecchio', async () => {
+    // `ricarica` è un finto che NON cambia il calendario: è proprio il caso della prova (la pagina restava com'era).
+    let aperto = false
+    const normale = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      const metodo = init?.method ?? 'GET'
+      if (metodo === 'POST' && String(url).endsWith('/apri-iscrizioni')) aperto = true
+      if (metodo === 'GET' && String(url).endsWith('/sezioni')) {
+        const sezioni = aperto ? [{ id: 's1', name: 'Sezione A', school_type: 'infanzia', fascia: 'infanzia' }] : []
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: { sezioni } }) })
+      }
+      return normale(url, init)
+    })
+    await apriConfermando()
+    expect(await screen.findByText(itSettings.annoApriFatto)).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText(itAnno.classiElencoVuoto)).toBeNull())
+    expect(await screen.findByText('Sezione A')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: itSettings.annoIscrizioniTitolo })).toBeNull()
+    // lo stato in cima al dettaglio e il blocco delle domande sono quelli veri
+    expect(screen.getByText(itSettings.annoDomandeAperte)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: itSettings.annoDomandeSospendi })).toBeEnabled()
+  })
+
+  it('2 · prima dell’apertura le domande non sono un comando: nessun «Riapri», una frase che spiega che si aprono da sole', async () => {
+    monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    scegli('2027/28')
+    await screen.findByRole('button', { name: itSettings.annoIscrizioniTitolo })
+    expect(screen.queryByRole('button', { name: itSettings.annoDomandeRiapri })).toBeNull()
+    expect(screen.queryByText(itSettings.annoDomandeSospese)).toBeNull()
+    expect(screen.getByText(itSettings.annoDomandeAutomatiche)).toBeInTheDocument()
+  })
+
+  it('4 · con le iscrizioni aperte c’è il link del modulo per la sede, visibile, con il pulsante per copiarlo', async () => {
+    h.perSede = { [SEDE_A]: [riga(2025, 'chiuso'), riga(2026, 'corrente'), riga(2027, 'iscrizioni_aperte', { domandeAperte: true })] }
+    const scrivi = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: scrivi } })
+    monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    scegli('2027/28')
+    const atteso = `${window.location.origin}/iscrizione?scuola=${SEDE_A}`
+    expect(await screen.findByText(atteso)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: itSettings.annoLinkCopia }))
+    await waitFor(() => expect(scrivi).toHaveBeenCalledWith(atteso))
+    expect(await screen.findByText(itSettings.annoLinkCopiato)).toBeInTheDocument()
+  })
+
+  it('4 · prima dell’apertura il link non c’è', async () => {
+    monta()
+    await screen.findByLabelText(itSettings.annoFineTitolo)
+    scegli('2027/28')
+    await screen.findByRole('button', { name: itSettings.annoIscrizioniTitolo })
+    expect(screen.queryByRole('button', { name: itSettings.annoLinkCopia })).toBeNull()
   })
 })
 

@@ -116,5 +116,17 @@
   "ambitoAnnoTogliModulo": "Togli il filtro del modulo",
   "classeAnnoNuovo": "Classe dell’anno prossimo: {classe}",
   "rimandoPassaggio": "Passaggio d’anno",
-  "vaiAlPassaggio": "Per far passare i bambini all’anno nuovo apri «Passaggio d’anno»."
+  "vaiAlPassaggio": "Per far passare i bambini all’anno nuovo apri «Passaggio d’anno».",
+  "azioneIncassa": "Incassa",
+  "lavoraSu": "Lavora sul {anno}",
+  "lavoraSuAiuto": "Qui si preparano le conferme dell’anno prossimo: passa all’anno con le iscrizioni aperte.",
+  "motivoDelNo": "Motivo: {motivo}",
+  "inAttesaModuliQuota": "In attesa: mancano {n, plural, one {# modulo} other {# moduli}} e la quota",
+  "inAttesaModuli": "In attesa: {n, plural, one {manca # modulo} other {mancano # moduli}}",
+  "inAttesaQuota": "In attesa: manca la quota",
+  "vaAllaPrimariaAiuto": "Spunta se l’anno prossimo il bambino passa alla scuola primaria: poi scegli la sua classe. Se non la spunti resta nell’infanzia.",
+  "vuotoNuoveDove": "Le domande di iscrizione mandate dalle famiglie con il modulo del sito arrivano in «Moduli ricevuti». Quando le accogli, il bambino compare qui e puoi spuntare i suoi moduli e la quota.",
+  "vuotoNuoveLink": "Vai ai moduli ricevuti",
+  "incassaNonLetta": "Non è stato possibile leggere le voci da incassare: l’elenco è giusto, ma «Incassa» è spento per ora. Aggiorna l’elenco fra poco.",
+  "incassaVoceMancante": "Non trovo la voce della quota: incassala dalla Contabilità."
 }

@@ -101,7 +101,7 @@ const ID_FIGLIO = 'aaaa1111-0000-4000-8000-0000000000a9'
 
 const NOME_MADRE = 'Verdi Carla'
 const NOME_PADRE = 'Verdi Ugo'
-const NOME_ALUNNO = 'Verdi Ada'
+const NOME_ALUNNO = 'Ada Verdi' // scheda del bambino: «Nome Cognome»; MADRE e PADRE sono il lato adulto (invariato)
 const NOME_GENITORE = 'Bianchi Nadia'
 const NOME_FIGLIO = 'Bianchi Enea'
 

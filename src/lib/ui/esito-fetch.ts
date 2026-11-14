@@ -2353,6 +2353,10 @@ export const CODICI_ERRORE = {
     SEZIONE_NON_TROVATA: 'erroreSezioneNonTrovata',
     /** 403 — la classe è di un anno passato e il docente la vede in sola lettura (`assertSezioneScrivibile`). */
     SEZIONE_SOLA_LETTURA: 'erroreSezioneSolaLettura',
+    /** 403 — la foto non ha un anno (`anno_id` mancante): non si sa se è di un anno chiuso, quindi il docente non la modifica (`assertRigaDiAnnoScrivibile`). */
+    ANNO_RIGA_ASSENTE: 'erroreAnnoRigaAssente',
+    /** 403 — la foto non ha una sede (`scuola_id` mancante): non si sa di quale anno sede sia, quindi il docente non la modifica (`assertRigaDiAnnoScrivibile`). */
+    SEDE_RIGA_ASSENTE: 'erroreSedeRigaAssente',
     /**
      * 403 — la classe è dell'anno che si sta chiudendo (`in_chiusura`: da agosto a settembre): il docente la vede ma non la
      * scrive, e la frase NON dice «anno passato», perché quell'anno è ancora quello in corso. Solo la Direzione e la segreteria

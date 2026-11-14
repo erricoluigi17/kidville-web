@@ -17,6 +17,8 @@ import {
 import { extractEnrollmentTemplates } from '@/lib/forms/enrollment-default-schema'
 import { LegendaObbligatori } from '@/components/features/public/wizard/pezzi-wizard-pubblico'
 import { useAnniPubblici } from '@/components/features/public/wizard/use-anni-pubblici'
+import { useInfoAnno } from '@/components/features/public/wizard/use-info-anno'
+import { InfoAnnoIscrizione } from '@/components/features/public/wizard/InfoAnnoIscrizione'
 import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { EMAIL_RIPETUTA_FRA_GENITORI, indiciEmailRipetute } from '@/lib/iscrizioni/email-genitori'
@@ -250,6 +252,9 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   const annoEffettivo = mostraAnno
     ? (anni.anni.find((a) => a.anno_id === annoScelto)?.anno_id ?? null)
     : (anni.anni.length === 1 ? anni.anni[0].anno_id : null)
+  // Quota di nuova iscrizione e documenti dell'anno (accessoria: se la lettura non riesce il pannello dice solo l'anno).
+  const infoAnno = useInfoAnno({ sedeId: sedeAnni, annoId: annoEffettivo })
+  const etichettaAnnoEffettivo = anni.anni.find((a) => a.anno_id === annoEffettivo)?.etichetta_breve ?? null
   /** Le iscrizioni della sede sono chiuse, e la famiglia non ha un'altra sede fra cui scegliere. */
   const annoChiusoSenzaAlternative = anni.chiuso && !mostraSede
   /**
@@ -865,6 +870,12 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                     </div>
                   </div>
 
+                  {/* Per quale anno si iscrive il bambino, con quota e documenti: dal primo passo dopo la sede (e dopo
+                      la scelta dell'anno, se c'è); il riepilogo lo rimostra più sotto, al posto di questa copia. */}
+                  {etichettaAnnoEffettivo && current.kind !== 'sede' && current.kind !== 'anno' && current.kind !== 'review' && (
+                    <InfoAnnoIscrizione anno={etichettaAnnoEffettivo} info={infoAnno} />
+                  )}
+
                   {/* SEDE step — compare solo con più sedi e senza ?scuola= nel link */}
                   {current.kind === 'sede' && (
                     <fieldset className="space-y-3">
@@ -1128,13 +1139,8 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                           })}
                         </p>
                       </div>
-                      {mostraAnno && annoEffettivo && (
-                        <p className="px-4 text-sm text-kidville-ink">
-                          {ta('annoRiepilogoRiga', {
-                            anno: anni.anni.find((a) => a.anno_id === annoEffettivo)?.etichetta_breve ?? '',
-                          })}
-                        </p>
-                      )}
+                      {/* L'anno si dice UNA volta: lo dice il titolo del pannello (rilievo 5 della revisione). */}
+                      {etichettaAnnoEffettivo && <InfoAnnoIscrizione anno={etichettaAnnoEffettivo} info={infoAnno} />}
                       <p className="text-xs text-kidville-sub leading-relaxed">
                         {t.rich('wizardRiepilogoNota', {
                           b: (chunks) => <strong className="text-kidville-ink">{chunks}</strong>,

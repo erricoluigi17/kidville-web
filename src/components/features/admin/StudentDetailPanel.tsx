@@ -1351,7 +1351,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                             // Se in archivio il nome non c'è, si dice: una conferma di
                             // scollegamento che comincia con uno spazio vuoto non nomina
                             // nessuno, ed è proprio il nome ciò che deve nominare.
-                            nomeFisso={[student.cognome, student.nome].filter(Boolean).join(' ').trim() || t('legamiSenzaNome')}
+                            nomeFisso={[student.nome, student.cognome].filter(Boolean).join(' ').trim() || t('legamiSenzaNome')}
                             collegati={legamiGestibili}
                             onRicarica={ricaricaLegami}
                         />
@@ -1384,7 +1384,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <p className="font-barlow font-bold text-sm text-kidville-ink leading-tight truncate">
-                                                {sibling.cognome} {sibling.nome}
+                                                {sibling.nome} {sibling.cognome}
                                             </p>
                                             <p className="font-maven text-xs text-kidville-muted mt-0.5">
                                                 {sibling.classe_sezione || t('detailNessunaSezione')}

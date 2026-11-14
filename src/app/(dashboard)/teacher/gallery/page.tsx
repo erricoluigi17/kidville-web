@@ -27,6 +27,7 @@ import { durataVideoDalFile, sedeDelCaricamento, sediDalCookie } from '@/lib/gal
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
 import { CompetenzaServizio } from '@/components/features/CompetenzaServizio';
 import { oggiRoma } from '@/lib/storici/retroattivita';
+import { fetchEducatorSections, nomeConAnno, sezioniDallaRisposta, type SezioneDocente } from '@/lib/sezioni/educator-sections-cache';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 import { useClientValue } from '@/lib/hooks/use-client-value';
@@ -69,12 +70,16 @@ interface AvvisoPagina {
     testo: string;
 }
 
+/** La chiave di una classe: l'uuid, o il nome con la risposta vecchia di `educator-sections`. */
+const chiaveDi = (s: SezioneDocente): string => s.id ?? s.name;
+
 function TeacherGalleryContent() {
     const t = useTranslations('teacherServizi');
     // «Rimuovi file» vive in `shared`: è la stessa etichetta della X dello step 1,
     // e una seconda copia in `teacherServizi` sarebbe due stringhe da tradurre
     // per un gesto solo.
     const tShared = useTranslations('shared');
+    const tPresenze = useTranslations('teacherPresenze');
     const { userId: teacherId } = useSessionIdentity();
     const formato = useFormatoGuscio();
 
@@ -192,43 +197,59 @@ function TeacherGalleryContent() {
 
     // Sezione reale da /api/educator-sections: init vuoto, mai hardcoded
     // (i loader sono guardati da `if (!sezione) return`).
-    const [sezione, setSezione] = useState<string>('');
-    const [availableSections, setAvailableSections] = useState<string[]>([]);
+    // La scelta ricorda la CHIAVE (l'uuid): la stessa classe esiste in più anni e i nomi si ripetono (lotto 8).
+    const [chiaveSezione, setChiaveSezione] = useState<string>('');
+    // La classe che si sta guardando ADESSO, per scartare le risposte in volo di una classe lasciata (lotto 8, revisione): una GET
+    // lenta della classe A non deve sovrascrivere le foto della B, né accendere i comandi di scrittura sulla classe passata.
+    const chiaveCorrenteRef = useRef('');
+    useEffect(() => { chiaveCorrenteRef.current = chiaveSezione; }, [chiaveSezione]);
+    const [sezioniDocente, setSezioniDocente] = useState<SezioneDocente[]>([]);
+    const corrente = useMemo(() => sezioniDocente.find((s) => chiaveDi(s) === chiaveSezione), [sezioniDocente, chiaveSezione]);
+    const sezione = corrente?.name ?? '';
+    const sectionId = corrente?.id;
+    // Una classe di un anno passato (o che si sta chiudendo) si CONSULTA e basta: niente caricamento, cancellazione, etichette.
+    const solaLettura = corrente?.solaLettura === true;
+    const etichettaSezione = (s: SezioneDocente) => nomeConAnno(s, (nome, anno) => tPresenze('sezioneConAnno', { nome, anno }));
 
     const loadMedia = useCallback(async (): Promise<boolean> => {
         // La GET galleria è gated: serve l'identità (sessione o header).
         if (!sezione || !teacherId) return false;
+        const richiesta = chiaveSezione;
+        const stantia = () => chiaveCorrenteRef.current !== richiesta;
         try {
             // Seleziona media per la sezione del docente
-            const res = await fetch(`/api/gallery?classe=${sezione}`, {
+            const res = await fetch(`/api/gallery?classe=${encodeURIComponent(sezione)}${solaLettura && sectionId ? `&sectionId=${sectionId}&dellAnno=1` : ''}`, {
                 headers: { 'x-user-id': teacherId },
             });
             if (!res.ok) throw Object.assign(new Error('gallery_read_rejected'), { stato: res.status });
             const data = await res.json();
             if (!Array.isArray(data?.media)) throw new Error('gallery_read_invalid');
-            if (!ambitoCorrente()) return false;
+            if (!ambitoCorrente() || stantia()) return false;
             setMedia(data.media);
             setReadError(false);
             return true;
         } catch (error) {
-            if (!ambitoCorrente()) return false;
+            if (!ambitoCorrente() || stantia()) return false;
             const stato = (error as { stato?: unknown })?.stato;
             logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-lettura-fallita', route: '/teacher/gallery', ...(typeof stato === 'number' ? { stato } : {}) });
             setReadError(true);
             return false;
         } finally {
-            setLoading(false);
+            // Una risposta della classe lasciata non spegne lo spinner di quella nuova.
+            if (!stantia()) setLoading(false);
         }
-    }, [sezione, teacherId, ambitoCorrente]);
+    }, [chiaveSezione, sezione, sectionId, solaLettura, teacherId, ambitoCorrente]);
 
     const loadStudents = useCallback(async () => {
-        if (!sezione) return;
+        // Una classe in sola lettura non etichetta nessuno: l'elenco dei bambini (coi consensi) non serve e non si chiede.
+        if (!sezione || solaLettura) return;
+        const richiesta = chiaveSezione;
         try {
             const res = await fetch(`/api/diary/students?sezione=${sezione}`);
             if (res.ok) {
                 const data = await res.json();
                 if (Array.isArray(data)) {
-                    if (!ambitoCorrente()) return;
+                    if (!ambitoCorrente() || chiaveCorrenteRef.current !== richiesta) return;
                     setStudents(data.map((s: { id: string; nome: string; cognome: string; consenso_privacy?: boolean; parents?: Student['parents'] }) => ({
                         id: s.id,
                         nome: s.nome,
@@ -243,19 +264,18 @@ function TeacherGalleryContent() {
         } catch {
             logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-studenti-fallito', route: '/teacher/gallery' });
         }
-    }, [sezione, ambitoCorrente]);
+    }, [chiaveSezione, sezione, solaLettura, ambitoCorrente]);
 
     // Carica sezioni educatore (sezione reale, mai hardcoded — pattern locker)
     useEffect(() => {
         const fetchSections = async () => {
             if (!teacherId) return;
             try {
-                const res = await fetch(`/api/educator-sections?userId=${teacherId}`);
-                const data = res.ok ? await res.json() : null;
-                const sections: string[] = data?.sectionNames ?? [];
-                setAvailableSections(sections);
+                // Con le classi degli anni passati (`passati`): si aprono in sola lettura. La cache scade da sola (30 s).
+                const sections = sezioniDallaRisposta(await fetchEducatorSections(teacherId, { passati: true }));
+                setSezioniDocente(sections);
                 if (sections.length > 0) {
-                    setSezione(prev => prev || sections[0]);
+                    setChiaveSezione(prev => (prev && sections.some((x) => chiaveDi(x) === prev) ? prev : chiaveDi(sections[0])));
                 } else {
                     // Nessuna sezione (o errore API): niente da caricare → spegni lo spinner.
                     setLoading(false);
@@ -460,6 +480,25 @@ function TeacherGalleryContent() {
         setStep('gallery');
         setUploadedFiles([]);
         setActiveFileIndex(0);
+    };
+
+    // Cambio di classe: lo stato della classe lasciata si azzera TUTTO, così per la durata della fetch non resta in vista
+    // l'elenco (con i comandi di scrittura) della classe di prima, e un caricamento a metà non passa alla classe nuova.
+    const cambiaClasse = (chiave: string) => {
+        if (chiave === chiaveSezione) return;
+        // Un giro di caricamento in corso non si tocca: `annullaCaricamento` cancellerebbe le copie dei video nativi che si
+        // stanno spedendo (lo stesso motivo per cui «Annulla» è spento mentre `uploading`).
+        if (uploading) return;
+        // File già scelti e non ancora caricati: non si buttano in silenzio. Se la maestra rinuncia, il selettore (controllato)
+        // resta sulla classe di prima e non cambia niente.
+        if (uploadedFiles.length > 0 && !confirm(t('galleryConfermaCambiaClasse', { n: uploadedFiles.length }))) return;
+        annullaCaricamento();
+        chiaveCorrenteRef.current = chiave;
+        setMedia([]);
+        setStudents([]);
+        setLoading(true);
+        setReadError(false);
+        setChiaveSezione(chiave);
     };
 
     const handleToggleTag = (studentId: string) => {
@@ -870,8 +909,14 @@ function TeacherGalleryContent() {
             <PageHeaderCard
                 eyebrow={t('galleryEyebrow')}
                 title={t('galleryTitolo')}
-                subtitle={t('gallerySottotitolo', { sezione: sezione || '…' })}
+                subtitle={t('gallerySottotitolo', { sezione: corrente ? etichettaSezione(corrente) : '…' })}
             />
+
+            {solaLettura && (
+                <p role="status" data-sola-lettura className="mt-3 rounded-2xl border border-kidville-line bg-kidville-cream px-4 py-2 font-maven text-sm text-kidville-ink">
+                    <strong>{corrente?.annoStato === 'in_chiusura' ? tPresenze('annoInChiusura') : tPresenze('annoPassato')}.</strong> {t('galleryAnnoPassatoAiuto')}
+                </p>
+            )}
 
             {/*
               LA REGIONE DEGLI AVVISI STA SEMPRE NEL DOCUMENTO (secondario #36), e cambia solo ciò
@@ -914,31 +959,32 @@ function TeacherGalleryContent() {
 
             {/* Controlli (sezione + step) */}
             <div className="mt-3 flex flex-wrap items-center gap-3">
-                {availableSections.length > 1 && (
+                {sezioniDocente.length > 1 && (
                     <div className="flex items-center gap-2">
                         <label htmlFor="section-select" className="font-barlow font-bold text-xs text-kidville-muted uppercase tracking-wide">
                             {t('gallerySezioneLabel')}
                         </label>
                         <select
                             id="section-select"
-                            value={sezione}
-                            onChange={(e) => setSezione(e.target.value)}
-                            className="rounded-xl border border-kidville-line bg-white px-3 py-1.5 font-barlow text-sm font-bold uppercase text-kidville-green shadow-sm focus:outline-none focus:ring-1 focus:ring-kidville-green"
+                            value={chiaveSezione}
+                            onChange={(e) => cambiaClasse(e.target.value)}
+                            disabled={uploading}
+                            className="min-h-11 rounded-xl border border-kidville-line bg-white px-3 py-1.5 font-barlow text-sm font-bold uppercase text-kidville-green shadow-sm focus:outline-none focus:ring-1 focus:ring-kidville-green"
                         >
-                            {availableSections.map((sec) => (
-                                <option key={sec} value={sec}>{sec}</option>
+                            {sezioniDocente.map((sec) => (
+                                <option key={chiaveDi(sec)} value={chiaveDi(sec)}>{etichettaSezione(sec)}</option>
                             ))}
                         </select>
                     </div>
                 )}
 
                 <div className="ml-auto flex items-center gap-2">
-                    {step === 'gallery' && (
+                    {step === 'gallery' && !solaLettura && (
                         <Btn variant="primary" size="sm" onClick={() => { svuotaAvvisi(); setStep('upload'); }}>
                             <Upload size={16} strokeWidth={1.5} /> {t('galleryCarica')}
                         </Btn>
                     )}
-                    {step !== 'gallery' && (
+                    {step !== 'gallery' && !solaLettura && (
                         // Spento durante «Pubblica»: il giro sta scorrendo l'elenco, e «Annulla» scarterebbe le copie dei video
                         // nativi che il giro non ha ancora consegnato al plugin (e quelle già consegnate non sono più sue).
                         // Lo stesso vale per la X delle miniature, spenta dallo stesso stato.
@@ -951,7 +997,7 @@ function TeacherGalleryContent() {
 
             <AnimatePresence mode="wait">
                 {/* Step: Gallery */}
-                {step === 'gallery' && (
+                {(step === 'gallery' || solaLettura) && (
                     <motion.div key="gallery" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mt-5">
                         {/*
                           I VIDEO IN LAVORAZIONE STANNO SOPRA LA GRIGLIA, E NON È UNA
@@ -984,13 +1030,16 @@ function TeacherGalleryContent() {
                             /* `scaricabile`: il solo «Scarica» (card e visore) anche per i
                                docenti — non `showActions`, che porterebbe Condividi e
                                «Segnala», gesti del genitore. */
-                            <MediaGrid items={media} scaricabile onDelete={handleDeleteMedia} students={students} onUpdateTags={handleUpdateTags} colonne={colonneGalleria(formato)} />
+                            solaLettura
+                                // Solo la griglia e il «Scarica»: niente cancellazione né etichette (lotto 8).
+                                ? <MediaGrid items={media} scaricabile colonne={colonneGalleria(formato)} />
+                                : <MediaGrid items={media} scaricabile onDelete={handleDeleteMedia} students={students} onUpdateTags={handleUpdateTags} colonne={colonneGalleria(formato)} />
                         )}
                     </motion.div>
                 )}
 
                 {/* Step: Upload */}
-                {step === 'upload' && (
+                {step === 'upload' && !solaLettura && (
                     <motion.div key="upload" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                         className="mt-5 rounded-3xl border border-kidville-line bg-white shadow-sm p-5">
                         <h2 className="font-barlow font-bold text-base text-kidville-green uppercase tracking-wide mb-4">
@@ -1002,7 +1051,7 @@ function TeacherGalleryContent() {
                 )}
 
                 {/* Step: Tag */}
-                {step === 'tag' && (
+                {step === 'tag' && !solaLettura && (
                     <motion.div key="tag" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                         className="mt-5 space-y-4">
                         {/* Preview delle foto selezionate */}

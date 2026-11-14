@@ -116,5 +116,17 @@
   "ambitoAnnoTogliModulo": "Remove the form filter",
   "classeAnnoNuovo": "Class next year: {classe}",
   "rimandoPassaggio": "Year changeover",
-  "vaiAlPassaggio": "To move the children to the new year open “Year changeover”."
+  "vaiAlPassaggio": "To move the children to the new year open “Year changeover”.",
+  "azioneIncassa": "Collect payment",
+  "lavoraSu": "Work on {anno}",
+  "lavoraSuAiuto": "This is where next year’s confirmations are prepared: switch to the year with enrolment open.",
+  "motivoDelNo": "Reason: {motivo}",
+  "inAttesaModuliQuota": "Waiting: {n, plural, one {# form} other {# forms}} and the fee are missing",
+  "inAttesaModuli": "Waiting: {n, plural, one {# form is missing} other {# forms are missing}}",
+  "inAttesaQuota": "Waiting: the fee is missing",
+  "vaAllaPrimariaAiuto": "Tick it if the child moves up to primary school next year, then choose their class. If you leave it empty they stay in nursery school.",
+  "vuotoNuoveDove": "Enrolment requests that families send with the website form arrive in “Received forms”. Once you accept them, the child shows up here and you can tick their forms and fee.",
+  "vuotoNuoveLink": "Go to received forms",
+  "incassaNonLetta": "The items to collect could not be read: the list is correct, but “Collect payment” is off for now. Refresh the list in a moment.",
+  "incassaVoceMancante": "The fee item was not found: collect it from Accounting."
 }

@@ -29,7 +29,7 @@ const N2 = ALUNNO(22)
 type Rec = Record<string, unknown>
 type Cruscotto = {
   anno: { inizio: string; fine: string; stato: string }
-  sezioni: Array<{ section_id: string | null; nome: string | null; fascia: string | null; iscritti: number }>
+  sezioni: Array<{ section_id: string | null; nome: string | null; fascia: string | null; iscritti: number; completi: number }>
   fasce: Array<{ fascia: string; iscritti: number; posti: number | null; oltre: boolean }>
   risposte: { confermati: number; no: number; non_risposto: number; di_partenza: number }
   nuove: { totale: number }
@@ -123,6 +123,7 @@ async function seme() {
   await apri()
   const A = await sezione('Sezione A', 'infanzia')
   const B = await sezione('Sezione B', 'nido_1')
+  await sezione('Sezione C', 'infanzia') // una classe dell'anno senza nessuno: deve comparire con 0
   await db.query(`INSERT INTO public.posti_autorizzati (anno_sede_id, fascia, posti) VALUES ($1, 'infanzia', 2), ($1, 'nido_1', 5)`, [A27()])
   const f1 = await frequenza(P[0], 'conferma', A)
   const f2 = await frequenza(P[1], 'conferma', A)
@@ -145,7 +146,7 @@ async function seme() {
 
 beforeAll(async () => {
   db = await creaDbAnnoPr2({
-    sedi: [S1, S2], fino: 'M47', completo: true,
+    sedi: [S1, S2], fino: 'M47b', completo: true,
     codaPrima: SCHEMA_ISCRIZIONE_ANNO + `
       -- con \`completo\` il banco ha già archiviato_il e importo_retta_mensile su \`alunni\`, tipo e visibile_dal su \`pagamenti\`
       ALTER TABLE public.alunni
@@ -177,8 +178,10 @@ describe('anno_cruscotto: i cinque blocchi', () => {
 
       expect(c.anno).toMatchObject({ stato: 'iscrizioni_aperte' })
       // Posti: per sezione (il nome non è un dato personale) e per fascia, con l'avviso sui posti superati.
-      expect(c.sezioni.map((s) => [s.nome, s.fascia, s.iscritti])).toEqual([
-        ['Sezione A', 'infanzia', 3], ['Sezione B', 'nido_1', 2], [null, null, 1],
+      // `iscritti` = in lista (confermati o domanda nuova); `completi` = di questi, iscritti a tutti gli effetti (moduli + quota).
+      // La classe vuota compare con 0; i senza classe stanno in una riga loro.
+      expect(c.sezioni.map((s) => [s.nome, s.fascia, s.iscritti, s.completi])).toEqual([
+        ['Sezione A', 'infanzia', 3, 1], ['Sezione B', 'nido_1', 2, 0], ['Sezione C', 'infanzia', 0, 0], [null, null, 1, 0],
       ])
       expect(c.fasce).toEqual([
         { fascia: 'infanzia', iscritti: 3, posti: 2, oltre: true },

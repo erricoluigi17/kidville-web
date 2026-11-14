@@ -80,6 +80,11 @@ export const GET = withRoute('admin/search:GET', async (request: NextRequest) =>
   if (anno instanceof NextResponse) return anno
 
   const like = `%${term}%`
+  // Le parole del nome e del cognome in QUALUNQUE ordine («Test INF Alunno1» come «Alunno1 Test INF»): ogni parola deve comparire
+  // in nome, cognome o codice fiscale (un `or` per parola; più `or` fanno AND). Al più 5 parole: il resto non restringe più nulla.
+  const parole = term.split(' ').filter(Boolean).slice(0, 5)
+  const perOgniParola = <T extends { or: (filtro: string) => T }>(query: T, colonne: string[]): T =>
+    parole.reduce((q, p) => q.or(colonne.map((c) => `${c}.ilike.%${p}%`).join(',')), query)
   let ricercaSezioni = supabase
     .from('sections')
     .select('id, name, school_type')
@@ -88,19 +93,21 @@ export const GET = withRoute('admin/search:GET', async (request: NextRequest) =>
     .limit(5)
   ricercaSezioni = filtraPerAnnoDiSede(ricercaSezioni, anno)
   const [alunniRes, utentiRes, sezioniRes, moduliRes] = await Promise.all([
-    supabase
-      .from('alunni')
-      .select('id, nome, cognome, classe_sezione, stato, codice_fiscale')
-      .in('scuola_id', plessi)
-      .or(`nome.ilike.${like},cognome.ilike.${like},codice_fiscale.ilike.${like}`)
-      .limit(5),
-    supabase
-      .from('utenti')
-      .select('id, nome, cognome, role, ruolo')
-      .in('scuola_id', plessi)
-      .or(`role.in.(${STAFF_ROLES}),ruolo.in.(${STAFF_ROLES})`)
-      .or(`nome.ilike.${like},cognome.ilike.${like}`)
-      .limit(5),
+    perOgniParola(
+      supabase
+        .from('alunni')
+        .select('id, nome, cognome, classe_sezione, stato, codice_fiscale')
+        .in('scuola_id', plessi),
+      ['nome', 'cognome', 'codice_fiscale'],
+    ).limit(5),
+    perOgniParola(
+      supabase
+        .from('utenti')
+        .select('id, nome, cognome, role, ruolo')
+        .in('scuola_id', plessi)
+        .or(`role.in.(${STAFF_ROLES}),ruolo.in.(${STAFF_ROLES})`),
+      ['nome', 'cognome'],
+    ).limit(5),
     ricercaSezioni,
     supabase
       .from('form_models')

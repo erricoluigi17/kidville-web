@@ -216,7 +216,7 @@ describe('PassaggioClient · gli stati', () => {
     expect((await screen.findByRole('alert')).textContent).toBe(itPassaggio.erroreGenerico)
     s.lettura = null
     fireEvent.click(screen.getByRole('button', { name: itPassaggio.riprova }))
-    expect(await screen.findByText('CognomeUno NomeUno')).toBeTruthy()
+    expect(await screen.findByText('NomeUno CognomeUno')).toBeTruthy()
     unmount()
     s.lettura = 403
     render(<PassaggioClient />)
@@ -229,7 +229,7 @@ describe('PassaggioClient · gli stati', () => {
     render(<PassaggioClient />)
     expect(await screen.findByText(itPassaggio.nessunaAnteprima)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: itPassaggio.azioneCalcola }))
-    expect(await screen.findByText('CognomeUno NomeUno')).toBeTruthy()
+    expect(await screen.findByText('NomeUno CognomeUno')).toBeTruthy()
     const post = chiamate('POST', `/api/admin/anni/${ANNO}/passaggio`).filter(([u]) => String(u).endsWith('/passaggio'))
     expect(post).toHaveLength(1)
     expect(corpoDi(post[0])).toEqual({ azione: 'anteprima' })
@@ -244,7 +244,7 @@ describe('PassaggioClient · gli stati', () => {
 
   it('ANTEPRIMA: dalla data in poi niente frase, il pulsante è acceso e i contatori mostrano i numeri del server', async () => {
     render(<PassaggioClient />)
-    expect(await screen.findByText('CognomeUno NomeUno')).toBeTruthy()
+    expect(await screen.findByText('NomeUno CognomeUno')).toBeTruthy()
     expect(screen.queryByText(/Il passaggio si può fare dal/)).toBeNull()
     expect((pulsanteConferma() as HTMLButtonElement).disabled).toBe(false)
     const contatori = screen.getByRole('group', { name: itPassaggio.contatoriEtichetta })
@@ -255,11 +255,11 @@ describe('PassaggioClient · gli stati', () => {
 
   it('un contatore filtra l’elenco: la richiesta porta l’esito e restano solo quei bambini', async () => {
     render(<PassaggioClient />)
-    await screen.findByText('CognomeUno NomeUno')
+    await screen.findByText('NomeUno CognomeUno')
     const contatori = screen.getByRole('group', { name: itPassaggio.contatoriEtichetta })
     fireEvent.click(await within(contatori).findByRole('button', { name: /Escono/ }))
-    await waitFor(() => expect(screen.queryByText('CognomeUno NomeUno')).toBeNull())
-    expect(screen.getByText('CognomeDue NomeDue')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByText('NomeUno CognomeUno')).toBeNull())
+    expect(screen.getByText('NomeDue CognomeDue')).toBeTruthy()
     expect(chiamate('GET', 'esito=esce&pagina=1').length).toBeGreaterThan(0)
   })
 
@@ -267,20 +267,20 @@ describe('PassaggioClient · gli stati', () => {
     s.righe = [...RIGHE_BASE(), RIGA_DA_DECIDERE()]
     render(<PassaggioClient />)
     const blocco = (await screen.findByRole('region', { name: /Da decidere/ })) as HTMLElement
-    expect(await within(blocco).findByText('CognomeQuattro NomeQuattro')).toBeTruthy()
+    expect(await within(blocco).findByText('NomeQuattro CognomeQuattro')).toBeTruthy()
     expect(within(blocco).getByText(itPassaggio.avvisoSenzaSezione)).toBeTruthy()
     expect((pulsanteConferma() as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('senza righe da decidere il blocco dice che non c’è niente da decidere', async () => {
     render(<PassaggioClient />)
-    await screen.findByText('CognomeUno NomeUno')
+    await screen.findByText('NomeUno CognomeUno')
     expect(await screen.findByText(itPassaggio.daDecidereVuoto)).toBeTruthy()
   })
 
   it('i nomi sono quelli della sola pagina: chi non è nelle righe non compare', async () => {
     render(<PassaggioClient />)
-    await screen.findByText('CognomeUno NomeUno')
+    await screen.findByText('NomeUno CognomeUno')
     expect(screen.queryByText(/CognomeFuori/)).toBeNull()
     expect(screen.queryByText(/NomeFuori/)).toBeNull()
   })
@@ -289,8 +289,8 @@ describe('PassaggioClient · gli stati', () => {
 describe('PassaggioClient · le scritture', () => {
   it('correggere la classe nuova chiama PUT …/righe con il corpo giusto', async () => {
     render(<PassaggioClient />)
-    await screen.findByText('CognomeUno NomeUno')
-    const tendina = await screen.findByLabelText('Classe nuova di CognomeUno NomeUno')
+    await screen.findByText('NomeUno CognomeUno')
+    const tendina = await screen.findByLabelText('Classe nuova di NomeUno CognomeUno')
     fireEvent.change(tendina, { target: { value: S_A2 } })
     await waitFor(() => expect(chiamate('PUT', '/passaggio/righe')).toHaveLength(1))
     expect(corpoDi(chiamate('PUT', '/passaggio/righe')[0])).toEqual({ alunno_id: AL1, esito: 'continua', section_id: S_A2 })
@@ -298,23 +298,45 @@ describe('PassaggioClient · le scritture', () => {
 
   it('«Esce dalla scuola» manda l’esito `esce` senza sezione', async () => {
     render(<PassaggioClient />)
-    await screen.findByText('CognomeUno NomeUno')
-    fireEvent.change(await screen.findByLabelText('Classe nuova di CognomeUno NomeUno'), { target: { value: '__esce__' } })
+    await screen.findByText('NomeUno CognomeUno')
+    fireEvent.change(await screen.findByLabelText('Classe nuova di NomeUno CognomeUno'), { target: { value: '__esce__' } })
     await waitFor(() => expect(chiamate('PUT', '/passaggio/righe')).toHaveLength(1))
     expect(corpoDi(chiamate('PUT', '/passaggio/righe')[0])).toEqual({ alunno_id: AL1, esito: 'esce' })
   })
 
   it('chi esce o non ha risposto non ha la tendina: ha il rimando «Registra la conferma» verso «Conferme»', async () => {
     render(<PassaggioClient />)
-    await screen.findByText('CognomeTre NomeTre')
-    expect(screen.queryByLabelText('Classe nuova di CognomeTre NomeTre')).toBeNull()
+    await screen.findByText('NomeTre CognomeTre')
+    expect(screen.queryByLabelText('Classe nuova di NomeTre CognomeTre')).toBeNull()
     const link = screen.getAllByRole('link', { name: itPassaggio.rimandoConferme })[0]
     expect(link.getAttribute('href')).toBe('/admin/students/conferme')
   })
 
+  // Prova di facilità d'uso del 14/11: venti «esce» in fila spaventano. In cima all'anteprima un riquadro dice quante famiglie non
+  // hanno risposto, che è solo un'anteprima, e porta alle Conferme; una riga spiega «Cambiano grado» e come si segna la primaria.
+  it('in cima all\'anteprima: il riquadro con il conteggio dei non risposto, «è solo un\'anteprima» e il collegamento alle Conferme', async () => {
+    render(<PassaggioClient />)
+    await screen.findByText('NomeUno CognomeUno')
+    const riquadro = await screen.findByRole('region', { name: itPassaggio.riquadroNonRispostoTitolo })
+    expect(riquadro.textContent).toMatch(/2 famiglie non hanno risposto/)
+    expect(riquadro.textContent).toMatch(/escono/)
+    expect(riquadro.textContent).toMatch(/solo un'anteprima, non è cambiato niente/)
+    expect(within(riquadro).getByRole('link', { name: itPassaggio.riquadroVaiAConferme }).getAttribute('href')).toBe('/admin/students/conferme')
+    // sta SOPRA l'elenco dei bambini
+    const elenco = screen.getByText('NomeUno CognomeUno')
+    expect(riquadro.compareDocumentPosition(elenco) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('una riga spiega «Cambiano grado» e come si segna un bambino che va alla primaria', async () => {
+    render(<PassaggioClient />)
+    await screen.findByText('NomeUno CognomeUno')
+    const nota = await screen.findByText(itPassaggio.cambiaGradoNota)
+    expect(nota.textContent).toMatch(/Va alla primaria/)
+  })
+
   it('«Conferma il passaggio» apre il dialogo che conta i bambini che usciranno, dice le date e il sì fa la POST giusta', async () => {
     render(<PassaggioClient />)
-    await screen.findByText('CognomeUno NomeUno')
+    await screen.findByText('NomeUno CognomeUno')
     await waitFor(() => expect((pulsanteConferma() as HTMLButtonElement).disabled).toBe(false))
     await screen.findByRole('button', { name: /Non hanno risposto\s*2/ })
     fireEvent.click(pulsanteConferma())
@@ -333,7 +355,7 @@ describe('PassaggioClient · le scritture', () => {
   it('un 409 ANTEPRIMA_VECCHIA dice di rifare l’anteprima, con il pulsante', async () => {
     s.conferma409 = 'ANTEPRIMA_VECCHIA'
     render(<PassaggioClient />)
-    await screen.findByText('CognomeUno NomeUno')
+    await screen.findByText('NomeUno CognomeUno')
     await screen.findByRole('button', { name: /Non hanno risposto\s*2/ })
     fireEvent.click(pulsanteConferma())
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: itPassaggio.dialogoSi }))
@@ -400,9 +422,9 @@ describe('PassaggioClient · confermato e annullato', () => {
 
   it('per chi è uscito c’è la «Conferma tardiva», che chiama la POST con alunno e classe', async () => {
     render(<PassaggioClient />)
-    await screen.findByText('CognomeDue NomeDue')
-    fireEvent.change(await screen.findByLabelText('Classe per la conferma tardiva di CognomeDue NomeDue'), { target: { value: S_A2 } })
-    const riga2 = screen.getByText('CognomeDue NomeDue').closest('li') as HTMLElement
+    await screen.findByText('NomeDue CognomeDue')
+    fireEvent.change(await screen.findByLabelText('Classe per la conferma tardiva di NomeDue CognomeDue'), { target: { value: S_A2 } })
+    const riga2 = screen.getByText('NomeDue CognomeDue').closest('li') as HTMLElement
     fireEvent.click(within(riga2).getByRole('button', { name: itPassaggio.azioneTardiva }))
     await waitFor(() => expect(chiamate('POST', '/passaggio/conferma-tardiva')).toHaveLength(1))
     expect(corpoDi(chiamate('POST', '/passaggio/conferma-tardiva')[0])).toEqual({ alunno_id: AL2, section_id: S_A2 })
@@ -413,8 +435,8 @@ describe('PassaggioClient · giro di correzione 1', () => {
   it('S1 · un «Esce» scelto a mano ha la tendina «Continua in questa classe», e la correzione manda `continua` con la classe', async () => {
     s.righe = [riga(AL1, 'esce', { sezione_a_id: null, eccezione: true }), ...RIGHE_BASE().slice(1)]
     render(<PassaggioClient />)
-    await screen.findByText('CognomeUno NomeUno')
-    const tendina = (await screen.findByLabelText('Classe nuova di CognomeUno NomeUno')) as HTMLSelectElement
+    await screen.findByText('NomeUno CognomeUno')
+    const tendina = (await screen.findByLabelText('Classe nuova di NomeUno CognomeUno')) as HTMLSelectElement
     expect(within(tendina).getByRole('option', { name: itPassaggio.correggiRiporta })).toBeTruthy()
     expect(within(tendina).queryByRole('option', { name: itPassaggio.correggiEsce })).toBeNull()
     fireEvent.change(tendina, { target: { value: S_A1 } })
@@ -424,7 +446,7 @@ describe('PassaggioClient · giro di correzione 1', () => {
 
   it('S1 · «Scarta l’anteprima» chiama l’annullo e ripropone di calcolarla', async () => {
     render(<PassaggioClient />)
-    await screen.findByText('CognomeUno NomeUno')
+    await screen.findByText('NomeUno CognomeUno')
     fireEvent.click(screen.getByRole('button', { name: itPassaggio.azioneScarta }))
     await waitFor(() => expect(chiamate('POST', '/passaggio/annulla')).toHaveLength(1))
     expect(await screen.findByText(itPassaggio.statoAnnullato)).toBeTruthy()
@@ -433,11 +455,11 @@ describe('PassaggioClient · giro di correzione 1', () => {
   it('S3 · la conferma tardiva non ha una classe predefinita: il pulsante resta spento finché non se ne sceglie una', async () => {
     s.passaggio = { id: PASS, stato: 'confermato', conteggi: {}, apribile_dal: '2027-07-01', inizio_anno_nuovo: '2027-09-15' }
     render(<PassaggioClient />)
-    await screen.findByText('CognomeDue NomeDue')
-    const riga2 = screen.getByText('CognomeDue NomeDue').closest('li') as HTMLElement
+    await screen.findByText('NomeDue CognomeDue')
+    const riga2 = screen.getByText('NomeDue CognomeDue').closest('li') as HTMLElement
     const pulsante = within(riga2).getByRole('button', { name: itPassaggio.azioneTardiva }) as HTMLButtonElement
     expect(pulsante.disabled).toBe(true)
-    fireEvent.change(await screen.findByLabelText('Classe per la conferma tardiva di CognomeDue NomeDue'), { target: { value: S_A2 } })
+    fireEvent.change(await screen.findByLabelText('Classe per la conferma tardiva di NomeDue CognomeDue'), { target: { value: S_A2 } })
     expect(pulsante.disabled).toBe(false)
   })
 
@@ -468,7 +490,7 @@ describe('PassaggioClient · giro di correzione 1', () => {
 
   it('S15 · la classe di PARTENZA viene dalla riga, non dalla scheda del bambino', async () => {
     render(<PassaggioClient />)
-    await screen.findByText('CognomeUno NomeUno')
+    await screen.findByText('NomeUno CognomeUno')
     // `nomiStudenti` dice «Sezione Vecchia» (la scheda, già spostata sulla classe nuova); la riga dice S_DA, «Sezione Partenza».
     expect(screen.queryAllByText('Da: Sezione Partenza').length).toBeGreaterThan(0)
     expect(screen.queryAllByText('Da: Sezione Vecchia')).toHaveLength(0)
@@ -480,7 +502,7 @@ describe('PassaggioClient · giro di correzione 3', () => {
     s.scopedSenzaVecchia = true
     s.righe = [...RIGHE_BASE(), RIGA_DA_DECIDERE()]
     render(<PassaggioClient />)
-    await screen.findByText('CognomeUno NomeUno')
+    await screen.findByText('NomeUno CognomeUno')
     expect(screen.queryAllByText('Da: Sezione Partenza').length).toBeGreaterThan(1)
     expect(screen.queryAllByText(/Da: nessuna classe/i)).toHaveLength(0)
   })
@@ -490,7 +512,7 @@ describe('PassaggioClient · giro 3 · NS8', () => {
   it('NS8 · il dialogo dell’annullo dice «dal» il giorno della conferma se è dopo l’inizio dell’anno', async () => {
     s.passaggio = { id: PASS, stato: 'confermato', conteggi: {}, apribile_dal: '2027-06-01', inizio_anno_nuovo: '2027-07-01', confermato_il: '2027-07-05' }
     render(<PassaggioClient />)
-    await screen.findByText('CognomeDue NomeDue')
+    await screen.findByText('NomeDue CognomeDue')
     fireEvent.click(screen.getByRole('button', { name: itPassaggio.azioneAnnulla }))
     const dialogo = await screen.findByText(/Le schede sono già passate sulla classe nuova dal/)
     expect(dialogo.textContent).toContain('5 luglio 2027')
@@ -502,7 +524,7 @@ describe('PassaggioClient · S14', () => {
   it('su un «ritirato» con la classe già proposta c’è il pulsante «Continua in questa classe», che conferma quella classe', async () => {
     s.righe = [riga(AL1, 'continua', { sezione_a_id: S_A1, avviso: 'ritirato_tendina' }), ...RIGHE_BASE().slice(1)]
     render(<PassaggioClient />)
-    await screen.findAllByText('CognomeUno NomeUno')
+    await screen.findAllByText('NomeUno CognomeUno')
     const blocco = (await screen.findAllByRole('button', { name: itPassaggio.correggiContinuaQui }))[0]
     fireEvent.click(blocco)
     await waitFor(() => expect(chiamate('PUT', '/passaggio/righe')).toHaveLength(1))

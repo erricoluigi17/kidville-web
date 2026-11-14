@@ -64,8 +64,12 @@ export const GET = withRoute('admin/search:GET', async (request: NextRequest) =>
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
 
-  const term = ripulisciTermineRicerca(q.data.q)
-  if (term.length < 2) {
+  // `*` è un jolly di PostgREST (come `%`): in una parola lo si toglie qui, senza toccare il ripulitore condiviso con altre due rotte.
+  const term = ripulisciTermineRicerca(q.data.q.replace(/\*/g, ' '))
+  // Le parole di UNA lettera si scartano se ce ne sono altre («Rossi M» cerca «Rossi»); se restano solo quelle («a b») non si cerca.
+  const tutteLeParole = term.split(' ').filter(Boolean)
+  const parole = (tutteLeParole.some((p) => p.length >= 2) ? tutteLeParole.filter((p) => p.length >= 2) : []).slice(0, 5)
+  if (term.length < 2 || parole.length === 0) {
     return NextResponse.json({ success: true, data: GRUPPI_VUOTI })
   }
 
@@ -82,7 +86,6 @@ export const GET = withRoute('admin/search:GET', async (request: NextRequest) =>
   const like = `%${term}%`
   // Le parole del nome e del cognome in QUALUNQUE ordine («Test INF Alunno1» come «Alunno1 Test INF»): ogni parola deve comparire
   // in nome, cognome o codice fiscale (un `or` per parola; più `or` fanno AND). Al più 5 parole: il resto non restringe più nulla.
-  const parole = term.split(' ').filter(Boolean).slice(0, 5)
   const perOgniParola = <T extends { or: (filtro: string) => T }>(query: T, colonne: string[]): T =>
     parole.reduce((q, p) => q.or(colonne.map((c) => `${c}.ilike.%${p}%`).join(',')), query)
   let ricercaSezioni = supabase

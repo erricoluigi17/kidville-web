@@ -20,7 +20,7 @@ export interface CruscottoSezione {
   /** I bambini IN LISTA nella sezione: frequenze vive (`in_attesa` o `iscritto`), cioè chi ha confermato o ha una domanda nuova.
    *  Non sono «iscritti»: l'iscritto vero sta in `completi`. (Il nome resta per i posti, che contano chi occupa un posto.) */
   iscritti: number
-  /** Fra quelli in lista, gli ISCRITTI A TUTTI GLI EFFETTI: stato `iscritto` = moduli completi + quota saldata. */
+  /** Fra quelli in lista, gli ISCRITTI A TUTTI GLI EFFETTI: stato `iscritto` = moduli completi + quota saldata, escluse le righe di `recupero` (il CHECK le lascia passare senza). */
   completi: number
 }
 

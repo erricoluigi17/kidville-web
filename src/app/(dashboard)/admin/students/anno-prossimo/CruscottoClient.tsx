@@ -218,7 +218,7 @@ function Cruscotto({ annoSedeId }: { annoSedeId: string }) {
                 <li key={s.section_id ?? 'senza'} className="flex justify-between gap-2 font-maven text-sm text-kidville-ink">
                   <span>{s.nome ?? t('sezioneSenza')}</span>
                   <span className="text-right text-kidville-sub">
-                    {t('sezioneInLista', { n: s.iscritti })}, {t('sezioneCompleti', { m: s.completi })}
+                    {t('sezioneRiga', { n: s.iscritti, m: s.completi })}
                   </span>
                 </li>
               ))}

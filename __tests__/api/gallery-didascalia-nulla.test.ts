@@ -22,6 +22,7 @@ vi.mock('@/lib/notifiche/config', () => ({ isNotificaAbilitata: async () => true
 // =============================================================================
 
 const h = vi.hoisted(() => ({
+  nome: vi.fn(async (...a: unknown[]) => (a.length < 0 ? ({} as never) : null)),
   auth: vi.fn(),
   sede: vi.fn(),
   rpc: vi.fn(),
@@ -35,7 +36,7 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.auth, requireStaff: h.auth }))
 vi.mock('@/lib/auth/scope', () => ({
   resolveScuolaScrittura: h.sede,
-  resolveScuoleAttive: vi.fn(), assertClasseNomeScrivibile: async () => null, assertSezioneInScope: async () => null,
+  resolveScuoleAttive: vi.fn(), assertClasseNomeScrivibile: h.nome, assertSezioneInScope: async () => null,
   scuoleDiUtente: vi.fn(),
 }))
 vi.mock('@/lib/gallery/tag-scope', () => ({ assertTagStudentsInScope: vi.fn(async () => null) }))
@@ -188,7 +189,10 @@ describe('l’avviso ai genitori: testo fisso, mai la didascalia né il nome del
   })
 
   it('anche sul percorso idempotente, e senza bambini (classi bersaglio) il testo è lo stesso', async () => {
-    await POST(post(corpo({ upload_id: UPLOAD, tag_students: [], target_classes: ['2 ANNI'] })))
+    const res = await POST(post(corpo({ upload_id: UPLOAD, tag_students: [], target_classes: ['2 ANNI'] })))
+    // il controllo della classe per nome è eseguito e una POST normale passa
+    expect(h.nome.mock.calls.map(c => c[2])).toEqual(['2 ANNI'])
+    expect(res.status).not.toBe(403)
     expect(h.genitoriClassi).toHaveBeenCalledWith(expect.anything(), SEDE, ['2 ANNI'])
     const params = h.notify.mock.calls[0][1]
     expect(params.titolo).toBe('Nuovi contenuti in galleria')

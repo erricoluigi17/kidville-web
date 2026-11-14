@@ -21,14 +21,21 @@ const ALU_ALTRO = 'c1111111-0000-4000-8000-000000000009'
 const FOTO_ANNO = '9e000000-0000-4000-8000-000000000001'
 const FOTO_ALTRUI = '9e000000-0000-4000-8000-000000000002'
 const FOTO_FUORI = '9e000000-0000-4000-8000-000000000003'
+const FOTO_NOTTE_UTC = '9e000000-0000-4000-8000-000000000005'
+const FOTO_COMPETENZA = '9e000000-0000-4000-8000-000000000006'
 const FOTO_BROADCAST = '9e000000-0000-4000-8000-000000000004'
 
 const h = vi.hoisted(() => ({
+  logEvento: vi.fn(),
   requireDocente: vi.fn(),
   db: {} as DBFinto,
   visibili: null as null | (() => { data: unknown; error: unknown }),
 }))
 
+vi.mock('@/lib/logging/logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/logging/logger')>()),
+  logEvento: h.logEvento,
+}))
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: vi.fn(), requireDocente: h.requireDocente, requireStaff: h.requireDocente }))
 vi.mock('@/lib/auth/scope', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/auth/scope')>()),
@@ -45,7 +52,7 @@ vi.mock('@/lib/supabase/server-client', async () => {
   return { createAdminClient: crea, createClient: crea }
 })
 
-import { GET, POST, PATCH } from '@/app/api/gallery/route'
+import { GET, POST, PATCH, DELETE } from '@/app/api/gallery/route'
 
 const dbBase = (): DBFinto => ({
   sections: [
@@ -62,9 +69,13 @@ const dbBase = (): DBFinto => ({
   ],
   frequenze: [{ id: 'f1', alunno_id: ALU_1, anno_id: ANNO_VECCHIO, section_id: SEC_VECCHIA, stato: 'iscritto' }],
   galleria_media_v2: [
-    { id: FOTO_ANNO, scuola_id: SEDE_A, uploaded_by: DOCENTE, tag_students: [ALU_1], is_broadcast: false, target_classes: null, created_at: '2026-03-10T10:00:00.000Z', eliminato_il: null },
+    { id: FOTO_ANNO, anno_id: ANNO_VECCHIO, giorno_competenza: null, scuola_id: SEDE_A, uploaded_by: DOCENTE, tag_students: [ALU_1], is_broadcast: false, target_classes: null, created_at: '2026-03-10T10:00:00.000Z', eliminato_il: null },
     { id: FOTO_ALTRUI, scuola_id: SEDE_A, uploaded_by: DOCENTE, tag_students: [ALU_ALTRO], is_broadcast: false, target_classes: null, created_at: '2026-03-10T10:00:00.000Z', eliminato_il: null },
     { id: FOTO_FUORI, scuola_id: SEDE_A, uploaded_by: DOCENTE, tag_students: [ALU_1], is_broadcast: false, target_classes: null, created_at: '2026-10-10T10:00:00.000Z', eliminato_il: null },
+    // R7 · il giorno di Roma: una foto delle 23:30 UTC del 31/08 è già del 1° settembre a Roma (fuori dall'anno vecchio), mentre
+    // una con `giorno_competenza` dentro l'anno ci sta anche se `created_at` è fuori.
+    { id: FOTO_NOTTE_UTC, anno_id: ANNO_NUOVO, giorno_competenza: null, scuola_id: SEDE_A, uploaded_by: DOCENTE, tag_students: [ALU_1], is_broadcast: false, target_classes: null, created_at: '2026-08-31T23:30:00.000Z', eliminato_il: null },
+    { id: FOTO_COMPETENZA, anno_id: ANNO_VECCHIO, giorno_competenza: '2026-05-05', scuola_id: SEDE_A, uploaded_by: DOCENTE, tag_students: [ALU_1], is_broadcast: false, target_classes: null, created_at: '2026-10-20T10:00:00.000Z', eliminato_il: null },
     { id: FOTO_BROADCAST, scuola_id: SEDE_A, uploaded_by: DOCENTE, tag_students: [], is_broadcast: true, target_classes: ['TEST Infanzia'], created_at: '2026-03-10T10:00:00.000Z', eliminato_il: null },
   ],
   utenti: [{ id: DOCENTE, nome: 'Doc', cognome: 'Prova', ruolo: 'educator', scuola_id: SEDE_A }],
@@ -90,7 +101,21 @@ describe('GET /api/gallery — classe di un anno passato, in sola lettura', () =
   it('🔴 LETTURA PERMESSA: solo le foto dei bambini di quell’anno, dentro le date dell’anno, senza broadcast', async () => {
     const res = await GET(lettura())
     expect(res.status).toBe(200)
-    expect(await ids(res)).toEqual([FOTO_ANNO])
+    expect(await ids(res)).toEqual([FOTO_ANNO, FOTO_COMPETENZA].sort())
+  })
+
+  it('🔴 R7 · la finestra è in GIORNI DI ROMA: la foto di mezzanotte UTC del 1° settembre è fuori, `giorno_competenza` dentro conta', async () => {
+    const trovate = await ids(await GET(lettura()))
+    expect(trovate).not.toContain(FOTO_NOTTE_UTC)
+    expect(trovate).toContain(FOTO_COMPETENZA)
+  })
+
+  it('🔴 R3 · senza le date dell’anno (anni_sede senza `fine`) la lettura è VUOTA e l’errore è loggato col solo codice', async () => {
+    h.db.anni_sede[1].fine = null
+    const res = await GET(lettura())
+    expect(res.status).toBe(200)
+    expect(await ids(res)).toEqual([])
+    expect(h.logEvento).toHaveBeenCalledWith('galleria', 'error', expect.objectContaining({ esito: 'periodo-anno-assente', error_code: 'PERIODO_ANNO_ASSENTE' }))
   })
 
   it('🔴 CLASSE NON ASSEGNATA: 403 «Sezione non assegnata al docente»', async () => {
@@ -139,5 +164,45 @@ describe('scritture della galleria su una classe in sola lettura', () => {
     }))
     expect(res.status).toBe(403)
     expect(await res.json()).toMatchObject({ codice: expect.stringMatching(/SEZIONE_(SOLA_LETTURA|IN_CHIUSURA)/) })
+  })
+})
+
+describe('R2 · foto già esistenti di un anno chiuso o in chiusura: il docente non le elimina né le modifica', () => {
+  const elimina = (id: string) => new NextRequest(`http://localhost/api/gallery?id=${id}`, { method: 'DELETE' })
+  const modifica = (id: string, extra: Record<string, unknown> = { caption: 'x' }) => new NextRequest('http://localhost/api/gallery', {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, ...extra }),
+  })
+  const codice = async (res: Response) => ((await res.json()) as { codice?: string }).codice
+
+  for (const [stato, atteso] of [['chiuso', 'SEZIONE_SOLA_LETTURA'], ['in_chiusura', 'SEZIONE_IN_CHIUSURA']] as const) {
+    it(`🔴 DELETE di una sua foto dell’anno ${stato}: 403 ${atteso} (anche se l’ha caricata lui)`, async () => {
+      h.db.anni_sede[1].stato = stato
+      const res = await DELETE(elimina(FOTO_ANNO))
+      expect(res.status).toBe(403)
+      expect(await codice(res)).toBe(atteso)
+      expect(h.logEvento).toHaveBeenCalledWith('auth', 'warn', expect.objectContaining({ tipo: 'riga-anno-sola-lettura', azione: 'gallery:DELETE', anno: ANNO_VECCHIO }))
+    })
+
+    it(`🔴 PATCH senza target_classes (didascalia, tag) dell’anno ${stato}: 403 ${atteso}`, async () => {
+      h.db.anni_sede[1].stato = stato
+      const res = await PATCH(modifica(FOTO_ANNO, { caption: 'nuova', tag_students: [ALU_1] }))
+      expect(res.status).toBe(403)
+      expect(await codice(res)).toBe(atteso)
+    })
+  }
+
+  it('l’anno si ricava dalla RIGA: una foto dell’anno in corso (anno_id nuovo) non è toccata dal controllo', async () => {
+    const res = await PATCH(modifica(FOTO_NOTTE_UTC))
+    expect(res.status).not.toBe(403)
+  })
+
+  it('🔴 la Direzione NON ha sola lettura: la stessa DELETE e la stessa PATCH superano il controllo', async () => {
+    h.db.anni_sede[1].stato = 'chiuso'
+    h.db.utenti[0].ruolo = 'admin'
+    h.requireDocente.mockResolvedValue({ user: { id: DOCENTE, role: 'admin', scuola_id: SEDE_A } })
+    const del = await DELETE(elimina(FOTO_ANNO))
+    const pat = await PATCH(modifica(FOTO_ANNO))
+    for (const res of [del, pat]) expect(res.status).not.toBe(403)
+    expect(h.logEvento).not.toHaveBeenCalledWith('auth', 'warn', expect.objectContaining({ tipo: 'riga-anno-sola-lettura' }))
   })
 })

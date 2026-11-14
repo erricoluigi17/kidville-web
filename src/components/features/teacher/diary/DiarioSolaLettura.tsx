@@ -42,43 +42,68 @@ export function DiarioSolaLettura({ sectionId, scuolaId, annoInizio, annoFine }:
     const [giorno, setGiorno] = useState(() => giornoIniziale(annoInizio, annoFine));
     const [bambini, setBambini] = useState<Bambino[]>([]);
     const [voci, setVoci] = useState<Voce[]>([]);
-    const [stato, setStato] = useState<'caricamento' | 'ok' | 'errore'>('caricamento');
+    const [statoBambini, setStatoBambini] = useState<'caricamento' | 'ok' | 'errore'>('caricamento');
+    const [statoVoci, setStatoVoci] = useState<'caricamento' | 'ok' | 'errore'>('caricamento');
     const max = annoFine && annoFine < oggiFiscaleISO() ? annoFine : oggiFiscaleISO();
 
+    const sede = scuolaId ? `&scuola_id=${scuolaId}` : '';
+
+    // I bambini dell'anno non cambiano con il giorno: si leggono una volta per classe, non a ogni cambio di data.
     useEffect(() => {
         let attivo = true;
-        const sede = scuolaId ? `&scuola_id=${scuolaId}` : '';
-        Promise.all([
-            fetch(`/api/diary/students?sectionId=${sectionId}&dellAnno=1${sede}`, { cache: 'no-store' }),
-            fetch(`/api/diary/entries?sectionId=${sectionId}&date=${giorno}&dellAnno=1${sede}`, { cache: 'no-store' }),
-        ])
-            .then(async ([rb, rv]) => {
-                if (!rb.ok || !rv.ok) {
-                    logClient({ livello: 'error', evento: 'fetch', messaggio: 'diario-classe-passata-rifiutato', route: '/teacher/diary', stato: !rb.ok ? rb.status : rv.status });
-                    if (attivo) setStato('errore');
+        fetch(`/api/diary/students?sectionId=${sectionId}&dellAnno=1${sede}`, { cache: 'no-store' })
+            .then(async (rb) => {
+                if (!rb.ok) {
+                    logClient({ livello: 'error', evento: 'fetch', messaggio: 'diario-classe-passata-bambini-rifiutati', route: '/teacher/diary', stato: rb.status });
+                    if (attivo) setStatoBambini('errore');
                     return;
                 }
                 const b = (await rb.json()) as Bambino[];
-                const v = (await rv.json()) as Voce[];
                 if (!attivo) return;
                 setBambini(Array.isArray(b) ? b : []);
+                setStatoBambini('ok');
+            })
+            .catch((err) => {
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `diario-classe-passata-bambini-fallito: ${nomeErrore(err)}`, route: '/teacher/diary' });
+                if (attivo) setStatoBambini('errore');
+            });
+        return () => { attivo = false; };
+    }, [sectionId, sede]);
+
+    // Le voci del giorno: una lettura per ogni giorno scelto.
+    useEffect(() => {
+        let attivo = true;
+        fetch(`/api/diary/entries?sectionId=${sectionId}&date=${giorno}&dellAnno=1${sede}`, { cache: 'no-store' })
+            .then(async (rv) => {
+                if (!rv.ok) {
+                    logClient({ livello: 'error', evento: 'fetch', messaggio: 'diario-classe-passata-rifiutato', route: '/teacher/diary', stato: rv.status });
+                    if (attivo) setStatoVoci('errore');
+                    return;
+                }
+                const v = (await rv.json()) as Voce[];
+                if (!attivo) return;
                 setVoci(Array.isArray(v) ? v : []);
-                setStato('ok');
+                setStatoVoci('ok');
             })
             .catch((err) => {
                 logClient({ livello: 'error', evento: 'fetch', messaggio: `diario-classe-passata-fallito: ${nomeErrore(err)}`, route: '/teacher/diary' });
-                if (attivo) setStato('errore');
+                if (attivo) setStatoVoci('errore');
             });
         return () => { attivo = false; };
-    }, [sectionId, scuolaId, giorno]);
+    }, [sectionId, sede, giorno]);
+
+    const stato: 'caricamento' | 'ok' | 'errore' = statoBambini === 'errore' || statoVoci === 'errore' ? 'errore' : statoBambini === 'ok' && statoVoci === 'ok' ? 'ok' : 'caricamento';
 
     const cambiaGiorno = (nuovo: string) => {
         if (!nuovo) return;
-        setStato('caricamento');
+        setStatoVoci('caricamento');
         setGiorno(nuovo);
     };
     const ora = (iso: string | null) => (iso ? intlDateTime(f.locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(iso)) : '');
     const etichetta = (tipo: string) => (TIPI_NOTI.includes(tipo) ? t(`slTipo_${tipo}`) : t('slTipoRoutine'));
+    // Le voci di bambini che NON sono nell'elenco dell'anno non si mostrano: se sono tutte così, l'elenco sarebbe vuoto.
+    const idsElenco = new Set(bambini.map((b) => b.id));
+    const vociVisibili = voci.filter((v) => idsElenco.has(v.alunno_id));
     const perBambino = (id: string) => voci.filter((v) => v.alunno_id === id).sort((a, b) => (a.orario_inizio ?? '').localeCompare(b.orario_inizio ?? ''));
 
     return (
@@ -99,8 +124,8 @@ export function DiarioSolaLettura({ sectionId, scuolaId, annoInizio, annoFine }:
             {stato === 'caricamento' && <p role="status" className="mt-4 font-maven text-sm text-kidville-sub">{t('inCaricamento')}</p>}
             {stato === 'errore' && <p role="alert" className="mt-4 rounded-xl border border-kidville-warn/30 bg-kidville-warn-soft p-3 font-maven text-sm text-kidville-ink">{t('slErrore')}</p>}
             {stato === 'ok' && bambini.length === 0 && <p className="mt-4 font-maven text-sm text-kidville-sub">{t('slNessunBambino')}</p>}
-            {stato === 'ok' && bambini.length > 0 && voci.length === 0 && <p className="mt-4 font-maven text-sm text-kidville-sub">{t('slNessunaVoce')}</p>}
-            {stato === 'ok' && voci.length > 0 && (
+            {stato === 'ok' && bambini.length > 0 && vociVisibili.length === 0 && <p className="mt-4 font-maven text-sm text-kidville-sub">{t('slNessunaVoce')}</p>}
+            {stato === 'ok' && vociVisibili.length > 0 && (
                 <ul className="mt-4 space-y-3">
                     {bambini.map((b) => {
                         const sue = perBambino(b.id);

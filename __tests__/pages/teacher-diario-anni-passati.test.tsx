@@ -78,8 +78,11 @@ describe('diario docente — classi degli anni passati (lotto 8)', () => {
         expect(screen.queryByTitle(itDiario.titlePresenti)).toBeNull();
         expect(screen.queryByTitle(itDiario.titleTutti)).toBeNull();
         expect(screen.queryByText(itDiario.registra)).toBeNull();
-        const bottoniDentro = document.querySelectorAll('[data-diario-sola-lettura] button');
-        expect(bottoniDentro.length).toBe(0);
+        // Non vacuo: il contenitore esiste, contiene il selettore del giorno, e NIENTE di scrivibile oltre a quello.
+        const vista = document.querySelector('[data-diario-sola-lettura]');
+        expect(vista).not.toBeNull();
+        expect(vista!.querySelector('input[type="date"]')).not.toBeNull();
+        expect(vista!.querySelectorAll('button, textarea, select, input:not([type="date"])').length).toBe(0);
     });
 
     it('la data è limitata all’anno della classe e l’area di tocco è da 44 px', async () => {
@@ -101,6 +104,31 @@ describe('diario docente — classi degli anni passati (lotto 8)', () => {
         expect(chiamate.filter((c) => c.metodo !== 'GET')).toEqual([]);
         // Il diario di OGGI per la classe passata non si carica (l'editor non nasce).
         expect(chiamate.some((c) => c.u.includes('/api/diary/entries') && !c.u.includes('dellAnno=1') && c.u.includes(SEC_VECCHIA))).toBe(false);
+    });
+
+    it('🔴 R6 · cambiare giorno rilegge SOLO le voci, non l’elenco dei bambini', async () => {
+        await apriVecchia();
+        const data = (await screen.findByLabelText(itDiario.slGiorno)) as HTMLInputElement;
+        await screen.findByText('Mario Rossi');
+        const conta = (frag: string) => fetchMock.mock.calls.filter(([u]) => String(u).includes(frag) && String(u).includes(SEC_VECCHIA)).length;
+        const bambiniPrima = conta('/api/diary/students');
+        const vociPrima = conta('/api/diary/entries');
+        fireEvent.change(data, { target: { value: '2000-03-11' } });
+        await waitFor(() => expect(conta('/api/diary/entries')).toBeGreaterThan(vociPrima));
+        expect(conta('/api/diary/students')).toBe(bambiniPrima);
+    });
+
+    it('🔴 R6 · voci solo di bambini fuori dall’elenco: messaggio «nessuna voce», non una lista vuota', async () => {
+        const base = fetchMock.getMockImplementation()!;
+        fetchMock.mockImplementation((url: string, init?: unknown) => {
+            if (String(url).includes('/api/diary/entries') && String(url).includes(SEC_VECCHIA)) {
+                return Promise.resolve({ ok: true, status: 200, json: async () => [{ id: 'e9', alunno_id: 'cccc1111-0000-4000-8000-000000000009', tipo_evento: 'pranzo', orario_inizio: '2000-03-10T11:30:00+01:00' }] });
+            }
+            return base(url, init);
+        });
+        await apriVecchia();
+        await screen.findByText(itDiario.slNessunaVoce);
+        expect(document.querySelector('[data-diario-sola-lettura] ul')).toBeNull();
     });
 
     it('la classe dell’anno in corso resta con l’editor: niente scritta di sola lettura', async () => {

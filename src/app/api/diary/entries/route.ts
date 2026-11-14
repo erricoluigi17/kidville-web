@@ -324,7 +324,12 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
                     return NextResponse.json([]);
                 }
                 const periodo = await periodoDellAnnoPassato(admin, q.data.sectionId);
-                if (periodo && (date < periodo.inizio || date > periodo.fine)) return NextResponse.json([]);
+                // Senza le date dell'anno la finestra non si può costruire: FAIL-CLOSED, elenco vuoto e riga d'errore.
+                if (!periodo) {
+                    logEvento('diary', 'error', { operazione: 'diary/entries:GET', esito: 'periodo-anno-assente', error_code: 'PERIODO_ANNO_ASSENTE', sezione: q.data.sectionId });
+                    return NextResponse.json([]);
+                }
+                if (date < periodo.inizio || date > periodo.fine) return NextResponse.json([]);
                 if (!delloAnno.length) return NextResponse.json([]);
                 idsStorici = delloAnno;
                 delloAnnoPassato = true;
@@ -351,7 +356,9 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
 
     const { data, error } = await admin
         .from('eventi_diario')
-        .select('*')
+        // Classe passata in sola lettura: SOLO le colonne che la vista mostra. `nota_libera`, `nota_bambino` e `dettagli` sono
+        // testo libero di minori e non escono (lotto 8, revisione).
+        .select((delloAnnoPassato ? 'id, alunno_id, tipo_evento, orario_inizio' : '*') as '*')
         .in('alunno_id', ids)
         .gte('orario_inizio', startOfDay)
         .lte('orario_inizio', endOfDay)

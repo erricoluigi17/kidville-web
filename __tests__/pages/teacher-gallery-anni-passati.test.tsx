@@ -106,6 +106,46 @@ describe('galleria docente — classi degli anni passati (lotto 8)', () => {
         expect(fetchMock.mock.calls.filter(([, init]) => ((init as { method?: string } | undefined)?.method ?? 'GET') !== 'GET')).toEqual([]);
     });
 
+    const MEDIA_NUOVA = { ...MEDIA, id: 'cccc3333-0000-4000-8000-0000000000ff', caption: 'Foto della classe nuova', created_at: '2026-10-10T10:00:00.000Z' };
+    const rispondi = (body: unknown) => Promise.resolve({ ok: true, status: 200, json: async () => body });
+
+    it('🔴 R1 · una risposta lenta della classe di prima NON si sovrappone alla classe passata appena scelta', async () => {
+        let sblocca: (r: unknown) => void = () => undefined;
+        const lenta = new Promise((res) => { sblocca = res; });
+        const base = fetchMock.getMockImplementation()!;
+        fetchMock.mockImplementation((url: string, init?: unknown) => {
+            const u = String(url);
+            if (u.includes('/api/gallery') && !u.includes('dellAnno=1')) return lenta;
+            return base(url, init);
+        });
+        await apriVecchia();
+        await screen.findByText('Gita al parco');
+        // arriva adesso la risposta tardiva della classe nuova
+        sblocca({ ok: true, status: 200, json: async () => ({ media: [MEDIA_NUOVA], total: 1 }) });
+        await new Promise((r) => setTimeout(r, 20));
+        expect(screen.queryByText('Foto della classe nuova')).toBeNull();
+        expect(screen.getByText('Gita al parco')).toBeInTheDocument();
+        expect(screen.queryByText(itServizi.galleryCarica)).toBeNull();
+    });
+
+    it('🔴 R1 · cambiando classe le foto di prima spariscono SUBITO (niente foto vecchie durante il caricamento)', async () => {
+        const base = fetchMock.getMockImplementation()!;
+        const lenta = new Promise(() => undefined);
+        fetchMock.mockImplementation((url: string, init?: unknown) => {
+            const u = String(url);
+            if (u.includes('/api/gallery') && u.includes('dellAnno=1')) return lenta;
+            if (u.includes('/api/gallery')) return rispondi({ media: [MEDIA_NUOVA], total: 1 });
+            return base(url, init);
+        });
+        render(<TeacherGalleryPage />);
+        await screen.findByText('Foto della classe nuova');
+        const sel = (await screen.findByLabelText(itServizi.gallerySezioneLabel)) as HTMLSelectElement;
+        fireEvent.change(sel, { target: { value: SEC_VECCHIA } });
+        await waitFor(() => expect(screen.queryByText('Foto della classe nuova')).toBeNull());
+        // e nessun controllo di scrittura mentre la classe passata carica
+        expect(screen.queryByText(itServizi.galleryCarica)).toBeNull();
+    });
+
     it('la classe dell’anno in corso resta scrivibile: «Carica» c’è, nessuna scritta', async () => {
         render(<TeacherGalleryPage />);
         await screen.findByRole('button', { name: new RegExp(itServizi.galleryCarica) });

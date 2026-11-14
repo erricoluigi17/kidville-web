@@ -199,6 +199,10 @@ function TeacherGalleryContent() {
     // (i loader sono guardati da `if (!sezione) return`).
     // La scelta ricorda la CHIAVE (l'uuid): la stessa classe esiste in più anni e i nomi si ripetono (lotto 8).
     const [chiaveSezione, setChiaveSezione] = useState<string>('');
+    // La classe che si sta guardando ADESSO, per scartare le risposte in volo di una classe lasciata (lotto 8, revisione): una GET
+    // lenta della classe A non deve sovrascrivere le foto della B, né accendere i comandi di scrittura sulla classe passata.
+    const chiaveCorrenteRef = useRef('');
+    useEffect(() => { chiaveCorrenteRef.current = chiaveSezione; }, [chiaveSezione]);
     const [sezioniDocente, setSezioniDocente] = useState<SezioneDocente[]>([]);
     const corrente = useMemo(() => sezioniDocente.find((s) => chiaveDi(s) === chiaveSezione), [sezioniDocente, chiaveSezione]);
     const sezione = corrente?.name ?? '';
@@ -210,6 +214,8 @@ function TeacherGalleryContent() {
     const loadMedia = useCallback(async (): Promise<boolean> => {
         // La GET galleria è gated: serve l'identità (sessione o header).
         if (!sezione || !teacherId) return false;
+        const richiesta = chiaveSezione;
+        const stantia = () => chiaveCorrenteRef.current !== richiesta;
         try {
             // Seleziona media per la sezione del docente
             const res = await fetch(`/api/gallery?classe=${encodeURIComponent(sezione)}${solaLettura && sectionId ? `&sectionId=${sectionId}&dellAnno=1` : ''}`, {
@@ -218,30 +224,32 @@ function TeacherGalleryContent() {
             if (!res.ok) throw Object.assign(new Error('gallery_read_rejected'), { stato: res.status });
             const data = await res.json();
             if (!Array.isArray(data?.media)) throw new Error('gallery_read_invalid');
-            if (!ambitoCorrente()) return false;
+            if (!ambitoCorrente() || stantia()) return false;
             setMedia(data.media);
             setReadError(false);
             return true;
         } catch (error) {
-            if (!ambitoCorrente()) return false;
+            if (!ambitoCorrente() || stantia()) return false;
             const stato = (error as { stato?: unknown })?.stato;
             logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-lettura-fallita', route: '/teacher/gallery', ...(typeof stato === 'number' ? { stato } : {}) });
             setReadError(true);
             return false;
         } finally {
-            setLoading(false);
+            // Una risposta della classe lasciata non spegne lo spinner di quella nuova.
+            if (!stantia()) setLoading(false);
         }
-    }, [sezione, sectionId, solaLettura, teacherId, ambitoCorrente]);
+    }, [chiaveSezione, sezione, sectionId, solaLettura, teacherId, ambitoCorrente]);
 
     const loadStudents = useCallback(async () => {
         // Una classe in sola lettura non etichetta nessuno: l'elenco dei bambini (coi consensi) non serve e non si chiede.
         if (!sezione || solaLettura) return;
+        const richiesta = chiaveSezione;
         try {
             const res = await fetch(`/api/diary/students?sezione=${sezione}`);
             if (res.ok) {
                 const data = await res.json();
                 if (Array.isArray(data)) {
-                    if (!ambitoCorrente()) return;
+                    if (!ambitoCorrente() || chiaveCorrenteRef.current !== richiesta) return;
                     setStudents(data.map((s: { id: string; nome: string; cognome: string; consenso_privacy?: boolean; parents?: Student['parents'] }) => ({
                         id: s.id,
                         nome: s.nome,
@@ -256,7 +264,7 @@ function TeacherGalleryContent() {
         } catch {
             logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-studenti-fallito', route: '/teacher/gallery' });
         }
-    }, [sezione, solaLettura, ambitoCorrente]);
+    }, [chiaveSezione, sezione, solaLettura, ambitoCorrente]);
 
     // Carica sezioni educatore (sezione reale, mai hardcoded — pattern locker)
     useEffect(() => {
@@ -472,6 +480,19 @@ function TeacherGalleryContent() {
         setStep('gallery');
         setUploadedFiles([]);
         setActiveFileIndex(0);
+    };
+
+    // Cambio di classe: lo stato della classe lasciata si azzera TUTTO, così per la durata della fetch non resta in vista
+    // l'elenco (con i comandi di scrittura) della classe di prima, e un caricamento a metà non passa alla classe nuova.
+    const cambiaClasse = (chiave: string) => {
+        if (chiave === chiaveSezione) return;
+        annullaCaricamento();
+        chiaveCorrenteRef.current = chiave;
+        setMedia([]);
+        setStudents([]);
+        setLoading(true);
+        setReadError(false);
+        setChiaveSezione(chiave);
     };
 
     const handleToggleTag = (studentId: string) => {
@@ -940,7 +961,7 @@ function TeacherGalleryContent() {
                         <select
                             id="section-select"
                             value={chiaveSezione}
-                            onChange={(e) => setChiaveSezione(e.target.value)}
+                            onChange={(e) => cambiaClasse(e.target.value)}
                             className="min-h-11 rounded-xl border border-kidville-line bg-white px-3 py-1.5 font-barlow text-sm font-bold uppercase text-kidville-green shadow-sm focus:outline-none focus:ring-1 focus:ring-kidville-green"
                         >
                             {sezioniDocente.map((sec) => (

@@ -1242,6 +1242,33 @@ export async function assertClasseNomeScrivibile(
 }
 
 /**
+ * Una riga che appartiene a un ANNO (la foto di galleria: `anno_id` + `scuola_id`) non si modifica né si elimina quando
+ * l'anno della sua sede è `in_chiusura` o `chiuso`: dopo la chiusura i docenti solo leggono (lotto 8). L'anno si ricava dalla
+ * RIGA, non dai bambini taggati. Direzione e segreteria (`vedeTutteLeClassi`) non hanno mai sola lettura qui: l'anno chiuso
+ * per loro lo difende il database. Riga senza anno (o DB senza lo schema dell'anno) = nessun controllo. Se lo stato non si
+ * legge si NEGA con 500 (fail-closed): mai una scrittura sull'ipotesi che l'anno sia aperto.
+ */
+export async function assertRigaDiAnnoScrivibile(
+  supabase: SupabaseClient,
+  user: AppUser,
+  riga: { anno_id?: string | null; scuola_id?: string | null } | null | undefined,
+  azione: string,
+): Promise<NextResponse | null> {
+  if (vedeTutteLeClassi(user)) return null
+  const annoId = riga?.anno_id
+  const scuolaId = riga?.scuola_id
+  if (!annoId || !scuolaId) return null
+  const st = await supabase.from('anni_sede').select('stato').eq('scuola_id', scuolaId).eq('anno_id', annoId).maybeSingle()
+  if (st.error) return scopeNonRisolto('scope-anno-riga-non-letto', st.error, { utente: user.id, azione })
+  const stato = (st.data as { stato?: string | null } | null)?.stato ?? null
+  if (stato === 'in_chiusura' || stato === 'chiuso') {
+    logEvento('auth', 'warn', { tipo: 'riga-anno-sola-lettura', azione, utente: user.id, sede: scuolaId, anno: annoId })
+    return rifiutoSolaLettura(stato)
+  }
+  return null
+}
+
+/**
  * Verifica batched che TUTTI gli alunni indicati appartengano alla sezione data.
  * Per gli handler che ricevono array di alunno_id dentro una sezione GIÀ asserita
  * con assertSezioneInScope (appello, note, destinatari registro, giudizi scrutinio):

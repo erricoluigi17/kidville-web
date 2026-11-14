@@ -1,5 +1,5 @@
 import { politicaNotificaServizio, politicaRettificaServizio } from '@/lib/storici/notifiche-servizi';
-import { oggiRoma, puoCorreggereStorico } from '@/lib/storici/retroattivita';
+import { intervalloGiornoRoma, oggiRoma, puoCorreggereStorico } from '@/lib/storici/retroattivita';
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
@@ -10,7 +10,7 @@ import { requireDocente, requireStaff } from '@/lib/auth/require-staff';
 import { agisceComeGenitore, eFamiglia } from '@/lib/auth/predicati-ruolo';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
-import { assertClasseNomeScrivibile, assertSezioneInScope, resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope';
+import { assertClasseNomeScrivibile, assertRigaDiAnnoScrivibile, assertSezioneInScope, resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope';
 import { docenteVedeLaSezione, periodoDellAnnoPassato, rosterDellAnnoDellaSezione } from '@/lib/sezioni/roster-anno';
 import { sezioniDiNome } from '@/lib/sezioni/risoluzione';
 import { parseBody, parseQuery } from '@/lib/validation/http';
@@ -459,7 +459,7 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
         let studentIds: string[] = [];
         // Classe di un anno PASSATO (lotto 8): solo le foto con i bambini di quell'anno taggati, dentro le date dell'anno. I broadcast
         // no: viaggiano per NOME di classe, e il nome si ripete fra gli anni.
-        let classePassata: { periodo: { inizio: string; fine: string } | null } | null = null;
+        let classePassata: { periodo: { inizio: string; fine: string } } | null = null;
         if (classe && !vistaSede && q.data.dellAnno === '1' && q.data.sectionId) {
             const fuoriScope = await assertSezioneInScope(supabase, auth.user, q.data.sectionId);
             if (fuoriScope) return fuoriScope;
@@ -469,7 +469,14 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
                     if (!puoCorreggereStorico(auth.user) && !(await docenteVedeLaSezione(supabase, auth.user.id, q.data.sectionId))) {
                         return NextResponse.json({ media: [], total: 0, limit, offset });
                     }
-                    classePassata = { periodo: await periodoDellAnnoPassato(supabase, q.data.sectionId) };
+                    const periodo = await periodoDellAnnoPassato(supabase, q.data.sectionId);
+                    // Senza le date dell'anno la finestra non si può costruire: FAIL-CLOSED. Una classe passata senza limiti di
+                    // data mostrerebbe le foto di altri anni; meglio un elenco vuoto, e una riga d'errore che dica perché.
+                    if (!periodo) {
+                        logEvento('galleria', 'error', { operazione: 'gallery:GET', esito: 'periodo-anno-assente', error_code: 'PERIODO_ANNO_ASSENTE', sezione: q.data.sectionId });
+                        return NextResponse.json({ media: [], total: 0, limit, offset });
+                    }
+                    classePassata = { periodo };
                     if (delloAnno.length > 0) {
                         const { data: alunniAnno, error: errAnno } = await supabase
                             .from('alunni').select('id').in('id', delloAnno).in('scuola_id', plessi);
@@ -584,11 +591,12 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
             // Insegnante: broadcast destinati alla classe o media con alunni della classe taggati.
             if (classe && classePassata) {
                 query = query.overlaps('tag_students', studentIds);
-                if (classePassata.periodo) {
-                    query = query
-                        .gte('created_at', `${classePassata.periodo.inizio}T00:00:00.000Z`)
-                        .lte('created_at', `${classePassata.periodo.fine}T23:59:59.999Z`);
-                }
+                // La finestra è dell'anno, in GIORNI DI ROMA: `giorno_competenza` quando c'è (il giorno scelto dall'operatore), altrimenti
+                // `created_at` con i confini di mezzanotte di Roma (non UTC: una foto delle 00:30 di Roma è del giorno dopo, in UTC).
+                const { inizio, fine } = classePassata.periodo;
+                const da = intervalloGiornoRoma(inizio).startOfDay;
+                const a = intervalloGiornoRoma(fine).endOfDay;
+                query = query.or(`and(giorno_competenza.gte.${inizio},giorno_competenza.lte.${fine}),and(giorno_competenza.is.null,created_at.gte.${da},created_at.lte.${a})`);
             } else if (classe) {
                 const classeSafe = classe.replace(/[(){}",\\]/g, '');
                 const broadcastCond = `and(is_broadcast.eq.true,target_classes.cs.{"${classeSafe}"})`;
@@ -1274,6 +1282,9 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
                 return NextResponse.json({ error: 'Media fuori dal tuo plesso' }, { status: 403 });
             }
         }
+        // Una foto di un anno `in_chiusura` o `chiuso` non la elimina un docente, neanche chi l'ha caricata (lotto 8).
+        const annoChiusoDelete = await assertRigaDiAnnoScrivibile(supabase, auth.user, media as { anno_id?: string | null; scuola_id?: string | null }, 'gallery:DELETE');
+        if (annoChiusoDelete) return annoChiusoDelete;
 
         // 2. Recupera il ruolo dell'utente da utenti
         const { data: utentiRecord, error: errRuolo } = await supabase
@@ -1586,6 +1597,9 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
             });
             return NextResponse.json({ error: 'Media fuori dal tuo plesso' }, { status: 403 });
         }
+        // Una foto di un anno `in_chiusura` o `chiuso` non la modifica un docente (didascalia, tag, classi): lotto 8.
+        const annoChiusoPatch = await assertRigaDiAnnoScrivibile(supabase, auth.user, media as { anno_id?: string | null; scuola_id?: string | null }, 'gallery:PATCH');
+        if (annoChiusoPatch) return annoChiusoPatch;
         // Da qui in giù `sedeMedia` è una sede REALE e accessibile a chi opera:
         // è LEI la sede del media, ed è con lei — non con `plessi` — che si
         // misurano i tag e il consenso (vedi il blocco più in basso).

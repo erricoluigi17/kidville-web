@@ -27,6 +27,8 @@ vi.mock('@/lib/logging/logger', async (importActual) => {
 })
 
 import { GET } from '@/app/api/iscrizione/info-anno/route'
+import { GET as ELENCO_SEDI } from '@/app/api/iscrizione/sedi/route'
+import { rateLimit } from '@/lib/security/rate-limit'
 
 const A_CORR = 'a2222222-2222-4222-8222-222222222222'
 const A_PROSS = 'a3333333-3333-4333-8333-333333333333'
@@ -165,5 +167,28 @@ describe('GET /api/iscrizione/info-anno', () => {
     const log = JSON.stringify(h.logEvento.mock.calls)
     expect(log).not.toContain('Delega al ritiro')
     expect(log).not.toContain('120')
+  })
+
+  // ── Revisione sempl-B · rilievi 2 e 3 ─────────────────────────────────────────────────────────────
+  it('rilievo 2 · la Demo risponde SOLO per uuid: con il suo id sì, ma non è nell\'elenco pubblico delle sedi', async () => {
+    expect((await chiedi(SEDE_DEMO, A_PROSS)).status).toBe(200)
+    const elenco = JSON.stringify(await (await ELENCO_SEDI(new NextRequest('http://localhost/api/iscrizione/sedi'))).json())
+    expect(elenco).not.toContain(SEDE_DEMO)
+    expect(elenco).toContain(SEDE_A)
+  })
+
+  it('rilievo 2 · una sede disattivata si comporta come in `/anni` e nel POST (che usano lo stesso predicato `tutte`): risponde', async () => {
+    // Scelta dichiarata: tutte e tre le porte pubbliche validano la sede contro `tutte` di `sediReali`, senza il filtro `attiva`.
+    h.db.scuole = [{ id: SEDE_A, attiva: false }]
+    expect((await chiedi(SEDE_A, A_PROSS)).status).toBe(200)
+  })
+
+  it('rilievo 3 · il tetto è per IP + sede e largo (120/10 min): una sede a un open day non resta senza quota', async () => {
+    await chiedi(SEDE_A, A_PROSS)
+    const [chiave, opzioni] = vi.mocked(rateLimit).mock.calls.at(-1) as [string, { limit: number; windowMs: number }]
+    expect(chiave).toContain(SEDE_A)
+    expect(chiave).toContain('ip')
+    expect(opzioni.limit).toBe(120)
+    expect(opzioni.windowMs).toBe(10 * 60 * 1000)
   })
 })

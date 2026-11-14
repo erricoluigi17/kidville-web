@@ -402,7 +402,8 @@ function DettaglioAnno({
   };
 
   // Il link con la sede dentro: il modulo si apre già sulla sede giusta (e funziona anche per la sede di prova, che
-  // dall'elenco pubblico è esclusa di proposito). L'indirizzo si calcola al click e al render nel browser, mai in SSR.
+  // dall'elenco pubblico è esclusa di proposito). `window.location.origin` nel render è innocuo: il componente è 'use client' e
+  // compare solo dopo che il calendario è arrivato da una fetch del browser, quindi non c'è mai un render lato server da far coincidere.
   const linkModulo = `${typeof window !== 'undefined' ? window.location.origin : ''}/iscrizione?scuola=${scuolaId}`;
   const copiaLink = async () => {
     try {

@@ -304,6 +304,23 @@ describe('R2 · foto già esistenti di un anno chiuso o in chiusura: il docente 
     expect(campi).toMatchObject({ codice: 'SEDE_RIGA_ASSENTE', anno: ANNO_VECCHIO, sede: null })
   })
 
+  it('🔴 DB della CI, senza lo schema dell’anno: la riga NON ha nemmeno la colonna `anno_id` ⇒ il docente elimina e modifica la sua foto (200)', async () => {
+    // Su PostgREST una colonna che non esiste non è «null»: è assente dalla riga. Il database della CI non ha mai avuto le migrazioni dell’anno.
+    for (const r of h.db.galleria_media_v2) if (r.id === FOTO_NOTTE_UTC) delete (r as Record<string, unknown>).anno_id
+    const pat = await PATCH(modifica(FOTO_NOTTE_UTC, { caption: 'senza schema anno' }))
+    const del = await DELETE(elimina(FOTO_NOTTE_UTC))
+    expect(pat.status).toBe(200)
+    expect(del.status).toBe(200)
+    expect(h.db.galleria_media_v2.find((r) => r.id === FOTO_NOTTE_UTC)?.eliminato_il).toBeTruthy()
+    expect(h.logEvento).not.toHaveBeenCalledWith('auth', 'error', expect.anything(), expect.anything())
+  })
+
+  it('🔴 DB della CI: `anni_sede` non esiste (42P01) ⇒ nessun controllo, il docente elimina la foto (200); un guasto vero (57014) resta 500', async () => {
+    h.errori = { anni_sede: { code: '42P01' } }
+    const res = await DELETE(elimina(FOTO_NOTTE_UTC))
+    expect(res.status).toBe(200)
+  })
+
   it('N4 · la Direzione, invece, passa anche con la foto senza `anno_id`', async () => {
     h.requireDocente.mockResolvedValue({ user: { id: DOCENTE, role: 'admin', scuola_id: SEDE_A } })
     h.db.utenti[0].ruolo = 'admin'

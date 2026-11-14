@@ -1248,7 +1248,8 @@ export async function assertClasseNomeScrivibile(
  * per loro lo difende il database. Per il docente è tutto fail-closed: riga senza `anno_id` → 403 `ANNO_RIGA_ASSENTE`, senza
  * `scuola_id` → 403 `SEDE_RIGA_ASSENTE`, entrambi con log `error` di soli uuid (in produzione oggi non ce ne sono: se compare, il
  * riempimento dell'anno si è rotto e va saputo); stato non leggibile → 500; stato non trovato (nessuna riga in `anni_sede` per quella
- * sede e quell'anno) → 500.
+ * sede e quell'anno) → 500. Schema dell'anno assente (DB non migrato: colonna `anno_id` mancante dalla riga, o `anni_sede`
+ * inesistente) → nessun controllo, come negli altri gate dell'anno.
  *
  * Il docente che non può correggere una foto senza anno è il fail-closed VOLUTO (se il trigger dell'anno lascia `anno_id` NULL):
  * la segreteria la sistema, e il log `error` rende il guasto visibile. Oggi in produzione le foto senza anno sono 0.
@@ -1260,6 +1261,10 @@ export async function assertRigaDiAnnoScrivibile(
   azione: string,
 ): Promise<NextResponse | null> {
   if (vedeTutteLeClassi(user)) return null
+  // Schema dell'anno non ancora presente (il database della CI): su PostgREST una colonna che non esiste NON è `null`, è assente
+  // dalla riga (`select('*')`). Non c'è un anno da difendere: nessun controllo, come fanno gli altri gate dell'anno. Una colonna
+  // che esiste e vale `null` (trigger rotto) resta invece fail-closed qui sotto.
+  if (riga && !('anno_id' in riga)) return null
   const annoId = riga?.anno_id
   const scuolaId = riga?.scuola_id
   if (!annoId) {
@@ -1277,6 +1282,7 @@ export async function assertRigaDiAnnoScrivibile(
     )
   }
   const st = await supabase.from('anni_sede').select('stato').eq('scuola_id', scuolaId).eq('anno_id', annoId).maybeSingle()
+  if (st.error && schemaAnnoIndietro(st.error)) return null // `anni_sede` non esiste ancora (DB non migrato): niente da difendere
   if (st.error) return scopeNonRisolto('scope-anno-riga-non-letto', st.error, { utente: user.id, azione })
   // L'anno della riga non ha uno stato nella sua sede: non si sa se è chiuso → fail-closed, come per l'errore di lettura.
   if (!st.data) return scopeNonRisolto('scope-anno-riga-senza-stato', 'anni_sede senza riga', { utente: user.id, azione, sede: scuolaId, anno: annoId })

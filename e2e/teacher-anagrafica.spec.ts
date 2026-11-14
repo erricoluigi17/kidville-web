@@ -28,14 +28,14 @@ test.describe('Docente — anagrafica dei propri alunni, in sola lettura', () =>
     await page.goto('/teacher/alunni')
     expect((await elenco).status()).toBe(200)
 
-    const aurora = page.getByRole('link', { name: /^Arcobaleno-E2E Aurora/ })
+    const aurora = page.getByRole('link', { name: /^Aurora Arcobaleno-E2E/ })
     await expect(aurora).toBeVisible({ timeout: PRIMO_CARICAMENTO })
-    await expect(page.getByRole('link', { name: /^Baleno-E2E Bruno/ })).toBeVisible()
+    await expect(page.getByRole('link', { name: /^Bruno Baleno-E2E/ })).toBeVisible()
     // Dopo una PRESENZA, l'assenza: Clara è di un'altra sezione, Emma di un'altra sede.
     await expect(page.getByRole('link', { name: /Cometa-E2E|Eclissi-E2E/ })).toHaveCount(0)
 
     await page.getByRole('searchbox').fill('aurora')
-    await expect(page.getByRole('link', { name: /^Baleno-E2E Bruno/ })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: /^Bruno Baleno-E2E/ })).toHaveCount(0)
     await expect(aurora).toBeVisible()
     // La ricerca per nome non finisce mai nell'indirizzo.
     expect(new URL(page.url()).searchParams.get('q')).toBeNull()
@@ -46,7 +46,7 @@ test.describe('Docente — anagrafica dei propri alunni, in sola lettura', () =>
     await expect(page).toHaveURL(new RegExp(`/teacher/alunni/${IDS.A1}$`), { timeout: PRIMO_CARICAMENTO })
     expect((await scheda).status()).toBe(200)
     const corpo = page.getByTestId('scheda-alunno')
-    await expect(corpo.getByRole('heading', { level: 1, name: 'Arcobaleno-E2E Aurora' })).toBeVisible({ timeout: PRIMO_CARICAMENTO })
+    await expect(corpo.getByRole('heading', { level: 1, name: 'Aurora Arcobaleno-E2E' })).toBeVisible({ timeout: PRIMO_CARICAMENTO })
     await expect(
       corpo.locator('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'),
     ).toHaveCount(0)

@@ -1015,7 +1015,7 @@ function TeacherGalleryContent() {
                             </div>
                             
                             {/* Griglia miniature per caricamento multiplo */}
-                            <div className="flex gap-2.5 mb-4 overflow-x-auto pb-2">
+                            <div className="relative flex gap-2.5 mb-4 overflow-x-auto pb-2">
                                 {uploadedFiles.map((f, i) => (
                                     <div 
                                         key={i} 

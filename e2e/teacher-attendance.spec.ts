@@ -87,17 +87,32 @@ test('appello: l\'ora d\'ingresso si corregge, e non cancella quella d\'uscita',
 
   // ── E ORA IL CASO CHE VALE IL TEST ──────────────────────────────────────────
   // Uscita anticipata: il bambino ha ENTRAMBI gli orari.
+  // Si aspetta la scrittura dell'uscita PRIMA di ricaricare, o il reload la perderebbe in volo.
+  const uscitaSalvata = page.waitForResponse(
+    (r) => r.url().includes('/api/attendance/daily') && r.request().method() !== 'GET' && r.ok(),
+    { timeout: AZIONE },
+  );
   await page.locator(`#btn-uscita-${IDS.A1}`).click();
+  await uscitaSalvata;
   const chipUscita = page.locator(`#btn-orario-uscita-${IDS.A1}`);
   await expect(chipUscita).toBeVisible({ timeout: AZIONE });
-  const uscitaPrima = (await chipUscita.textContent()) ?? '';
+  // ⚠️ Il chip compare PRIMA che l'ora d'uscita arrivi: per un attimo dice «Uscita: non registrato»,
+  // e poi può mostrare un'ora OTTIMISTICA (quella locale) che il server sostituisce con la sua.
+  // Fotografare il testo appena il chip è visibile, o appena ha un'ora, memorizzava un valore
+  // provvisorio e il confronto finale cadeva (2 rossi su 3 sulla CI di `main` del 2026-11-13).
+  // Si ricarica la pagina: dopo il reload l'ora è QUELLA DEL DATABASE, non può più cambiare, ed è
+  // il valore che il resto del test deve ritrovare identico.
+  await page.reload();
+  const chipUscitaDb = page.locator(`#btn-orario-uscita-${IDS.A1}`);
+  await expect(chipUscitaDb).toHaveText(/Uscita:\s*\d{2}:\d{2}/, { timeout: RENDER });
+  const uscitaPrima = (await chipUscitaDb.textContent()) ?? '';
 
   // Si corregge l'INGRESSO. L'uscita non deve muoversi di un minuto.
   await page.locator(`#btn-orario-entrata-${IDS.A1}`).click();
   await page.locator(`#input-orario-entrata-${IDS.A1}`).fill('08:35');
   await page.locator(`#btn-salva-orario-entrata-${IDS.A1}`).click();
   await expect(page.locator(`#btn-orario-entrata-${IDS.A1}`)).toContainText('08:35', { timeout: AZIONE });
-  await expect(chipUscita).toHaveText(uscitaPrima, { timeout: AZIONE });
+  await expect(chipUscitaDb).toHaveText(uscitaPrima, { timeout: AZIONE });
 
   // E resta vero dopo un giro dal database.
   await page.reload();

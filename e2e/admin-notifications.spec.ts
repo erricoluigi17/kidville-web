@@ -1,22 +1,16 @@
-import { test, expect } from '@playwright/test';
-import { STORAGE } from './fixtures';
+import { test } from '@playwright/test';
+import { conNotificaPropria, segnaTutteLette } from './helpers/notifica-propria';
+import { IDS, STORAGE } from './fixtures';
 
 // Centro notifiche admin: badge non lette, dropdown, "Segna tutte lette".
+// Stessa forma dello spec genitore: ogni tentativo ha la SUA notifica non letta e asserisce solo
+// su quella (vedi `helpers/notifica-propria.ts`), perché l'admin riceve notifiche anche da altri
+// test in parallelo (candidature, iscrizioni) e il seme è consumabile una volta sola.
 test.use({ storageState: STORAGE.admin });
 
 test('badge non lette → dropdown → segna tutte lette', async ({ page }) => {
-  await page.goto('/admin');
-
-  // La notifica E2E seedata è non letta: l'aria-label espone il conteggio.
-  const campanella = page.getByRole('button', { name: /Notifiche \(\d+ non lett/ });
-  await expect(campanella).toBeVisible({ timeout: 15_000 });
-
-  await campanella.click();
-  await expect(page.getByText('Notifica E2E')).toBeVisible();
-
-  await page.getByRole('button', { name: 'Segna tutte lette' }).click();
-
-  // Dopo il PATCH il conteggio sparisce: aria-label torna "Notifiche" secco.
-  await expect(page.getByRole('button', { name: 'Notifiche', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Segna tutte lette' })).toHaveCount(0);
+  await conNotificaPropria(IDS.ADMIN, async (db, id, titolo) => {
+    await page.goto('/admin');
+    await segnaTutteLette(page, db, id, titolo);
+  });
 });

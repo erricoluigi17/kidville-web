@@ -176,7 +176,7 @@ export function RegistroVigilanza() {
         ) : righe.length === 0 ? (
           <p className="p-2 font-maven text-sm text-kidville-sub">{t('registroVuoto')}</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="relative overflow-x-auto">
             <table className="w-full min-w-[720px] border-collapse">
               <thead>
                 <tr className="border-b border-kidville-line text-left">

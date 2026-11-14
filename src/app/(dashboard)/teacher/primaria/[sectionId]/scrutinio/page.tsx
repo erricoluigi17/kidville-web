@@ -488,7 +488,7 @@ export default function ScrutinioPage() {
         {msg && <p className={`font-maven text-sm mb-2 ${msg.includes('✓') ? 'text-kidville-success' : 'text-kidville-error'}`}>{msg}</p>}
 
         {scrutinio && alunni.length > 0 && (
-          <div className="overflow-x-auto">
+          <div className="relative overflow-x-auto">
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr>

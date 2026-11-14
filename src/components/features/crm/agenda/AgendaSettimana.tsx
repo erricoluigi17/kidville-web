@@ -229,7 +229,7 @@ export function AgendaSettimana({ scuolaId, onApriScheda }: { scuolaId: string; 
       ) : (
         <div
           aria-busy={inCaricamento}
-          className={`overflow-x-auto rounded-card border border-kidville-line bg-kidville-white ${inCaricamento ? 'pointer-events-none opacity-60' : ''}`}
+          className={`relative overflow-x-auto rounded-card border border-kidville-line bg-kidville-white ${inCaricamento ? 'pointer-events-none opacity-60' : ''}`}
         >
           <table className="w-full min-w-[40rem] border-collapse text-left">
             <caption className="sr-only">{t('settimanaDal', { dal: fmt.giornoMese(mezzogiorno(lunedi)), al: fmt.dataLunga(mezzogiorno(giorni[5])) })}</caption>

@@ -393,7 +393,7 @@ export function ElencoClassi() {
                 </button>
 
                 {aperta === s.id && (
-                  <div className="overflow-x-auto rounded-xl border border-kidville-line">
+                  <div className="relative overflow-x-auto rounded-xl border border-kidville-line">
                     <table className="w-full text-sm font-maven">
                       <thead>
                         <tr className="bg-kidville-cream text-left">

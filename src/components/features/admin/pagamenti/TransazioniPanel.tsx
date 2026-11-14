@@ -811,7 +811,7 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                 {!loadingRegistro && !registroErrore && !registroDisp && <p className="font-maven text-sm text-kidville-muted">{t('transRegistroNonDisp')}</p>}
                 {!loadingRegistro && !registroErrore && registroDisp && registro.length === 0 && <p className="font-maven text-sm text-kidville-muted">{t('transNessunaTransazione')}</p>}
                 {!loadingRegistro && !registroErrore && registroDisp && registro.length > 0 && (
-                    <div className="overflow-x-auto rounded-card border border-kidville-line">
+                    <div className="relative overflow-x-auto rounded-card border border-kidville-line">
                         <table className="w-full min-w-[820px] border-collapse">
                             <thead>
                                 <tr className="border-b border-kidville-line bg-kidville-cream/40 text-left">

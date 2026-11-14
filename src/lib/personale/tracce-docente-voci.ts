@@ -681,6 +681,25 @@ export const TRACCE_DOCENTE: VoceTraccia[] = [
     pesa: true,
     chiave: 'tracciaDocenteCrmAssenzeInserite',
   },
+  // Il 2026-11-14 (PR-B dopo il merge di #315, accesso dell'assistente): le chiavi
+  // dell'assistente in `crm_integrazioni` ricordano chi le ha create e chi le ha revocate.
+  // Due FK `blocca`, e PESANO per la stessa regola del CRM: la cancellazione non tocca le
+  // chiavi, e una voce che non pesasse farebbe dire «si cancella» a un'anteprima che
+  // Postgres smentirebbe.
+  {
+    tabella: 'crm_integrazioni',
+    colonna: 'creata_da',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmChiaviCreate',
+  },
+  {
+    tabella: 'crm_integrazioni',
+    colonna: 'revocata_da',
+    azioneFk: 'blocca',
+    pesa: true,
+    chiave: 'tracciaDocenteCrmChiaviRevocate',
+  },
 
   // ───────────────────────────────────────────────────────────────────────────
   // VOTAZIONI DEI RAPPRESENTANTI — censite il 2026-11-03 (PR-B dopo il merge di #284 e

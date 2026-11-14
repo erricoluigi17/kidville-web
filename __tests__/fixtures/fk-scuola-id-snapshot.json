@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/fk-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/fk-sede-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-07",
-  "generato_alle": "2026-11-07T23:45:17Z",
-  "sha256": "2558811902ecac7db4c612363d7f3da7a40789d695058eccbf6470858b3507cd",
+  "generato_il": "2026-11-14",
+  "generato_alle": "2026-11-14T09:52:18Z",
+  "sha256": "ed50994bc23f22ee995c603dfa42ed6b91d793573e274c3bdd832abb269f445e",
   "tabelle": [
     {
       "tabella": "admin_settings",
@@ -113,6 +113,12 @@
       "fk_verso": "schools"
     },
     {
+      "tabella": "crm_ai_richieste",
+      "not_null": true,
+      "fk_nome": "crm_ai_richieste_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
       "tabella": "crm_appuntamenti",
       "not_null": true,
       "fk_nome": "crm_appuntamenti_scuola_id_fkey",
@@ -149,9 +155,21 @@
       "fk_verso": "schools"
     },
     {
+      "tabella": "crm_integrazioni",
+      "not_null": true,
+      "fk_nome": "crm_integrazioni_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
       "tabella": "crm_schede",
       "not_null": true,
       "fk_nome": "crm_schede_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "crm_servizi_sede",
+      "not_null": true,
+      "fk_nome": "crm_servizi_sede_scuola_id_fkey",
       "fk_verso": "schools"
     },
     {

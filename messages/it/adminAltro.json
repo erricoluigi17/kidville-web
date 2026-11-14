@@ -814,6 +814,8 @@
   "tracciaDocenteCrmAssenze": "Assenze dall’agenda del CRM",
   "tracciaDocenteCrmAssenzeInserite": "Assenze inserite nell’agenda del CRM",
   "tracciaDocenteCrmSettimaneSalvate": "Settimane di disponibilità del CRM salvate",
+  "tracciaDocenteCrmChiaviCreate": "Chiavi dell’assistente del CRM create",
+  "tracciaDocenteCrmChiaviRevocate": "Chiavi dell’assistente del CRM revocate",
   "tracciaDocenteVotazioniAperte": "Votazioni dei rappresentanti aperte",
   "tracciaDocenteVotazioniModificate": "Votazioni dei rappresentanti modificate",
   "tracciaDocenteVotazioniCandidature": "Candidature alle votazioni dei rappresentanti",

@@ -120,7 +120,7 @@ describe('decisioneEliminazione — le due regole che si sbagliano', () => {
 })
 
 describe('TRACCE_DOCENTE — integrità del registro', () => {
-  it('copre tutte e 83 le chiavi esterne verso utenti(id), senza doppioni', () => {
+  it('copre tutte e 85 le chiavi esterne verso utenti(id), senza doppioni', () => {
     // 56 misurate da `pg_constraint` il 2026-09-20, 58 il 2026-09-25: le due nuove
     // sono `allegati_registro.eliminato_da` e `student_documents.eliminato_da`
     // (cestino del registro e del fascicolo, `SET NULL`). Il numero SALE perché il
@@ -132,19 +132,22 @@ describe('TRACCE_DOCENTE — integrità del registro', () => {
     // Il 01/11/2026 ne conta 78: `crm_disponibilita.utente_id` esce, entrano
     // `crm_settimane.utente_id` e `crm_settimane.aggiornata_da` (migrazione della #276).
     // Il 03/11/2026 ne conta 83: +5 delle votazioni dei rappresentanti (#284), tutte `blocca`.
-    expect(TRACCE_DOCENTE).toHaveLength(83)
+    // Il 14/11/2026 ne conta 85: +2 delle chiavi dell'assistente del CRM (#315),
+    // `crm_integrazioni.creata_da` e `revocata_da`, tutte e due `blocca`.
+    expect(TRACCE_DOCENTE).toHaveLength(85)
     const chiavi = TRACCE_DOCENTE.map((v) => `${v.tabella}.${v.colonna}`)
     expect(new Set(chiavi).size).toBe(chiavi.length)
   })
 
-  it('70 voci pesano, e ognuna porta la chiave con cui la si racconta', () => {
+  it('72 voci pesano, e ognuna porta la chiave con cui la si racconta', () => {
     // 44 fino al 2026-09-25; le due `eliminato_da` del cestino pesano come
     // `galleria_media_v2.eliminato_da` (vedi il registro).
     // +4 tracce storiche misurate e classificate dopo il rilascio del 15/10.
     // +14 del CRM il 31/10: bloccano la DELETE e la procedura non le sgancia.
     // +1 il 01/11: le settimane del CRM portano due utenti dove le disponibilità ne portavano uno.
     // +5 il 03/11: le votazioni dei rappresentanti, NO ACTION e mai sganciate dalla procedura.
-    expect(VOCI_CHE_PESANO).toHaveLength(70)
+    // +2 il 14/11: le chiavi dell'assistente del CRM (create/revocate), che la procedura non tocca.
+    expect(VOCI_CHE_PESANO).toHaveLength(72)
     for (const v of VOCI_CHE_PESANO) {
       expect(v.chiave, `${v.tabella}.${v.colonna} pesa ma non ha chiave`).toBeTruthy()
       expect(v.perche, `${v.tabella}.${v.colonna} pesa e non deve motivare`).toBeUndefined()

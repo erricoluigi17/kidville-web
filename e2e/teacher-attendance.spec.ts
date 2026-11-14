@@ -90,7 +90,15 @@ test('appello: l\'ora d\'ingresso si corregge, e non cancella quella d\'uscita',
   await page.locator(`#btn-uscita-${IDS.A1}`).click();
   const chipUscita = page.locator(`#btn-orario-uscita-${IDS.A1}`);
   await expect(chipUscita).toBeVisible({ timeout: AZIONE });
+  // ⚠️ Il chip compare PRIMA che l'ora d'uscita arrivi: per un attimo dice «Uscita: non registrato»,
+  // poi diventa «Uscita: HH:MM». Fotografare il testo appena il chip è visibile (come si faceva)
+  // memorizzava il segnaposto, e il confronto finale falliva con «atteso: non registrato, ricevuto:
+  // 01:17» — era il solo fallimento di questo test sulla CI di `main` del 2026-11-13 (2 rossi su 3).
+  // L'attesa è sulla PRESENZA dell'ora vera, non sull'assenza del segnaposto, così il valore di
+  // confronto non dipende da quanto la risposta del server tarda rispetto al render.
+  await expect(chipUscita).toHaveText(/Uscita:\s*\d{2}:\d{2}/, { timeout: AZIONE });
   const uscitaPrima = (await chipUscita.textContent()) ?? '';
+  expect(uscitaPrima, 'l\'ora d\'uscita è un orario vero').toMatch(/\d{2}:\d{2}/);
 
   // Si corregge l'INGRESSO. L'uscita non deve muoversi di un minuto.
   await page.locator(`#btn-orario-entrata-${IDS.A1}`).click();

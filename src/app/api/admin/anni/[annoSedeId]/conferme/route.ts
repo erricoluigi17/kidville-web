@@ -361,7 +361,11 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
   // incassato e sconto. Solo per le righe «da pagare» della pagina, con UNA lettura. Nessun dato personale: id, importi e stato.
   type Voce = { id: string; alunno_id: string | null; descrizione: string | null; importo: number; importo_pagato: number; sconto?: number | null; stato: string; tipo: string | null; parent_payment_id: string | null }
   const voci = new Map<string, Voce>()
-  const idVoci = [...new Set(nuove.filter((n) => !n.quota_saldata && n.quota_pagamento_id).map((n) => n.quota_pagamento_id as string))]
+  // Solo le frequenze VIVE: su una ritirata (o trasferita, uscita) con la quota pagata a metà «Incassa» non si offre; se serve, si incassa dalla Contabilità.
+  const daIncassare = nuove.filter((n) => VIVE.includes(n.stato) && !n.quota_saldata && n.quota_pagamento_id)
+  const idVoci = [...new Set(daIncassare.map((n) => n.quota_pagamento_id as string))]
+  // La lettura delle voci è un dato accessorio: se fallisce l'elenco resta, senza voci, e la pagina lo dice (`voci_non_lette`).
+  let vociNonLette = false
   if (idVoci.length > 0) {
     const colonneVoce = 'id, alunno_id, descrizione, importo, importo_pagato, stato, tipo, parent_payment_id'
     // Le voci sono della sede dell'anno: il filtro di sede c'è anche se gli uuid vengono già dalle frequenze di quell'anno.
@@ -373,10 +377,16 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
       if (letta.scuolaId) senzaSconto = senzaSconto.eq('scuola_id', letta.scuolaId)
       v = await senzaSconto
     }
-    if (v.error) return lettura(v.error, ctx)
+    if (v.error) {
+      vociNonLette = true
+      logErrore({ operazione: `${operazione}:voci` }, new Error(`conferme-voci:${v.error.code ?? 'senza-codice'}`))
+    }
     for (const x of (Array.isArray(v.data) ? v.data : []) as unknown as Voce[]) voci.set(x.id, x)
   }
-  const voceDi = (n: Nuova): Voce | null => (!n.quota_saldata && n.quota_pagamento_id ? (voci.get(n.quota_pagamento_id) ?? null) : null)
+  const voceDi = (n: Nuova): Voce | null => (VIVE.includes(n.stato) && !n.quota_saldata && n.quota_pagamento_id ? (voci.get(n.quota_pagamento_id) ?? null) : null)
+  // Una riga viva «da pagare» la cui voce non si trova (voce storica senza sede, o assente): una traccia, solo il numero.
+  const senzaVoce = vociNonLette ? 0 : daIncassare.filter((n) => !voci.has(n.quota_pagamento_id as string)).length
+  if (senzaVoce > 0) logEvento('anno-scolastico', 'warn', { tipo: 'conferme-voce-mancante', operazione, righe: senzaVoce })
 
   const righe =
     vista === 'nuove'
@@ -442,7 +452,7 @@ export const GET = withRoute('admin/anni/[annoSedeId]/conferme:GET', async (requ
   }
 
   logEvento('anno-scolastico', 'info', { tipo: 'conferme-lette', operazione, anno_sede_id: annoSedeId, utente: auth.user.id, n: righe.length })
-  return NextResponse.json({ success: true, data: { righe, pagina, limite, totale, posti } })
+  return NextResponse.json({ success: true, data: { righe, pagina, limite, totale, posti, voci_non_lette: vociNonLette } })
 })
 
 /** Il corpo: una conferma per volta, `strict`. `section_id` assente = la continuazione della sezione di partenza. */

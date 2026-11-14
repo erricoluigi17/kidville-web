@@ -216,10 +216,13 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                     </div>
 
                     {metodo === 'contanti' && (
-                        <p className="rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn-strong">
-                            {t('incContantiWarning')}
-                            <span className="mt-1 block text-[10px] opacity-80">{t('incContantiDettaglio')}</span>
-                        </p>
+                        <div className="rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn-strong">
+                            <p className="m-0">{t('incContantiWarning')}</p>
+                            <details className="mt-1 text-xs">
+                                <summary className="cursor-pointer font-bold">{t('incContantiPerche')}</summary>
+                                <span className="mt-1 block">{t('incContantiDettaglio')}</span>
+                            </details>
+                        </div>
                     )}
 
                     <div>

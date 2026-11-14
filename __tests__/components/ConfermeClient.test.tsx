@@ -77,6 +77,9 @@ const s = {
   nuoveVuote: false, // la vista «Nuove iscrizioni» risponde con l'elenco vuoto
   incassoRitardo: null as null | Promise<void>, // fa attendere la risposta della PUT di un modulo (per provare la casella disabilitata)
   moduliPut: 0, // quante PUT di moduli sono arrivate
+  vociNonLette: false, // la route non ha saputo leggere le voci da incassare
+  senzaVoce: false, // la riga «da pagare» non trova la sua voce
+  statoForzato: undefined as string | null | undefined, // lo stato della frequenza nuova che la route risponde (null = non viva)
 }
 const PAG_QUOTA = '44444444-4444-4444-8444-444444444444'
 const fetchMock = vi.fn()
@@ -87,9 +90,10 @@ const rigaConferma = () => ({
   moduli: { fatti: s.spunteConferma.length, richiesti: 2 }, quota: s.quota, quota_piu_voci: s.piuVoci, cambia_grado: false, grado_partenza: s.gradoPartenza,
   stato_frequenza: s.confermata || s.confermato ? (s.quota === 'saldata' && s.spunteConferma.length === 2 ? 'iscritto' : 'in_attesa') : null,
   nome: 'NomeProva', cognome: 'CognomeProva', classe: 'Sezione Prova',
-  quota_voce: s.quota === 'da_pagare'
+  quota_voce: s.quota === 'da_pagare' && !s.senzaVoce && !s.vociNonLette
     ? { id: PAG_QUOTA, alunno_id: AL1, descrizione: 'Iscrizione prova', importo: 100, importo_pagato: 0, sconto: 0, stato: 'da_pagare', tipo: 'singolo', parent_payment_id: null }
     : null,
+  ...(s.statoForzato !== undefined ? { stato_frequenza: s.statoForzato } : {}),
   ...(s.nonRinnovaMotivo !== undefined ? { conferma: 'no', non_rinnova_motivo: s.nonRinnovaMotivo, nuova_frequenza_id: null, stato_frequenza: null } : {}),
 })
 const rigaNuova = () => ({
@@ -139,7 +143,7 @@ function risposta(url: string, metodo: string, body: Record<string, unknown>): R
     // il filtro «non hanno risposto» dopo la conferma non ha più nessuno; «mancano moduli» dopo l'ultima spunta nemmeno
     if (filtro === 'non_risposto') return s.confermata ? ok({ righe: [], pagina: 1, limite: 100, totale: 0, posti: [] }) : ok({ righe: [{ ...rigaConferma(), conferma: 'non_risposto', nuova_frequenza_id: null }], pagina: 1, limite: 100, totale: 1, posti: [] })
     if (filtro === 'mancano_moduli') return s.elencoVuotoDopoSpunta ? ok({ righe: [], pagina: 1, limite: 100, totale: 0, posti: [] }) : ok({ righe: [rigaConferma()], pagina: 1, limite: 100, totale: 1, posti: [] })
-    return ok({ righe: [rigaConferma()], pagina: 1, limite: 100, totale: 1, posti: [] })
+    return ok({ righe: [rigaConferma()], pagina: 1, limite: 100, totale: 1, posti: [], voci_non_lette: s.vociNonLette })
   }
   if (url.includes('/moduli') && metodo === 'GET') {
     return ok({
@@ -184,6 +188,9 @@ beforeEach(() => {
   s.nuoveVuote = false
   s.incassoRitardo = null
   s.moduliPut = 0
+  s.vociNonLette = false
+  s.senzaVoce = false
+  s.statoForzato = undefined
   h.anno = { effettivo: { annoSedeId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', attivo: false, stato: 'iscrizioni_aperte' } }
   fetchMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
     const r = risposta(String(url), init?.method ?? 'GET', init?.body ? JSON.parse(init.body) : {})
@@ -876,5 +883,62 @@ describe('ConfermeClient — «Nuove iscrizioni» vuota', () => {
     fireEvent.click(screen.getByRole('button', { name: itConferme.vistaNuove }))
     expect(await screen.findByText(itConferme.vuotoNuoveDove)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: itConferme.vuotoNuoveLink }).getAttribute('href')).toBe('/admin/modulistica?tab=ricevuti')
+  })
+})
+
+
+describe('ConfermeClient — «Incassa» e «Lavora sul…»: solo dove serve, da toccare con un dito, senza rompere la tabella', () => {
+  it('su una frequenza non viva (stato assente o ritirato) «Incassa» non c’è, nemmeno con una voce in mano', async () => {
+    for (const stato of [null, 'ritirato', 'trasferito', 'uscito']) {
+      s.statoForzato = stato
+      const { unmount } = render(<ConfermeClient />)
+      await screen.findByText('NomeProva CognomeProva')
+      expect(screen.queryByRole('button', { name: itConferme.azioneIncassa })).toBeNull()
+      expect(screen.queryByText(itConferme.incassaVoceMancante)).toBeNull()
+      unmount()
+    }
+  })
+
+  it('«Incassa» ha un’area di tocco di almeno 44 px', async () => {
+    render(<ConfermeClient />)
+    await screen.findByText('NomeProva CognomeProva')
+    expect(screen.getByRole('button', { name: itConferme.azioneIncassa }).className).toMatch(/\bmin-h-11\b/)
+  })
+
+  it('«Lavora sul…» ha un’area di tocco di almeno 44 px', async () => {
+    h.anno = {
+      effettivo: { annoSedeId: ANNO, attivo: true, stato: 'corrente' },
+      anni: [{ annoId: 'anno-aperto', annoSedeId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', etichetta: '2027/28', etichettaBreve: '2027/28', annoInizio: 2027, attivo: false, stato: 'iscrizioni_aperte' }],
+      scegli: vi.fn(),
+    }
+    render(<ConfermeClient />)
+    expect((await screen.findByRole('button', { name: 'Lavora sul 2027/28' })).className).toMatch(/\bmin-h-11\b/)
+  })
+
+  it('la finestra d’incasso NON sta dentro la tabella (un <div> dentro <tbody> è HTML non valido)', async () => {
+    render(<ConfermeClient />)
+    await screen.findByText('NomeProva CognomeProva')
+    fireEvent.click(screen.getByRole('button', { name: itConferme.azioneIncassa }))
+    const finestra = await screen.findByRole('dialog')
+    expect(finestra.closest('table')).toBeNull()
+  })
+})
+
+describe('ConfermeClient — la voce da incassare non si legge o non c’è', () => {
+  it('lettura delle voci fallita: l’elenco resta, «Incassa» è spento e un avviso lo dice', async () => {
+    s.vociNonLette = true
+    render(<ConfermeClient />)
+    expect(await screen.findByText('NomeProva CognomeProva')).toBeInTheDocument()
+    const bottone = screen.getByRole('button', { name: itConferme.azioneIncassa }) as HTMLButtonElement
+    expect(bottone.disabled).toBe(true)
+    expect(screen.getByText(itConferme.incassaNonLetta)).toBeInTheDocument()
+  })
+
+  it('voce mancante su una riga viva: al posto del pulsante un testo che dice cosa fare', async () => {
+    s.senzaVoce = true
+    render(<ConfermeClient />)
+    await screen.findByText('NomeProva CognomeProva')
+    expect(screen.queryByRole('button', { name: itConferme.azioneIncassa })).toBeNull()
+    expect(within(rigaDi('NomeProva CognomeProva')).getByText(itConferme.incassaVoceMancante)).toBeInTheDocument()
   })
 })

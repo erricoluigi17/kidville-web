@@ -295,10 +295,13 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, sedeNo
                             )}
 
                             {!acconti && giaPagato && metodo === 'contanti' && (
-                                <p className="rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn-strong">
-                                    {t('quickWarnContanti')}
-                                    <span className="mt-1 block text-[10px] opacity-80">{t('quickWarnContantiDettaglio')}</span>
-                                </p>
+                                <div className="rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn-strong">
+                                    <p className="m-0">{t('quickWarnContanti')}</p>
+                                    <details className="mt-1 text-xs">
+                                        <summary className="cursor-pointer font-bold">{t('quickWarnContantiPerche')}</summary>
+                                        <span className="mt-1 block">{t('quickWarnContantiDettaglio')}</span>
+                                    </details>
+                                </div>
                             )}
 
                             {/* Il possibile duplicato BLOCCA la registrazione e chiede

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import itContabilita from '../../messages/it/adminContabilita.json';
+import enContabilita from '../../messages/en/adminContabilita.json';
 import { RegistraIncassoModal } from '@/components/features/admin/pagamenti/RegistraIncassoModal';
 
 vi.mock('@/components/features/admin/pagamenti/FatturaButton', () => ({
@@ -43,5 +45,21 @@ describe('RegistraIncassoModal — anti-errore', () => {
     const dettaglio = screen.getByText(/art\. 15 TUIR/);
     expect(dettaglio.textContent).not.toMatch(/\bAdE\b/);
     expect(dettaglio).not.toBe(principale);
+  });
+
+  it('il riferimento normativo sta in un dettaglio RICHIUDIBILE, chiuso di default', () => {
+    render(<RegistraIncassoModal pagamento={pagamento} userId="u1" onClose={() => {}} onDone={() => {}} />);
+    const dettaglio = screen.getByText(/art\. 15 TUIR/);
+    const blocco = dettaglio.closest('details') as HTMLDetailsElement | null;
+    expect(blocco).not.toBeNull();
+    expect(blocco!.open).toBe(false);
+    expect(blocco!.querySelector('summary')).not.toBeNull();
+  });
+
+  it.each([['it', itContabilita], ['en', enContabilita]])('(%s) l’avviso del modale degli acquisti non parla di «quota» e non ha riferimenti normativi in vista', (_l, m) => {
+    const principale = (m as unknown as Record<string, string>).quickWarnContanti;
+    expect(principale).not.toMatch(/quota|fee\b/i);
+    expect(principale).not.toMatch(/TUIR|Agenzia|Revenue|AdE/);
+    expect((m as unknown as Record<string, string>).incContantiWarning).not.toMatch(/TUIR|Agenzia|Revenue|AdE/);
   });
 });

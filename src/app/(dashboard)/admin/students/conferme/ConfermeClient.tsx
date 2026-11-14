@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useLocale, useTranslations } from 'next-intl';
@@ -76,7 +77,7 @@ type RigaApi = {
   classe: string | null;
 };
 type Posti = { fascia: string; iscritti: number; posti: number | null; oltre: boolean };
-type Elenco = { righe: RigaApi[]; totale: number; limite: number; posti: Posti[] };
+type Elenco = { righe: RigaApi[]; totale: number; limite: number; posti: Posti[]; vociNonLette: boolean };
 type Sezione = { id: string; name: string; school_type: string; scuola_id?: string };
 type ModuloApi = {
   modulo_id: string;
@@ -148,6 +149,7 @@ const estraiElenco = (r: Risposta): Elenco | null => {
     totale: typeof d.totale === 'number' ? d.totale : (d.righe as unknown[]).length,
     limite: typeof d.limite === 'number' && d.limite > 0 ? d.limite : 100,
     posti: Array.isArray(d.posti) ? (d.posti as Posti[]) : [],
+    vociNonLette: d.voci_non_lette === true,
   };
 };
 
@@ -198,7 +200,7 @@ export function ConfermeClient() {
         <p className="m-0 font-maven text-sm text-kidville-sub">{t('annoAttivo')}</p>
         {annoAperto && anno && (
           <div className="flex flex-wrap items-center gap-3">
-            <button type="button" className={btnPrimary} onClick={() => anno.scegli(annoAperto.annoId)}>
+            <button type="button" className={`${btnPrimary} min-h-11`} onClick={() => anno.scegli(annoAperto.annoId)}>
               {t('lavoraSu', { anno: annoAperto.etichettaBreve })}
             </button>
             <span className={hint}>{t('lavoraSuAiuto')}</span>
@@ -306,7 +308,7 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
     );
   }
 
-  const { righe, totale, limite, posti } = lettura.dati;
+  const { righe, totale, limite, posti, vociNonLette } = lettura.dati;
   const pagine = Math.max(1, Math.ceil(totale / limite));
   // Il filtro lo applica la route: `righe` è già la pagina giusta e `totale` è il totale del filtro.
   const visibili = righe;
@@ -396,6 +398,8 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
         <button type="button" className={secondario} onClick={rilegge}>{t('azioneAggiorna')}</button>
       </div>
 
+      {vociNonLette && <p role="status" className="mt-3 rounded-input border border-kidville-line bg-kidville-yellow-soft px-3 py-2 font-maven text-sm text-kidville-ink">{t('incassaNonLetta')}</p>}
+
       {esito && (
         <p
           role={esito.tipo === 'errore' ? 'alert' : 'status'}
@@ -445,6 +449,7 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
                   segnala={setEsito}
                   aggiorna={aggiorna}
                   esitoQuota={esitiQuota[r.frequenza_id] ?? (r.quota_piu_voci ? 'piu_voci' : null)}
+                  vociNonLette={vociNonLette}
                   ricordaQuota={ricordaQuota}
                 />
               ))}
@@ -478,6 +483,7 @@ function RigaConferma({
   segnala,
   aggiorna,
   esitoQuota,
+  vociNonLette,
   ricordaQuota,
 }: {
   r: RigaApi;
@@ -490,6 +496,7 @@ function RigaConferma({
   segnala: (e: Esito) => void;
   aggiorna: (frequenzaId: string, a: Aggiornamento) => void;
   esitoQuota: EsitoQuota | null;
+  vociNonLette: boolean;
   ricordaQuota: (frequenzaId: string, e: EsitoQuota | null) => void;
 }) {
   const t = useTranslations('annoConferme');
@@ -641,9 +648,15 @@ function RigaConferma({
         <td className="py-3 pr-3">{t('moduliFatti', { fatti, richiesti: r.moduli.richiesti })}</td>
         <td className="py-3 pr-3">
           <span className="block">{quotaTesto}</span>
-          {quota === 'da_pagare' && r.quota_voce && (
-            <button type="button" className={`${secondario} mt-2`} onClick={() => setIncassoAperto(true)}>{t('azioneIncassa')}</button>
-          )}
+          {/* «Incassa» solo su una frequenza VIVA (in attesa o iscritto): su una ritirata/trasferita/uscita la segreteria incassa dalla Contabilità. */}
+          {quota === 'da_pagare' && (statoFrequenza === 'in_attesa' || statoFrequenza === 'iscritto') &&
+            (r.quota_voce ? (
+              <button type="button" className={`${secondario} mt-2 min-h-11`} onClick={() => setIncassoAperto(true)}>{t('azioneIncassa')}</button>
+            ) : vociNonLette ? (
+              <button type="button" className={`${secondario} mt-2 min-h-11`} disabled>{t('azioneIncassa')}</button>
+            ) : (
+              <span className="mt-2 block text-xs text-kidville-sub">{t('incassaVoceMancante')}</span>
+            ))}
         </td>
         <td className="py-3">
           <div className="flex flex-col gap-2">
@@ -717,14 +730,17 @@ function RigaConferma({
           </div>
         </td>
       </tr>
-      {incassoAperto && r.quota_voce && (
-        <RegistraIncassoModal
-          pagamento={pagamentoDa(r.quota_voce, r)}
-          userId={userId}
-          onClose={() => { setIncassoAperto(false); rilegge(); }}
-          onDone={() => { setIncassoAperto(false); rilegge(); }}
-        />
-      )}
+      {/* Fuori dalla tabella (portale): un <div> dentro <tbody> non è HTML valido. */}
+      {incassoAperto && r.quota_voce &&
+        createPortal(
+          <RegistraIncassoModal
+            pagamento={pagamentoDa(r.quota_voce, r)}
+            userId={userId}
+            onClose={() => { setIncassoAperto(false); rilegge(); }}
+            onDone={() => { setIncassoAperto(false); rilegge(); }}
+          />,
+          document.body,
+        )}
       {moduliAperti && r.nuova_frequenza_id && (
         <tr id={`${id}-moduli`} className="border-b border-kidville-line">
           <td colSpan={5} className="pb-3">

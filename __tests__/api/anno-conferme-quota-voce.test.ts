@@ -29,6 +29,7 @@ const h = vi.hoisted(() => ({
   rpc: [] as Array<{ nome: string; args: Record<string, unknown> }>,
   esiti: {} as Record<string, { data: unknown; error: Err }>,
   log: [] as Array<{ fn: string; args: unknown[] }>,
+  errori: {} as Record<string, { code?: string; message?: string }>,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({
@@ -63,13 +64,14 @@ vi.mock('@/lib/supabase/server-client', () => ({
         return b
       }
       const risolvi = () => {
+        if (h.errori[tabella]) return { data: null, error: h.errori[tabella], count: 0 }
         let r = ((h.tabelle[tabella] ?? []) as Array<Record<string, unknown>>).filter((x) => cond.every((c) => c(x)))
         if (ordine) r = [...r].sort((a, c) => String(a[ordine as string]).localeCompare(String(c[ordine as string])))
         const totale = r.length
         if (range) r = r.slice(range[0], range[1] + 1)
         return { data: r, error: null, count: totale }
       }
-      b.maybeSingle = async () => ({ data: risolvi().data[0] ?? null, error: null })
+      b.maybeSingle = async () => ({ data: (risolvi().data as unknown[] | null)?.[0] ?? null, error: null })
       b.then = (ok: (v: unknown) => unknown) => Promise.resolve(risolvi()).then(ok)
       return b
     },
@@ -91,6 +93,7 @@ const leggi = (query = '') =>
   GET(new Request(`http://localhost/api/admin/anni/${NUOVO_A}/conferme${query}`) as never, { params: Promise.resolve({ annoSedeId: NUOVO_A }) } as never)
 
 type Riga = { frequenza_id: string; quota: string; quota_piu_voci: boolean; quota_voce?: Record<string, unknown> | null }
+const SEDE_ALTRA = '22222222-2222-4222-8222-222222222222'
 
 /** Quattro bambini che partono; il 1, il 2 e il 3 hanno la frequenza nuova. */
 function scenario(nuove: Array<Record<string, unknown>>) {
@@ -116,6 +119,7 @@ beforeEach(() => {
   }
   h.rpc = []
   h.log = []
+  h.errori = {}
   h.esiti = { anno_attivo: { data: ATTIVO_A, error: null }, anno_conta_posti: { data: [], error: null } }
 })
 
@@ -134,5 +138,50 @@ describe('GET conferme · voce della quota da incassare', () => {
     expect(per.get(F[1])?.quota).toBe('saldata')
     expect(per.get(F[1])?.quota_voce ?? null).toBeNull()
     expect(per.get(F[2])?.quota_voce ?? null).toBeNull()
+  })
+
+  const voce = (id: string, al: string, extra: Record<string, unknown> = {}) => ({
+    id, scuola_id: SEDE_A, alunno_id: al, descrizione: 'Iscrizione prova', importo: 100, importo_pagato: 40, sconto: 0, stato: 'parziale', tipo: 'singolo', parent_payment_id: null, ...extra,
+  })
+
+  it('una frequenza NON viva (ritirata) con la quota pagata solo in parte non porta la voce: «Incassa» non c’è', async () => {
+    scenario([nuova(0, { quota_pagamento_id: PAG, stato: 'ritirato' }), nuova(1, { quota_pagamento_id: PAG2 })])
+    h.tabelle.pagamenti = [voce(PAG, AL[0]), voce(PAG2, AL[1])]
+    h.esiti.anno_quota_piu_voci = { data: [], error: null }
+    const { data } = await (await leggi()).json()
+    const per = new Map((data.righe as Riga[]).map((r) => [r.frequenza_id, r]))
+    expect(per.get(F[0])?.quota_voce ?? null).toBeNull()
+    expect(per.get(F[1])?.quota_voce).toMatchObject({ id: PAG2 })
+  })
+
+  it('una voce di un’ALTRA sede non arriva mai alla riga (il filtro di sede lavora)', async () => {
+    scenario([nuova(0, { quota_pagamento_id: PAG })])
+    h.tabelle.pagamenti = [voce(PAG, AL[0], { scuola_id: SEDE_ALTRA })]
+    h.esiti.anno_quota_piu_voci = { data: [], error: null }
+    const { data } = await (await leggi()).json()
+    expect((data.righe as Riga[])[0].quota_voce ?? null).toBeNull()
+  })
+
+  it('se la lettura delle voci fallisce l’elenco resta (200), senza voci, con `voci_non_lette` e un log', async () => {
+    scenario([nuova(0, { quota_pagamento_id: PAG })])
+    h.tabelle.pagamenti = [voce(PAG, AL[0])]
+    h.errori.pagamenti = { code: '57014', message: 'timeout' }
+    h.esiti.anno_quota_piu_voci = { data: [], error: null }
+    const res = await leggi()
+    expect(res.status).toBe(200)
+    const { data } = await res.json()
+    expect(data.voci_non_lette).toBe(true)
+    expect((data.righe as Riga[]).length).toBeGreaterThan(0)
+    expect((data.righe as Riga[])[0].quota_voce ?? null).toBeNull()
+    expect(h.log.some((l) => l.fn === 'errore')).toBe(true)
+  })
+
+  it('una riga viva «da pagare» la cui voce non si trova lascia una traccia (solo conteggio, nessun dato)', async () => {
+    scenario([nuova(0, { quota_pagamento_id: PAG })])
+    h.tabelle.pagamenti = []
+    h.esiti.anno_quota_piu_voci = { data: [], error: null }
+    const { data } = await (await leggi()).json()
+    expect(data.voci_non_lette).toBe(false)
+    expect(h.log.some((l) => l.fn === 'evento' && JSON.stringify(l.args).includes('conferme-voce-mancante'))).toBe(true)
   })
 })

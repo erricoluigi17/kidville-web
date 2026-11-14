@@ -182,7 +182,7 @@ describe('S38 · la scheda dell\'alunno si apre da TASTIERA anche dalla tabella'
     const etichette = Array.from(container.querySelectorAll('[aria-label]')).map((e) => e.getAttribute('aria-label') ?? '');
     expect(etichette.length, 'nessuna etichetta da misurare').toBeGreaterThan(0);
     expect(etichette.filter((x) => x.includes('{'))).toEqual([]);
-    expect(etichette).toContain('Apri scheda di Verdi Anna');
+    expect(etichette).toContain('Apri scheda di Anna Verdi');
   });
 
   it('CONTROLLO POSITIVO: la sonda vede le righe dato e i loro focusabili', () => {
@@ -205,7 +205,7 @@ describe('S38 · la scheda dell\'alunno si apre da TASTIERA anche dalla tabella'
 
     // Il comando è un bottone NATIVO: è la piattaforma a garantire Invio e Spazio,
     // e `type="button"` gli impedisce di inviare il form che lo racchiude.
-    const primo = within(righeDato(container)[0]).getByRole('button', { name: /Verdi Anna/ });
+    const primo = within(righeDato(container)[0]).getByRole('button', { name: /Anna Verdi/ });
     expect(primo.tagName).toBe('BUTTON');
     expect(primo.getAttribute('type')).toBe('button');
 
@@ -217,7 +217,7 @@ describe('S38 · la scheda dell\'alunno si apre da TASTIERA anche dalla tabella'
   it('il nome accessibile del comando contiene il bambino, non «apri» e basta', () => {
     const { container } = renderTable();
     const riga = righeDato(container)[1];
-    const bottone = within(riga).getByRole('button', { name: /Bianchi Marco/ });
+    const bottone = within(riga).getByRole('button', { name: /Marco Bianchi/ });
     // WCAG 2.5.3 «Label in Name»: il testo VISIBILE (il cognome) deve essere
     // contenuto nel nome accessibile, altrimenti il comando vocale «clicca
     // Bianchi» non trova niente.
@@ -233,20 +233,20 @@ describe('S38 · la scheda dell\'alunno si apre da TASTIERA anche dalla tabella'
     expect(onStudentClick, 'la riga cliccabile è la comodità del mouse: non deve sparire').toHaveBeenCalledTimes(1);
 
     onStudentClick.mockClear();
-    fireEvent.click(within(riga).getByRole('button', { name: /Verdi Anna/ }));
+    fireEvent.click(within(riga).getByRole('button', { name: /Anna Verdi/ }));
     expect(onStudentClick, 'il click del bottone risale al <tr>: la scheda si aprirebbe due volte').toHaveBeenCalledTimes(1);
   });
 
   it('vale anche per i GENITORI e per lo STAFF (stessa tabella, stesse tre tab)', () => {
     const genitori = renderTable(GENITORI, 'adult');
     const rigaG = righeDato(genitori.container)[0];
-    fireEvent.click(within(rigaG).getByRole('button', { name: /Neri Carla/ }));
+    fireEvent.click(within(rigaG).getByRole('button', { name: /Carla Neri/ }));
     expect(genitori.onStudentClick).toHaveBeenCalledTimes(1);
     genitori.unmount();
 
     const staff = renderTable(STAFF, 'staff');
     const rigaS = righeDato(staff.container)[0];
-    fireEvent.click(within(rigaS).getByRole('button', { name: /Gialli Ada/ }));
+    fireEvent.click(within(rigaS).getByRole('button', { name: /Ada Gialli/ }));
     expect(staff.onStudentClick).toHaveBeenCalledTimes(1);
   });
 
@@ -282,12 +282,12 @@ describe('S38 · ogni casella di selezione dice DI CHI è', () => {
   it('la casella della riga porta il nome del bambino, in tabella E nella card', () => {
     const { container, onToggleSelect } = renderTable();
     const riga = righeDato(container)[0];
-    const inRiga = within(riga).getByRole('checkbox', { name: /Verdi Anna/ });
+    const inRiga = within(riga).getByRole('checkbox', { name: /Anna Verdi/ });
     fireEvent.click(inRiga);
     expect(onToggleSelect).toHaveBeenCalledWith('s1');
 
     const card = container.querySelector<HTMLElement>('.kv-admin-rowcard[data-student-id="s1"]')!;
-    expect(within(card).getByRole('checkbox', { name: /Verdi Anna/ })).toBeInTheDocument();
+    expect(within(card).getByRole('checkbox', { name: /Anna Verdi/ })).toBeInTheDocument();
   });
 
   it('la casella «seleziona tutto» dice cosa selezionerebbe', () => {
@@ -303,7 +303,7 @@ describe('S38 · ogni casella di selezione dice DI CHI è', () => {
     const testa = container.querySelector<HTMLElement>('thead')!;
     expect(within(testa).getByRole('checkbox', { name: /genitor/i })).toBeInTheDocument();
     const riga = righeDato(container)[0];
-    expect(within(riga).getByRole('checkbox', { name: /Neri Carla/ })).toBeInTheDocument();
+    expect(within(riga).getByRole('checkbox', { name: /Carla Neri/ })).toBeInTheDocument();
   });
 });
 

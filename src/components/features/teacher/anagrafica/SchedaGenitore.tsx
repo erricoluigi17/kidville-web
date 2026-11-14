@@ -29,7 +29,7 @@ export function SchedaGenitore({ genitore }: { genitore: GenitoreScheda }) {
   return (
     <article data-testid="scheda-genitore" className="rounded-input border border-kidville-line p-3">
       <h3 className="font-barlow text-sm font-extrabold uppercase text-kidville-ink">
-        {genitore.cognome} {genitore.nome}
+        {genitore.nome} {genitore.cognome}
       </h3>
       {sottotitolo && <p className="font-maven text-xs text-kidville-sub">{sottotitolo}</p>}
       <dl className="mt-1 divide-y divide-kidville-line">

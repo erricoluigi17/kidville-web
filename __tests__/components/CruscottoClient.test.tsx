@@ -121,9 +121,9 @@ describe('CruscottoClient — i numeri', () => {
     for (const titolo of [itCruscotto.risposteTitolo, itCruscotto.quoteTitolo, itCruscotto.incrocioTitolo, itCruscotto.confrontoTitolo]) {
       expect(screen.getByRole('heading', { name: titolo })).toBeInTheDocument()
     }
-    expect(screen.getByText(/12 iscritti su 10 posti/)).toBeInTheDocument()
+    expect(screen.getByText(/12 bambini in lista su 10 posti/)).toBeInTheDocument()
     expect(screen.getByText(itCruscotto.postiOltre)).toBeInTheDocument()
-    expect(screen.getByText(/3 iscritti, posti non indicati/)).toBeInTheDocument()
+    expect(screen.getByText(/3 bambini in lista, posti non indicati/)).toBeInTheDocument()
     expect(screen.getByText('Sezione Prova A')).toBeInTheDocument()
     expect(screen.getByText(itCruscotto.sezioneSenza)).toBeInTheDocument()
   })

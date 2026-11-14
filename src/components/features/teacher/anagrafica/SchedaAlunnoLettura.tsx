@@ -153,7 +153,7 @@ export function SchedaAlunnoLettura({ alunnoId }: { alunnoId: string }) {
         <PageHeaderCard
           eyebrow={t('anagraficaTitolo')}
           icon={IdCard}
-          title={`${scheda.cognome} ${scheda.nome}`}
+          title={`${scheda.nome} ${scheda.cognome}`}
           subtitle={scheda.sezione?.nome}
           badge={<Badge tone="neutral">{t('anagraficaSolaLettura')}</Badge>}
           compatta
@@ -318,7 +318,7 @@ function CorpoScheda({ s }: { s: SchedaAlunnoDocente }) {
           <ul role="list" className="divide-y divide-kidville-line">
             {s.delegati.map((d, i) => (
               <li key={`${i}-${d.cognome}-${d.nome}`} className="py-2.5">
-                <p className="font-maven text-sm font-semibold text-kidville-ink">{`${d.cognome} ${d.nome}`}</p>
+                <p className="font-maven text-sm font-semibold text-kidville-ink">{`${d.nome} ${d.cognome}`}</p>
                 {d.parentela && <p className="font-maven text-xs text-kidville-sub">{d.parentela}</p>}
               </li>
             ))}

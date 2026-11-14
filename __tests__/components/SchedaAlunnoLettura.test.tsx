@@ -76,7 +76,7 @@ const fetchMock = vi.fn()
 const apri = async (scheda: SchedaAlunnoDocente = SCHEDA) => {
   fetchMock.mockResolvedValue(risposta(200, scheda))
   const esito = render(<SchedaAlunnoLettura alunnoId={scheda.id} />)
-  await screen.findByRole('heading', { level: 1, name: `${scheda.cognome} ${scheda.nome}` })
+  await screen.findByRole('heading', { level: 1, name: `${scheda.nome} ${scheda.cognome}` })
   return esito
 }
 
@@ -207,7 +207,7 @@ describe('SchedaAlunnoLettura — pronta', () => {
   it('Famiglia: la madre referente porta «Madre · Referente principale» e il suo codice fiscale', async () => {
     await apri()
     const [mamma] = within(riquadro(T.anagraficaRiquadroFamiglia)).getAllByTestId('scheda-genitore')
-    expect(within(mamma).getByRole('heading', { level: 3 }).textContent).toBe('Arcobaleno-E2E Mamma')
+    expect(within(mamma).getByRole('heading', { level: 3 }).textContent).toBe('Mamma Arcobaleno-E2E')
     expect(sottotitolo(mamma)).toBe(`${T.anagraficaParentelaMadre} · ${T.anagraficaPrincipale}`)
     expect(valore(mamma, T.anagraficaCampoCodiceFiscale).textContent).toBe('TSTMMM80A41Z999Q')
   })
@@ -244,10 +244,10 @@ describe('SchedaAlunnoLettura — pronta', () => {
     expect(delegati.querySelector('dt')).toBeNull()
     const voci = within(within(delegati).getByRole('list')).getAllByRole('listitem')
     expect(voci).toHaveLength(2)
-    const nonna = within(voci[0]).getByText('Arcobaleno-E2E Nonna')
+    const nonna = within(voci[0]).getByText('Nonna Arcobaleno-E2E')
     expect(nonna.className).toContain('font-semibold')
     expect(within(voci[0]).getByText('Nonna').className).toContain('text-xs')
-    expect(voci[1].textContent).toBe('Arcobaleno-E2E Zio')
+    expect(voci[1].textContent).toBe('Zio Arcobaleno-E2E')
   })
 
   it('Delegati: nessuno ⇒ «Nessun delegato al ritiro»', async () => {
@@ -332,7 +332,7 @@ describe('SchedaAlunnoLettura — non si apre', () => {
     fetchMock.mockResolvedValueOnce(risposta(500, {})).mockResolvedValueOnce(risposta(200, SCHEDA))
     render(<SchedaAlunnoLettura alunnoId={ID} />)
     fireEvent.click(await screen.findByRole('button', { name: T.anagraficaRiprova }))
-    expect(await screen.findByRole('heading', { level: 1, name: 'Arcobaleno-E2E Aurora' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Aurora Arcobaleno-E2E' })).toBeTruthy()
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(h.logClient).toHaveBeenCalledWith(expect.objectContaining({ livello: 'warn', stato: 500 }))
   })
@@ -383,13 +383,13 @@ describe('SchedaAlunnoLettura — gare fra un bambino e l’altro', () => {
     )
     const { rerender } = render(<SchedaAlunnoLettura alunnoId={ID} />)
     rerender(<SchedaAlunnoLettura alunnoId={ID2} />)
-    expect(await screen.findByRole('heading', { level: 1, name: 'Baleno-E2E Bruno' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Bruno Baleno-E2E' })).toBeTruthy()
     await act(async () => {
       prima.risolvi(risposta(200, SCHEDA))
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(screen.queryByRole('heading', { level: 1, name: 'Arcobaleno-E2E Aurora' })).toBeNull()
-    expect(screen.getByRole('heading', { level: 1, name: 'Baleno-E2E Bruno' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { level: 1, name: 'Aurora Arcobaleno-E2E' })).toBeNull()
+    expect(screen.getByRole('heading', { level: 1, name: 'Bruno Baleno-E2E' })).toBeTruthy()
   })
 
   it('cambiando bambino, la scheda vecchia non resta a schermo mentre arriva quella nuova', async () => {
@@ -398,14 +398,14 @@ describe('SchedaAlunnoLettura — gare fra un bambino e l’altro', () => {
       url.endsWith(ID) ? Promise.resolve(risposta(200, SCHEDA)) : seconda.promessa,
     )
     const { rerender } = render(<SchedaAlunnoLettura alunnoId={ID} />)
-    await screen.findByRole('heading', { level: 1, name: 'Arcobaleno-E2E Aurora' })
+    await screen.findByRole('heading', { level: 1, name: 'Aurora Arcobaleno-E2E' })
     rerender(<SchedaAlunnoLettura alunnoId={ID2} />)
-    expect(screen.queryByRole('heading', { level: 1, name: 'Arcobaleno-E2E Aurora' })).toBeNull()
+    expect(screen.queryByRole('heading', { level: 1, name: 'Aurora Arcobaleno-E2E' })).toBeNull()
     expect(screen.queryByText('TSTRCB22D50Z999Q')).toBeNull()
     expect(screen.getByText(T.anagraficaCaricamento)).toBeTruthy()
     await act(async () => {
       seconda.risolvi(risposta(200, SCHEDA2))
     })
-    expect(await screen.findByRole('heading', { level: 1, name: 'Baleno-E2E Bruno' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Bruno Baleno-E2E' })).toBeTruthy()
   })
 })

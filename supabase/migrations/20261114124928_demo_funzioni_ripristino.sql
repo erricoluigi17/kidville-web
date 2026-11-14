@@ -89,21 +89,25 @@ DECLARE
   v_n integer;
   v_bloccate integer;
 BEGIN
+  -- Le chiavi esterne VERE, anche su più colonne: la condizione di aggancio nasce da tutte le coppie colonna/colonna referenziata, passando
+  -- dalla riga candidata (alias `r`, la tabella `p_tabella`, che ha sempre `id`).
   FOR r IN
-    SELECT quote_ident(ns.nspname) || '.' || quote_ident(cl.relname) AS da, a.attname AS colonna
+    SELECT quote_ident(ns.nspname) || '.' || quote_ident(cl.relname) AS da,
+           (SELECT string_agg(format('x.%I = r.%I', pa.attname, rf.attname), ' AND ' ORDER BY k.ord)
+              FROM unnest(c.conkey, c.confkey) WITH ORDINALITY k(a, rr, ord)
+              JOIN pg_attribute pa ON pa.attrelid = c.conrelid AND pa.attnum = k.a
+              JOIN pg_attribute rf ON rf.attrelid = c.confrelid AND rf.attnum = k.rr) AS cond
       FROM pg_constraint c
       JOIN pg_class cl ON cl.oid = c.conrelid
       JOIN pg_namespace ns ON ns.oid = cl.relnamespace
-      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
      WHERE c.contype = 'f'
        AND c.confrelid = ('public.' || quote_ident(p_tabella))::regclass
-       AND cardinality(c.conkey) = 1
        AND c.conrelid <> c.confrelid
        AND NOT (ns.nspname = 'public' AND cl.relname = ANY (p_ignora))
   LOOP
     EXECUTE format(
-      'UPDATE pg_temp._azzera_cand k SET bloccata = true WHERE k.tabella = %L AND NOT k.bloccata AND EXISTS (SELECT 1 FROM %s x WHERE x.%I = k.id)',
-      p_tabella, r.da, r.colonna);
+      'UPDATE pg_temp._azzera_cand k SET bloccata = true WHERE k.tabella = %L AND NOT k.bloccata AND EXISTS (SELECT 1 FROM public.%I r JOIN %s x ON %s WHERE r.id = k.id)',
+      p_tabella, p_tabella, r.da, r.cond);
   END LOOP;
   -- Una tabella che punta a sé stessa (una voce figlia di un'altra; un alunno a carico di un altro): la riga resta bloccata se la
   -- punta una riga che NON se ne va. Si ripete finché non cambia più niente.
@@ -132,20 +136,22 @@ DECLARE
   v_bloccate integer;
 BEGIN
   FOR r IN
-    SELECT quote_ident(ns.nspname) || '.' || quote_ident(cl.relname) AS da, a.attname AS colonna
+    SELECT quote_ident(ns.nspname) || '.' || quote_ident(cl.relname) AS da,
+           (SELECT string_agg(format('x.%I = f.%I', pa.attname, rf.attname), ' AND ' ORDER BY k.ord)
+              FROM unnest(c.conkey, c.confkey) WITH ORDINALITY k(a, rr, ord)
+              JOIN pg_attribute pa ON pa.attrelid = c.conrelid AND pa.attnum = k.a
+              JOIN pg_attribute rf ON rf.attrelid = c.confrelid AND rf.attnum = k.rr) AS cond
       FROM pg_constraint c
       JOIN pg_class cl ON cl.oid = c.conrelid
       JOIN pg_namespace ns ON ns.oid = cl.relnamespace
-      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
      WHERE c.contype = 'f'
        AND c.confrelid = ('public.' || quote_ident(p_figlia))::regclass
-       AND cardinality(c.conkey) = 1
        AND c.conrelid <> c.confrelid
        AND NOT (ns.nspname = 'public' AND cl.relname = ANY (p_ignora))
   LOOP
     EXECUTE format(
-      'UPDATE pg_temp._azzera_cand k SET bloccata = true WHERE k.tabella = %L AND NOT k.bloccata AND EXISTS (SELECT 1 FROM public.%I f JOIN %s x ON x.%I = f.id WHERE f.%I = k.id)',
-      p_tabella, p_figlia, r.da, r.colonna, p_colonna);
+      'UPDATE pg_temp._azzera_cand k SET bloccata = true WHERE k.tabella = %L AND NOT k.bloccata AND EXISTS (SELECT 1 FROM public.%I f JOIN %s x ON %s WHERE f.%I = k.id)',
+      p_tabella, p_figlia, r.da, r.cond, p_colonna);
   END LOOP;
   SELECT count(*) INTO v_bloccate FROM pg_temp._azzera_cand k WHERE k.tabella = p_tabella AND k.bloccata;
   RETURN v_bloccate;
@@ -257,7 +263,10 @@ DECLARE
   v_etichetta   text;
   v_n           integer;
   v_tot         integer;
-  v_prima       integer;
+  v_oblio       text;
+  v_differiti   text;
+  v_cascata     jsonb := '{}'::jsonb;
+  r_casc        record;
   v_tolte       integer;
   v_rimesse     integer;
   v_lasciate    integer;
@@ -310,8 +319,7 @@ BEGIN
   DROP TABLE IF EXISTS pg_temp._demo_stati;
   CREATE TEMP TABLE pg_temp._demo_stati (anno_sede_id uuid PRIMARY KEY, stato text, domande_aperte boolean) ON COMMIT DROP;
 
-  -- ── 1 · La fotografia è fatta come deve (sede già verificata dalla guardia) ──
-  -- ── 2 · La fotografia è fatta come deve ──────────────────────────────────────────────────
+  -- ── 1 · La fotografia è fatta come deve (la sede è già verificata dalla guardia) ──────────
   IF jsonb_typeof(v_foto) IS DISTINCT FROM 'object'
      OR jsonb_typeof(v_foto->'etichetta') IS DISTINCT FROM 'string' OR (v_foto->>'etichetta') !~ '^[0-9]{4}/[0-9]{2}$'
      OR (v_foto->>'stato') IS NULL OR (v_foto->>'stato') NOT IN ('in_preparazione', 'iscrizioni_aperte')
@@ -354,14 +362,23 @@ BEGIN
   SELECT count(*) INTO v_inv FROM public.anno_invarianti() WHERE righe <> 0;
   RAISE NOTICE 'prima: anno nuovo %, % invarianti non a zero', v_etichetta, v_inv;
 
-  -- ══ PASSO 4 e 4bis · i periodi di scrutinio nati dopo la partenza (2026/27 e 2025/26 nel pacchetto del 14/11) ═══════════════════
+  -- ══ PASSI 4 e 4bis · i periodi di scrutinio nati dopo la partenza (2026/27 e 2025/26 nel pacchetto del 14/11) ═══════════════════
   -- Prima dei gettoni, e con l'interruttore dell'oblio acceso solo per questo DELETE: se la guardia dell'anno chiuso fosse accesa, la
   -- cancellazione di un periodo di un anno chiuso la fermerebbe, e l'oblio lascia un gettone (creato adesso, dunque dopo la partenza)
   -- che il passo seguente toglie. Con la guardia spenta, come oggi, l'interruttore non cambia niente. Si rispegne subito.
+  v_oblio := current_setting('anno_chiuso.oblio', true);
   PERFORM set_config('anno_chiuso.oblio', 'on', true);
+  -- Ciò che la cancellazione si porta dietro A CASCATA (ON DELETE CASCADE dal periodo): gli scrutini e i giudizi descrittivi. Si contano
+  -- prima, perché finiscano nell'esito: la prova a secco li mostra, e si legge PRIMA del vero.
+  FOR r_casc IN SELECT t.nome FROM (VALUES ('scrutini'), ('scrutinio_giudizio_descrittivo')) t(nome) WHERE to_regclass('public.' || t.nome) IS NOT NULL LOOP
+    EXECUTE format('SELECT count(*) FROM public.%I x WHERE x.periodo_id IN (SELECT sp.id FROM public.scrutinio_periodi sp WHERE sp.scuola_id = $1 AND sp.creato_il >= $2)', r_casc.nome)
+      INTO v_n USING v_sede, v_dal;
+    v_cascata := v_cascata || jsonb_build_object(r_casc.nome, v_n);
+  END LOOP;
   DELETE FROM public.scrutinio_periodi sp WHERE sp.scuola_id = v_sede AND sp.creato_il >= v_dal;
   GET DIAGNOSTICS v_r_scrutinio = ROW_COUNT;
-  PERFORM set_config('anno_chiuso.oblio', 'off', true);
+  -- si rimette il valore che c'era (locale alla transazione: `true`), non un `off` a mano
+  PERFORM set_config('anno_chiuso.oblio', coalesce(v_oblio, 'off'), true);
 
   -- ══ PASSO 1 · il ripristino: gettoni, passaggi, cronologia, stati ═══════════════════════════════════════════════════════════
   -- Gli stati alla partenza: l'anno nuovo e l'anno di partenza dalla fotografia; gli altri anni nati prima dalla loro ultima riga di
@@ -550,7 +567,8 @@ BEGIN
   INSERT INTO pg_temp._azzera_cand (tabella, id, bloccata)
     SELECT 'pagamenti', pg.id,
            (coalesce(pg.importo_pagato, 0) <> 0 OR pg.data_incasso IS NOT NULL
-            OR pg.fattura_aruba_id IS NOT NULL OR pg.fattura_stato IS NOT NULL OR pg.fattura_emessa_il IS NOT NULL OR coalesce(pg.stato, 'da_pagare') <> 'da_pagare')
+            OR pg.fattura_aruba_id IS NOT NULL OR coalesce(pg.fattura_stato::text, 'non_richiesta') <> 'non_richiesta' OR pg.fattura_emessa_il IS NOT NULL OR coalesce(pg.stato, 'da_pagare') <> 'da_pagare')
+           -- `fattura_stato` è un enum NOT NULL con predefinito 'non_richiesta': «IS NOT NULL» sarebbe sempre vero e bloccherebbe ogni voce
       FROM public.pagamenti pg
      WHERE pg.scuola_id = v_sede AND pg.anno_id = v_anno_id AND pg.creato_il >= v_dal;
   PERFORM public.demo_i_blocca('pagamenti', ARRAY['pagamenti_quote', 'solleciti', 'fatture_coda'], 'parent_payment_id');
@@ -674,18 +692,24 @@ BEGIN
         v_cnt := jsonb_set(v_cnt, ARRAY[fk.nome], to_jsonb(greatest(coalesce((v_cnt->>fk.nome)::integer, 0), v_n)));
       END IF;
     END LOOP;
-    -- (b) le chiavi verso `anni_scolastici` (una colonna sola), con o senza `scuola_id` nella tabella
+    -- (b) le chiavi verso `anni_scolastici`, anche su più colonne: si legge la colonna che punta a `id`; una chiave composta che non punta a `id`
+    --     non si sa leggere, e in dubbio si ferma
     FOR fk IN
-      SELECT quote_ident(ns.nspname) || '.' || quote_ident(cl.relname) AS da, cl.relname AS nome, pa.attname AS colonna,
+      SELECT quote_ident(ns.nspname) || '.' || quote_ident(cl.relname) AS da, cl.relname AS nome,
+             (SELECT pa.attname FROM unnest(c.conkey, c.confkey) k(a, rr)
+                JOIN pg_attribute pa ON pa.attrelid = c.conrelid AND pa.attnum = k.a
+                JOIN pg_attribute rf ON rf.attrelid = c.confrelid AND rf.attnum = k.rr AND rf.attname = 'id' LIMIT 1) AS colonna,
              EXISTS (SELECT 1 FROM pg_attribute sc WHERE sc.attrelid = c.conrelid AND sc.attname = 'scuola_id' AND NOT sc.attisdropped) AS ha_sede
         FROM pg_constraint c
         JOIN pg_class cl ON cl.oid = c.conrelid
         JOIN pg_namespace ns ON ns.oid = cl.relnamespace
-        JOIN pg_attribute pa ON pa.attrelid = c.conrelid AND pa.attnum = c.conkey[1]
-       WHERE c.contype = 'f' AND cardinality(c.conkey) = 1 AND c.confrelid = 'public.anni_scolastici'::regclass
+       WHERE c.contype = 'f' AND c.confrelid = 'public.anni_scolastici'::regclass
          AND c.conrelid <> c.confrelid AND ns.nspname = 'public' AND cl.relname <> 'anni_sede'
        ORDER BY 2, 3
     LOOP
+      IF fk.colonna IS NULL THEN
+        RAISE EXCEPTION 'AZZERA_FK_NON_LETTA: la tabella % ha una chiave verso anni_scolastici che non punta a id: non si sa leggere, si ferma', fk.nome;
+      END IF;
       EXECUTE format('SELECT count(*) FROM %s x WHERE x.%I = ANY ($1)', fk.da, fk.colonna) INTO v_n USING v_solo;
       IF fk.ha_sede THEN
         EXECUTE format('SELECT count(*) FROM %s x WHERE x.scuola_id = $2 AND x.%I = ANY ($1) AND NOT (x.%I = ANY ($3))', fk.da, fk.colonna, fk.colonna)
@@ -849,7 +873,15 @@ BEGIN
 
   -- I vincoli differiti di `anni_sede` (continuità, domande solo con anno aperto, periodi senza sovrapposizioni) si giudicano di solito al COMMIT:
   -- li si giudica ORA, così la prova a secco (che si ferma prima del COMMIT) cade negli stessi casi dell'esecuzione vera.
-  SET CONSTRAINTS ALL IMMEDIATE;
+  -- (Solo i vincoli di `public` NATI differiti, e a fine controllo si rimettono differiti: la funzione va comunque chiamata da sola, non
+  -- dentro un blocco di più istruzioni dell'editor, che ne risentirebbe se aveva già cambiato la modalità dei vincoli.)
+  SELECT string_agg(DISTINCT quote_ident(co.conname), ', ') INTO v_differiti
+    FROM pg_constraint co JOIN pg_namespace ns ON ns.oid = co.connamespace
+   WHERE ns.nspname = 'public' AND co.condeferrable AND co.condeferred;
+  IF v_differiti IS NOT NULL THEN
+    EXECUTE 'SET CONSTRAINTS ' || v_differiti || ' IMMEDIATE';
+    EXECUTE 'SET CONSTRAINTS ' || v_differiti || ' DEFERRED';   -- giudicati ora, poi rimessi come erano nati
+  END IF;
 
   -- ── 9 · DOPO: i conti devono tornare, altrimenti il blocco si ferma e annulla tutto ────────
   SELECT count(*) INTO v_n FROM public.frequenze f WHERE f.anno_sede_id = v_anno AND f.creata_il >= v_dal;
@@ -930,6 +962,7 @@ BEGIN
     'a_secco', p_prova_a_secco,
     'ripristino', jsonb_build_object('gettoni', v_r_gettoni, 'passaggi', v_r_passaggi, 'cronologia', v_r_cron, 'anni_rimessi', v_r_stati),
     'righe_non_coperte', jsonb_build_object('incassi', v_r_incassi, 'sezioni_di_anni_nati_dopo', v_r_sezioni, 'scrutinio_periodi', v_r_scrutinio),
+    'cascata_dei_periodi_di_scrutinio', v_cascata,
     'incassi_su_voci_precedenti_non_toccati', v_r_incassi_fuori,
     'azzeramento', (SELECT coalesce(jsonb_agg(jsonb_build_object('voce', zx.voce, 'tolte', zx.tolte, 'rimesse', zx.rimesse, 'lasciate', zx.lasciate) ORDER BY zx.gruppo, zx.ordine), '[]'::jsonb)
                       FROM pg_temp._azzera_esito zx WHERE zx.gruppo = 0),

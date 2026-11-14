@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { SEDE_SIM, SEDE_VERA, UTENTE, inRollback, una, type BancoPassaggio } from '../helpers/passaggio-banco'
+import { SEDE_E2E, SEDE_SIM, SEDE_VERA, UTENTE, inRollback, una, type BancoPassaggio } from '../helpers/passaggio-banco'
 import { creaBancoAzzera } from '../helpers/banco-azzera'
 
 /**
@@ -41,6 +41,16 @@ beforeAll(async () => {
       RETURN NULL;
     END $$;
     CREATE TRIGGER incassi_ricalcola AFTER INSERT OR DELETE OR UPDATE ON public.incassi FOR EACH ROW EXECUTE FUNCTION public.trg_incassi_ricalcola_banco();
+  `)
+  // In produzione `pagamenti.fattura_stato` è un enum NOT NULL con predefinito 'non_richiesta': il banco condiviso lo ha nullabile, e con quello
+  // una condizione «fattura_stato IS NOT NULL» sembrerebbe giusta (revisione del 14/11, rilievo 1). Qui il banco è fedele alla produzione.
+  // (Stesso allineamento di `banco-azzera.ts` nel ramo integrato: idempotente, così regge con e senza.)
+  await b.db.exec(`
+    UPDATE public.pagamenti SET fattura_stato = 'non_richiesta' WHERE fattura_stato IS NULL;
+    ALTER TABLE public.pagamenti ALTER COLUMN fattura_stato SET DEFAULT 'non_richiesta', ALTER COLUMN fattura_stato SET NOT NULL;
+    -- ciò che un periodo di scrutinio si porta dietro a cascata (baseline.sql:5920 e :5992)
+    CREATE TABLE IF NOT EXISTS public.scrutini (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), periodo_id uuid NOT NULL REFERENCES public.scrutinio_periodi(id) ON DELETE CASCADE);
+    CREATE TABLE IF NOT EXISTS public.scrutinio_giudizio_descrittivo (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), periodo_id uuid NOT NULL REFERENCES public.scrutinio_periodi(id) ON DELETE CASCADE);
   `)
   await b.db.exec(MIGRAZIONE)
 
@@ -128,6 +138,9 @@ async function giro(): Promise<void> {
   await q(`SELECT public.passaggio_anteprima($1::uuid, $2::uuid, $3::uuid, $4::date)`, [annoVecchio, annoNuovo, UTENTE, oggi])
   // due periodi di scrutinio nati nel giro (uno dell'anno chiuso)
   await q(`INSERT INTO public.scrutinio_periodi (scuola_id, anno_scolastico) VALUES ($1, '2026/27'), ($1, '2025/26')`, [DEMO])
+  const periodo = await una<string>(b.db, `SELECT id FROM public.scrutinio_periodi WHERE scuola_id = $1 AND anno_scolastico = '2026/27' ORDER BY creato_il DESC, id LIMIT 1`, [DEMO])
+  await q(`INSERT INTO public.scrutini (periodo_id) VALUES ($1), ($1)`, [periodo])
+  await q(`INSERT INTO public.scrutinio_giudizio_descrittivo (periodo_id) VALUES ($1)`, [periodo])
   // il tempo passa: il tick prepara il 2028/29, che nasce con le sue sezioni
   await q(`SELECT public.anni_tick('2027-09-02'::date, $1::uuid)`, [DEMO])
   const nato = await una<string | null>(b.db,
@@ -223,6 +236,11 @@ describe('demo_* · un giro dell’agente 2 e il ripristino', () => {
       expect(esito.a_secco).toBe(false)
       expect(esito.righe_non_coperte).toEqual({ incassi: 1, sezioni_di_anni_nati_dopo: 1, scrutinio_periodi: 2 })
       expect(esito.ripristino.passaggi).toBe(1)
+      // la cascata dei periodi (scrutini e giudizi) è nell'esito, non solo nel documento
+      expect(esito.cascata_dei_periodi_di_scrutinio).toEqual({ scrutini: 2, scrutinio_giudizio_descrittivo: 1 })
+      expect(await conta(`SELECT 1 FROM public.scrutini`), 'gli scrutini a cascata sono andati').toBe(0)
+      // la riga di log del successo è stata scritta davvero (la scrittura sta in un EXCEPTION che altrimenti la inghiottirebbe)
+      expect(await conta(`SELECT 1 FROM public.app_log WHERE fingerprint = $1`, ['demo-ripristina:' + DEMO]), 'riga di log del ripristino').toBe(1)
       expect(JSON.stringify(esito)).not.toMatch(SENZA_NOME)
 
       // i conteggi della partenza
@@ -266,4 +284,92 @@ describe('demo_* · un giro dell’agente 2 e il ripristino', () => {
       expect(await conta(`SELECT 1 FROM public.incassi WHERE pagamento_id = $1`, [voce]), 'l’incasso c’è ancora').toBe(1)
     })
   })
+})
+
+describe('demo_* · le altre sedi, con righe nate DOPO la partenza', () => {
+  it('righe nate dopo la partenza in ogni altra sede restano, e un alunno condiviso con una sede vera resta fra le lasciate', async () => {
+    await inRollback(b.db, async () => {
+      const q = (sql: string, p: unknown[] = []) => b.db.query(sql, p)
+      const partenza = await adesso()
+      await q(`SELECT public.demo_fotografa($1::uuid)`, [DEMO])
+      await giro()
+
+      // In OGNI altra sede, righe di ogni tipo cancellato, tutte nate adesso (>= partenza): senza il filtro per sede la Demo le porterebbe via.
+      const sedi = [SEDE_E2E, SEDE_SIM, SEDE_VERA]
+      // anche gli anni delle altre sedi nascono adesso (dopo la partenza) e condividono gli anni globali con la Demo: non si toccano
+      for (const sede of sedi) await q(`SELECT public.anni_sede_crea_per_sede($1::uuid, DATE '2027-09-02')`, [sede])
+      // l'anno globale NATO dopo la partenza (il tick della Demo): le sezioni delle altre sedi che lo usano non si toccano
+      const nato = await una<string>(b.db,
+        `SELECT s.anno_id FROM public.anni_sede s WHERE s.scuola_id = $1 AND s.inizio > (SELECT inizio FROM public.anni_sede WHERE id = $2) LIMIT 1`, [DEMO, annoNuovo])
+      for (const sede of sedi) {
+        await q(`INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1, $2, 'Altrove nel futuro', 'infanzia', 'infanzia')`, [sede, nato])
+      }
+      for (const sede of sedi) {
+        const al = await una<string>(b.db, `INSERT INTO public.alunni (scuola_id, stato) VALUES ($1, 'iscritto') RETURNING id`, [sede])
+        await q(`INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1, $2, 'Altrove', 'infanzia', 'infanzia')`, [sede, annoNuovoId])
+        const voce = await una<string>(b.db,
+          `INSERT INTO public.pagamenti (alunno_id, scuola_id, descrizione, importo, scadenza, anno_id, stato, importo_pagato) VALUES ($1, $2, 'altrove', 5, DATE '2027-12-05', $3, 'pagato', 5) RETURNING id`,
+          [al, sede, annoNuovoId])
+        await q(`INSERT INTO public.incassi (pagamento_id, importo) VALUES ($1, 5)`, [voce])
+        await q(`INSERT INTO public.enrollment_submissions (scuola_id, anno_id, data, status) VALUES ($1, $2, '{}'::jsonb, 'pending')`, [sede, annoNuovoId])
+        const per = await una<string>(b.db, `INSERT INTO public.scrutinio_periodi (scuola_id, anno_scolastico) VALUES ($1, '2026/27') RETURNING id`, [sede])
+        await q(`INSERT INTO public.scrutini (periodo_id) VALUES ($1)`, [per])
+      }
+      // un alunno nato nella Demo dopo la partenza, ma con una voce di una sede vera: è condiviso, quindi NON si cancella
+      const condiviso = await una<string>(b.db, `INSERT INTO public.alunni (scuola_id, stato) VALUES ($1, 'iscritto') RETURNING id`, [DEMO])
+      await q(`INSERT INTO public.pagamenti (alunno_id, scuola_id, descrizione, importo, scadenza, anno_id) VALUES ($1, $2, 'voce di una sede vera', 7, DATE '2027-12-05', $3)`,
+        [condiviso, SEDE_VERA, annoNuovoId])
+
+      const altre = await altreSedi()
+      for (const sede of sedi) {
+        expect(await conta(`SELECT 1 FROM public.sections WHERE scuola_id = $1 AND name = 'Altrove'`, [sede]), 'riga nata dopo, nella sede ' + sede.slice(0, 8)).toBe(1)
+      }
+      const esito = JSON.parse(await una<string>(b.db, `SELECT public.demo_ripristina($1::uuid, $2::timestamptz, false)::text`, [DEMO, partenza]))
+      expect(await altreSedi(), 'le altre sedi, comprese le righe nate dopo la partenza, restano identiche').toEqual(altre)
+      expect(await conta(`SELECT 1 FROM public.sections WHERE name = 'Altrove'`)).toBe(3)
+      expect(await conta(`SELECT 1 FROM public.sections WHERE name = 'Altrove nel futuro'`)).toBe(3)
+      expect(await conta(`SELECT 1 FROM public.anni_scolastici WHERE id = $1`, [nato]), 'l’anno globale condiviso con altre sedi resta').toBe(1)
+      expect(await conta(`SELECT 1 FROM public.scrutini s JOIN public.scrutinio_periodi p ON p.id = s.periodo_id WHERE p.scuola_id <> $1`, [DEMO]), 'scrutini a cascata delle altre sedi').toBe(3)
+      expect(await conta(`SELECT 1 FROM public.alunni WHERE id = $1`, [condiviso]), 'l’alunno condiviso c’è ancora').toBe(1)
+      expect(esito.lasciate).toContainEqual({ tabella: 'alunni', id: condiviso })
+    })
+  }, 240_000)
+})
+
+describe('demo_* · gli aiuti, la fotografia passata a mano', () => {
+  it('le chiavi esterne composte bloccano: una tabella che punta a (id, scuola_id) tiene ferma la riga', async () => {
+    await inRollback(b.db, async () => {
+      const q = (sql: string, p: unknown[] = []) => b.db.query(sql, p)
+      await q(`ALTER TABLE public.sections ADD CONSTRAINT zz_sections_id_scuola UNIQUE (id, scuola_id)`)
+      await q(`CREATE TABLE public.zz_figlia_composta (scuola_id uuid NOT NULL, section_id uuid NOT NULL, FOREIGN KEY (section_id, scuola_id) REFERENCES public.sections (id, scuola_id))`)
+      const tenuta = await una<string>(b.db, `INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1, $2, 'Tenuta', 'infanzia', 'infanzia') RETURNING id`, [DEMO, annoNuovoId])
+      const libera = await una<string>(b.db, `INSERT INTO public.sections (scuola_id, anno_id, name, school_type, fascia) VALUES ($1, $2, 'Libera', 'infanzia', 'infanzia') RETURNING id`, [DEMO, annoNuovoId])
+      await q(`INSERT INTO public.zz_figlia_composta (scuola_id, section_id) VALUES ($1, $2)`, [DEMO, tenuta])
+      await q(`CREATE TEMP TABLE pg_temp._azzera_cand (tabella text NOT NULL, id uuid NOT NULL, bloccata boolean NOT NULL DEFAULT false, PRIMARY KEY (tabella, id))`)
+      await q(`INSERT INTO pg_temp._azzera_cand (tabella, id) VALUES ('sections', $1), ('sections', $2)`, [tenuta, libera])
+      await q(`SELECT public.demo_i_blocca('sections', ARRAY[]::text[])`)
+      const r = (await q(`SELECT id, bloccata FROM pg_temp._azzera_cand ORDER BY id`)).rows as { id: string; bloccata: boolean }[]
+      expect(r.find((x) => x.id === tenuta)?.bloccata, 'la riga tenuta da una chiave composta è bloccata').toBe(true)
+      expect(r.find((x) => x.id === libera)?.bloccata, 'quella libera no').toBe(false)
+    })
+  })
+
+  it('la fotografia passata come JSON (senza quella salvata) ripristina e il controllo torna tutto ok', async () => {
+    await inRollback(b.db, async () => {
+      const foto = JSON.parse(await una<string>(b.db, `SELECT public.demo_fotografa($1::uuid)::text`, [DEMO]))
+      const partenza = foto.scattata_il as string
+      await b.db.query(`DELETE FROM public.demo_fotografie WHERE scuola_id = $1`, [DEMO])
+      await b.db.exec('SAVEPOINT m')
+      await expect(b.db.query(`SELECT public.demo_ripristina($1::uuid, $2::timestamptz, false)`, [DEMO, partenza])).rejects.toThrow(/DEMO_FOTOGRAFIA_MANCANTE/)
+      await b.db.exec('ROLLBACK TO SAVEPOINT m')
+      await b.db.exec('RELEASE SAVEPOINT m')
+      await giro()
+      const esito = JSON.parse(await una<string>(b.db,
+        `SELECT public.demo_ripristina($1::uuid, $2::timestamptz, false, $3::jsonb)::text`, [DEMO, partenza, JSON.stringify(foto)]))
+      expect(esito.a_secco).toBe(false)
+      const controllo = (await b.db.query<{ ok: boolean }>(`SELECT * FROM public.demo_controllo($1::uuid, $2::timestamptz, $3::jsonb)`, [DEMO, partenza, JSON.stringify(foto)])).rows
+      expect(controllo.length).toBeGreaterThanOrEqual(16)
+      expect(controllo.filter((r) => !r.ok)).toEqual([])
+    })
+  }, 240_000)
 })

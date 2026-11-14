@@ -113,42 +113,62 @@ function formatDataLunga(iso: string, locale: string): string {
 
 // ─── Navigatore Data ─────────────────────────────────────────────────────────
 
-function DateNavigator({ date, onChange }: { date: string; onChange: (d: string) => void }) {
+/** Il giorno da cui parte l'appello: oggi, salvo una classe di sola lettura il cui anno è già finito (allora l'ultimo giorno dell'anno). */
+export function giornoDiPartenza(solaLettura: boolean, annoFine?: string | null): string {
+    const oggi = toISO(new Date());
+    return solaLettura && annoFine && annoFine < oggi ? annoFine : oggi;
+}
+
+/** L'ultimo giorno che si può guardare: oggi, o la fine dell'anno della classe se è già passata. */
+function ultimoGiornoVisibile(annoFine?: string | null): string {
+    const oggi = toISO(new Date());
+    return annoFine && annoFine < oggi ? annoFine : oggi;
+}
+
+function DateNavigator({ date, onChange, solaLettura = false, primoGiorno, ultimoGiorno }: { date: string; onChange: (d: string) => void; solaLettura?: boolean; primoGiorno?: string; ultimoGiorno?: string }) {
     const t = useTranslations('teacherPresenze');
     const todayISO = toISO(new Date());
-    const isToday = date === todayISO;
+    const tetto = solaLettura && ultimoGiorno ? ultimoGiorno : todayISO;
+    const isToday = date >= tetto;
+    // In sola lettura il cambio di giorno è l'UNICA cosa che si fa: aree di tocco da 44 px (h-11 w-11) e una scritta che dice cos'è.
+    const lato = solaLettura ? 'h-11 w-11' : 'h-8 w-8';
 
     return (
         <div className="flex items-center gap-2 rounded-2xl border border-kidville-line bg-kidville-cream p-2">
             <button
                 onClick={() => onChange(addDays(date, -1))}
-                className="flex h-8 w-8 items-center justify-center rounded-xl bg-white text-kidville-green shadow-sm"
+                disabled={solaLettura && !!primoGiorno && date <= primoGiorno}
+                className={`flex ${lato} items-center justify-center rounded-xl bg-white text-kidville-green shadow-sm disabled:cursor-not-allowed disabled:opacity-30`}
                 title={t('giornoPrecedente')}
+                aria-label={t('giornoPrecedente')}
             >
                 <ChevronLeft size={15} />
             </button>
 
-            <div className="relative flex flex-1 items-center gap-2 rounded-xl bg-white px-3 py-1.5 shadow-sm">
+            <div className={`relative flex flex-1 items-center gap-2 rounded-xl bg-white px-3 shadow-sm ${solaLettura ? 'min-h-11' : 'py-1.5'}`}>
                 <Calendar size={14} className="flex-shrink-0 text-kidville-green" />
                 <input
                     type="date"
                     value={date}
-                    max={todayISO}
+                    min={solaLettura ? primoGiorno : undefined}
+                    max={tetto}
+                    aria-label={solaLettura ? t('giornoDaVedere') : undefined}
                     onChange={(e) => e.target.value && onChange(e.target.value)}
-                    className="w-full cursor-pointer bg-transparent font-maven text-sm font-medium text-kidville-ink outline-none"
+                    className={`w-full cursor-pointer bg-transparent font-maven text-sm font-medium text-kidville-ink outline-none ${solaLettura ? 'h-11' : ''}`}
                 />
             </div>
 
             <button
                 onClick={() => !isToday && onChange(addDays(date, 1))}
                 disabled={isToday}
-                className="flex h-8 w-8 items-center justify-center rounded-xl bg-white text-kidville-green shadow-sm disabled:cursor-not-allowed disabled:opacity-30"
+                className={`flex ${lato} items-center justify-center rounded-xl bg-white text-kidville-green shadow-sm disabled:cursor-not-allowed disabled:opacity-30`}
                 title={t('giornoSuccessivo')}
+                aria-label={t('giornoSuccessivo')}
             >
                 <ChevronRight size={15} />
             </button>
 
-            {!isToday && (
+            {!isToday && !solaLettura && (
                 <button
                     onClick={() => onChange(todayISO)}
                     className="rounded-pill bg-kidville-green px-3 py-1.5 font-maven text-xs font-semibold text-kidville-yellow"
@@ -235,13 +255,15 @@ function Summary({
  * docente, che sul tablet ha la colonna larga: una riga sola da 900 px allontanerebbe il nome dai
  * bottoni di presenza. La segreteria (`admin/appello`) ha un suo impaginato e non la passa.
  */
-export function AppelloGiornaliero({ sezione, sectionId, griglia = false }: { sezione: string; sectionId?: string; griglia?: boolean }) {
+export function AppelloGiornaliero({ sezione, sectionId, griglia = false, solaLettura = false, inAttesaDeiBambini = false, annoInizio, annoFine }: { sezione: string; sectionId?: string; griglia?: boolean; solaLettura?: boolean; inAttesaDeiBambini?: boolean; annoInizio?: string | null; annoFine?: string | null }) {
     // L'uuid quando c'è, il nome quando no: la scelta sta in `parametroClasse`,
     // un posto solo per tutte e tre le chiamate qui sotto.
     const paramClasse = parametroClasse({ id: sectionId, name: sezione });
     const t = useTranslations('teacherPresenze');
     const locale = useLocale();
-    const [selectedDate, setSelectedDate] = useState(toISO(new Date()));
+    // In sola lettura si parte dal giorno minore fra oggi e l'ULTIMO giorno dell'anno di quella classe: in una classe di un anno
+    // chiuso «oggi» cade nell'anno nuovo e tutti risulterebbero «Da registrare». Chi monta il componente lo rimonta cambiando classe.
+    const [selectedDate, setSelectedDate] = useState(() => giornoDiPartenza(solaLettura, annoFine));
 
     const [students, setStudents] = useState<Student[]>([]);
     const [records, setRecords] = useState<Record<string, AttendanceRecord>>({});
@@ -279,7 +301,7 @@ export function AppelloGiornaliero({ sezione, sectionId, griglia = false }: { se
     // ── Fetch studenti reali dall'anagrafica Supabase ──
     // Restituisce null in caso di errore (rete o HTTP), mai eccezioni.
     const fetchStudents = useCallback(async (): Promise<Student[] | null> => {
-        const res = await fetch(`/api/diary/students?${paramClasse}`).catch(() => null);
+        const res = await fetch(`/api/diary/students?${paramClasse}${solaLettura ? '&dellAnno=1' : ''}`).catch(() => null);
         if (!res?.ok) return null;
         const data = await res.json().catch(() => null);
         if (Array.isArray(data)) {
@@ -290,7 +312,7 @@ export function AppelloGiornaliero({ sezione, sectionId, griglia = false }: { se
             }));
         }
         return [];
-    }, [paramClasse]);
+    }, [paramClasse, solaLettura]);
 
     // ── Fetch presenze del giorno selezionato da Supabase ──
     const fetchTodayRecords = useCallback(async () => {
@@ -733,7 +755,7 @@ export function AppelloGiornaliero({ sezione, sectionId, griglia = false }: { se
                 <span className="text-5xl opacity-30">👶</span>
                 <p className="text-center font-maven text-sm text-kidville-sub">
                     {t('nessunAlunnoPre')} <strong>{sezione}</strong>.<br />
-                    {t('nessunAlunnoAiuto')}
+                    {inAttesaDeiBambini ? t('nessunAlunnoAnnoNuovo') : t('nessunAlunnoAiuto')}
                 </p>
             </div>
         );
@@ -762,6 +784,9 @@ export function AppelloGiornaliero({ sezione, sectionId, griglia = false }: { se
                 </div>
                 <DateNavigator
                     date={selectedDate}
+                    solaLettura={solaLettura}
+                    primoGiorno={annoInizio ?? undefined}
+                    ultimoGiorno={ultimoGiornoVisibile(annoFine)}
                     onChange={(d) => {
                         setSelectedDate(d);
                         // L'esito di un annullamento riguarda il giorno in cui è stato fatto.
@@ -842,8 +867,9 @@ export function AppelloGiornaliero({ sezione, sectionId, griglia = false }: { se
                         // Solo il giorno stesso, in data di ROMA — la stessa regola che il
                         // server applica con `APPELLO_ANNULLA_SOLO_OGGI`.
                         onAnnulla={appelloDiOggi || records[student.id]?.rettificaStoricaAmmessa ? handleAnnulla : undefined}
+                        solaLettura={solaLettura}
                     />
-                    {records[student.id]?.rettificaStoricaAmmessa && records[student.id]?.giustificata && records[student.id]?.id && (
+                    {!solaLettura && records[student.id]?.rettificaStoricaAmmessa && records[student.id]?.giustificata && records[student.id]?.id && (
                         <AnnullaGiustifica nomeAlunno={`${student.lastName} ${student.firstName}`} presenzaId={records[student.id]!.id!} firmaIl={records[student.id]?.giustificataIl ?? null} versioneAttesa={records[student.id]?.storico_versione} onCambiato={fetchTodayRecords} />
                     )}
                     </div>

@@ -146,6 +146,10 @@ function elencoUso(t: ReturnType<typeof useTranslations>, conteggi: unknown): st
 const secondario =
   'inline-flex items-center gap-2 rounded-pill border-2 border-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase tracking-[0.05em] text-kidville-green transition-transform hover:bg-kidville-green-soft active:scale-95 disabled:pointer-events-none disabled:opacity-45';
 
+// «Annulla il passaggio» è alto 40px: l'area di tocco di 44px è un pseudo-elemento di altezza fissa (h-11) centrato sul pulsante,
+// come per i pulsanti IT/EN (lotto 4) — il pulsante a vista non cresce e il layout resta com'è (L6-3).
+const AREA_44 = "relative before:absolute before:inset-x-0 before:top-1/2 before:h-11 before:-translate-y-1/2 before:content-['']";
+
 export function PassaggioClient() {
   const t = useTranslations('annoPassaggio');
   const anno = useAnnoOpzionale();
@@ -438,7 +442,7 @@ function Passaggio({ annoSedeId, puoCalcolare, inPreparazione }: { annoSedeId: s
             <li>{t('riepilogoDocenti', { n: passaggio.conteggi.docenti_copiati ?? 0 })}</li>
             {quoteSuUsciti !== null && quoteSuUsciti > 0 && <li>{t('quoteSuUsciti', { n: quoteSuUsciti })}</li>}
           </ul>
-          <button type="button" className={`${secondario} mt-3`} disabled={occupato} onClick={() => setDialogo('annulla')}>{t('azioneAnnulla')}</button>
+          <button type="button" className={`${secondario} ${AREA_44} mt-3`} disabled={occupato} onClick={() => setDialogo('annulla')}>{t('azioneAnnulla')}</button>
         </section>
       )}
 

@@ -244,7 +244,7 @@ function Cell({ record, isWeekend, giorno, alunnoId, nomeAlunno, dataLunga, onAp
 
 // ─── Componente Principale ───────────────────────────────────────────────────
 
-export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: string; sectionId?: string }) {
+export function MonthlyAttendanceTable({ sezione = '', sectionId, solaLettura = false }: { sezione?: string; sectionId?: string; solaLettura?: boolean }) {
     const t = useTranslations('teacherPresenze');
     const locale = useLocale();
     const now = new Date();
@@ -274,7 +274,17 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
     // La PATCH accettava già qualunque giorno — mancava solo il collegamento, e senza
     // di esso rettificare il ritardo di martedì voleva dire tornare su «Oggi» e
     // navigare la data all'indietro.
+    // La correzione porta con sé la classe in cui è stata aperta: cambiando classe NON resta a schermo (derivato, senza un effetto
+    // che azzera lo stato) — su una classe di sola lettura finirebbe un chip con i campi d'orario.
+    const classeCorrente = sectionId ?? sezione;
     const [correzione, setCorrezione] = useState<{ alunnoId: string; giorno: string } | null>(null);
+    // Azzerata DAVVERO (non solo nascosta) al cambio di classe: pattern «reset durante il render», niente effetto. Tornando alla
+    // classe di partenza il chip non riappare con l'alunno e il giorno di prima.
+    const [classeDelChip, setClasseDelChip] = useState(classeCorrente);
+    if (classeDelChip !== classeCorrente) {
+        setClasseDelChip(classeCorrente);
+        setCorrezione(null);
+    }
     const [erroreOrario, setErroreOrario] = useState<string | null>(null);
 
     const apriCorrezione = (alunnoId: string, giorno: string) => {
@@ -331,7 +341,7 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
             // Carica SEMPRE tutti gli studenti della sezione + presenze del mese in parallelo.
             // Così i mesi senza presenze mostrano comunque la lista completa con celle vuote.
             const [studRes, presRes] = await Promise.all([
-                fetch(`/api/diary/students?${paramClasse}`, { cache: 'no-store' }).catch(() => null),
+                fetch(`/api/diary/students?${paramClasse}${solaLettura ? '&dellAnno=1' : ''}`, { cache: 'no-store' }).catch(() => null),
                 fetch(`/api/attendance/monthly?year=${year}&month=${month}&${paramClasse}`, { cache: 'no-store' }).catch(() => null),
             ]);
             if (studRes?.ok && presRes) {
@@ -350,7 +360,7 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
         } finally {
             setIsLoading(false);
         }
-    }, [year, month, paramClasse]);
+    }, [year, month, paramClasse, solaLettura]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -576,7 +586,7 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
                                                 alunnoId={student.student_id}
                                                 nomeAlunno={`${student.student_nome} ${student.student_cognome}`}
                                                 dataLunga={`${day.getDate()} ${MESI[month - 1]}`}
-                                                onApri={apriCorrezione}
+                                                onApri={solaLettura ? undefined : apriCorrezione}
                                             />
                                         ))}
                                         {/* Summary — sticky right */}
@@ -623,7 +633,7 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
                 STESSI dell'appello del giorno — nessun secondo modo di fare lo stesso
                 gesto. Quali campi mostrare lo dice `orariAmmessi`, la stessa tabella di
                 verità del 422 del server. */}
-            {correzione && (() => {
+            {!solaLettura && correzione && (() => {
                 const st = students.find(x => x.student_id === correzione.alunnoId);
                 const riga = st?.byDate[correzione.giorno];
                 if (!st || !riga) return null;

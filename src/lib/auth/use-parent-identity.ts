@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { osservaVisibilita } from '@/lib/hooks/visibilita-pagina';
 import { useSearchParams } from 'next/navigation';
 import { logClient } from '@/lib/logging/client';
 import { creaCachePromesse } from '@/lib/rete/cache-promesse';
@@ -237,7 +238,51 @@ const cacheFigli = creaCachePromesse(caricaFigli);
  * `null` = non determinabile (rete giù, endpoint non-ok, corpo inatteso).
  */
 export function fetchEsitoFigli(parentId: string): Promise<EsitoFigli | null> {
-  return cacheFigli.leggi(parentId);
+  // L'elenco SCADE (L6-4): senza, una sessione aperta prima di un passaggio d'anno teneva per sempre i figli di allora, col
+  // figlio uscito ancora in testa. Dentro la finestra la richiesta resta una sola (la deduplica di cinque lettori insieme).
+  const ora = Date.now();
+  const letto = lettiAlle.get(parentId);
+  if (letto === undefined || ora - letto > DURATA_ELENCO_FIGLI_MS) {
+    if (letto !== undefined) cacheFigli.invalida(parentId);
+    lettiAlle.set(parentId, ora);
+  }
+  return cacheFigli.leggi(parentId).then((esito) => {
+    if (esito) { ultimoBuono.set(parentId, esito); return esito; }
+    // Rilettura fallita (alla ripresa la rete spesso non è ancora tornata): si tiene l'elenco di PRIMA, dello stesso
+    // genitore. Il vecchio si sostituisce solo con una lettura riuscita; senza, il selettore dei figli sparirebbe.
+    const prima = ultimoBuono.get(parentId) ?? null;
+    if (prima) logClient({ livello: 'warn', evento: 'react', messaggio: 'parent-identity: rilettura dei figli fallita, tengo l\u2019elenco di prima' });
+    return prima;
+  });
+}
+
+/** Ultima lettura RIUSCITA per genitore: la chiave è l'identità, mai fissa. */
+const ultimoBuono = new Map<string, EsitoFigli>();
+
+/** Dopo quanto un elenco dei figli già letto si rilegge, al prossimo ingresso in una pagina genitore. */
+const DURATA_ELENCO_FIGLI_MS = 30_000;
+const lettiAlle = new Map<string, number>();
+
+/**
+ * Conta i ritorni in primo piano dell'app: chi lo legge dentro un effetto lo rifà a ogni ripresa. A ogni ripresa l'elenco
+ * dei figli viene buttato, così la lettura che segue riparte dal server.
+ */
+export function useRipresaApp(scadi: () => void = scadiElencoFigli): number {
+  const [ripresa, setRipresa] = useState(0);
+  const scadiRef = useRef(scadi);
+  useEffect(() => { scadiRef.current = scadi; });
+  useEffect(() => osservaVisibilita((c) => {
+    if (!c.ripresa) return;
+    scadiRef.current();
+    setRipresa((n) => n + 1);
+  }), []);
+  return ripresa;
+}
+
+/** Si butta la cache ma NON l'ultima lettura riuscita: se la rete non è tornata, resta l'elenco di prima. */
+function scadiElencoFigli(): void {
+  lettiAlle.clear();
+  cacheFigli.invalida();
 }
 
 /**
@@ -255,6 +300,8 @@ export async function fetchFigli(parentId: string): Promise<FiglioAnagrafica[] |
  * Senza argomento svuota tutto (è anche ciò che serve fra un test e l'altro).
  */
 export function invalidaFigliCache(parentId?: string): void {
+  if (parentId === undefined) { lettiAlle.clear(); ultimoBuono.clear(); }
+  else { lettiAlle.delete(parentId); ultimoBuono.delete(parentId); }
   cacheFigli.invalida(parentId);
 }
 
@@ -308,6 +355,7 @@ export function useParentIdentity(): ParentIdentity {
   const [senzaFigli, setSenzaFigli] = useState<boolean>(false);
   const [motivoAssenza, setMotivoAssenza] = useState<MotivoFiglioNascosto | null>(null);
   const [studentReady, setStudentReady] = useState<boolean>(false);
+  const ripresa = useRipresaApp();
 
   useEffect(() => {
     if (!session.ready) return;
@@ -358,7 +406,7 @@ export function useParentIdentity(): ParentIdentity {
     };
     void resolve();
     return () => { cancelled = true; };
-  }, [session.ready, session.userId, searchParams]);
+  }, [session.ready, session.userId, searchParams, ripresa]);
 
   return { parentId: session.userId, studentId, figliIds, inAttesa, senzaFigli, motivoAssenza, ready: session.ready && studentReady };
 }

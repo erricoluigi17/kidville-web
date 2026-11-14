@@ -12,6 +12,7 @@
   "completo": "Complete",
   "mancanti": "{n, plural, one {# missing} other {# missing}}",
   "sezioneCon": "Section {sezione}",
+  "giornoDaVedere": "Day to view",
   "giornoPrecedente": "Previous day",
   "giornoSuccessivo": "Next day",
   "mesePrecedente": "Previous month",
@@ -99,5 +100,10 @@
   "giustificaConfermaAnnulla": "Confirm revocation",
   "giustificaMantieni": "Keep justification",
   "giustificaAnnullata": "Justification revoked. Original preserved.",
-  "giustificaAnnullaErrore": "Justification was not revoked. Reload attendance and try again."
+  "giustificaAnnullaErrore": "Justification was not revoked. Reload attendance and try again.",
+  "nessunAlunnoAnnoNuovo": "The children of this class arrive when the school year starts.",
+  "annoInChiusura": "Year that is closing",
+  "annoPassato": "Past year",
+  "sezioneConAnno": "{nome} · {anno}",
+  "soloLetturaAiuto": "View only."
 }

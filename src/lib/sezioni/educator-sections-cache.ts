@@ -36,6 +36,19 @@ export interface SezioneDocente {
    * per la forma vecchia della risposta.
    */
   scuolaId?: string;
+  /** Una classe di un anno `in_chiusura` o `chiuso` (con `passati`): si apre, non si scrive (L6-1). */
+  solaLettura?: boolean;
+  /** `etichetta_breve` dell'anno («2026/27») e il suo stato (`corrente`, `in_chiusura`, `chiuso`). */
+  annoEtichetta?: string | null;
+  annoStato?: string | null;
+  /** Primo e ultimo giorno dell'anno di quella classe (`YYYY-MM-DD`): servono all'appello in sola lettura e alla frase «arrivano con l'inizio dell'anno». */
+  annoInizio?: string | null;
+  annoFine?: string | null;
+}
+
+/** «TEST Infanzia · 2026/27»: l'anno accanto al nome, perché la stessa classe esiste in più anni. */
+export function nomeConAnno(s: Pick<SezioneDocente, 'name' | 'annoEtichetta'>, formato: (nome: string, anno: string) => string): string {
+  return s.annoEtichetta ? formato(s.name, s.annoEtichetta) : s.name;
 }
 
 export interface EducatorSectionsRisposta {
@@ -44,9 +57,13 @@ export interface EducatorSectionsRisposta {
   sectionNames?: string[];
 }
 
-async function caricaSezioni(userId: string): Promise<EducatorSectionsRisposta | null> {
+const SUFFISSO_PASSATI = '|passati';
+
+async function caricaSezioni(chiave: string): Promise<EducatorSectionsRisposta | null> {
+  const passati = chiave.endsWith(SUFFISSO_PASSATI);
+  const userId = passati ? chiave.slice(0, -SUFFISSO_PASSATI.length) : chiave;
   try {
-    const res = await fetch(`/api/educator-sections?userId=${userId}`);
+    const res = await fetch(`/api/educator-sections?userId=${userId}${passati ? '&passati=1' : ''}`);
     if (!res.ok) return null;
     return (await res.json()) as EducatorSectionsRisposta;
   } catch {
@@ -56,14 +73,54 @@ async function caricaSezioni(userId: string): Promise<EducatorSectionsRisposta |
 
 const cache = creaCachePromesse(caricaSezioni);
 
-/** Sezioni del docente indicato. `null` = non determinabile. */
-export function fetchEducatorSections(userId: string | null): Promise<EducatorSectionsRisposta | null> {
-  return cache.leggi(userId ?? '');
+/**
+ * L'elenco SCADE, come quello dei figli (L6-4): un docente con l'app aperta a cavallo del passaggio d'anno non vedeva la
+ * classe nuova né quella vecchia finché non ricaricava. Dentro la finestra la richiesta resta una sola (deduplica).
+ */
+const DURATA_ELENCO_SEZIONI_MS = 30_000;
+const lettiAlle = new Map<string, number>();
+/** Ultima lettura RIUSCITA per chiave: alla ripresa la rete spesso non è tornata, e il vecchio si sostituisce solo con un nuovo riuscito. */
+const ultimoBuono = new Map<string, EducatorSectionsRisposta>();
+
+/** Sezioni del docente indicato. `null` = non determinabile (e senza una lettura precedente riuscita). */
+export async function fetchEducatorSections(
+  userId: string | null,
+  opzioni: { passati?: boolean } = {},
+): Promise<EducatorSectionsRisposta | null> {
+  const chiave = `${userId ?? ''}${opzioni.passati ? SUFFISSO_PASSATI : ''}`;
+  const ora = Date.now();
+  const letto = lettiAlle.get(chiave);
+  if (letto === undefined || ora - letto > DURATA_ELENCO_SEZIONI_MS) {
+    if (letto !== undefined) cache.invalida(chiave);
+    lettiAlle.set(chiave, ora);
+  }
+  const risposta = await cache.leggi(chiave);
+  if (risposta) {
+    ultimoBuono.set(chiave, risposta);
+    return risposta;
+  }
+  return ultimoBuono.get(chiave) ?? null;
 }
 
-/** Svuota la cache (cambio identità, e fra un test e l'altro). */
+/** Alla ripresa dell'app: la prossima lettura riparte dal server, ma l'ultima riuscita resta per il caso senza rete. */
+export function scadiEducatorSections(): void {
+  lettiAlle.clear();
+  cache.invalida();
+}
+
+/** Svuota la cache (cambio identità, e fra un test e l'altro): butta anche l'ultima lettura riuscita. */
 export function invalidaEducatorSectionsCache(userId?: string): void {
-  cache.invalida(userId);
+  if (userId === undefined) {
+    lettiAlle.clear();
+    ultimoBuono.clear();
+    cache.invalida();
+    return;
+  }
+  for (const chiave of [userId, `${userId}${SUFFISSO_PASSATI}`]) {
+    lettiAlle.delete(chiave);
+    ultimoBuono.delete(chiave);
+    cache.invalida(chiave);
+  }
 }
 
 /**

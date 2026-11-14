@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import {
   useParentIdentity,
   fetchFigli,
+  useRipresaApp,
   invalidaFigliCache,
   type FiglioAnagrafica,
 } from '@/lib/auth/use-parent-identity';
@@ -51,6 +52,7 @@ export function ChildSwitcher() {
   // Testo dell'aria-label del selettore dal namespace i18n «nav». I nomi dei
   // figli e la classe sono DATI: restano invariati, non si traducono.
   const t = useTranslations('nav');
+  const ripresa = useRipresaApp();
 
   // L'elenco arriva dalla cache condivisa con `useParentIdentity`: è la STESSA
   // GET che l'identità sta già facendo per risolvere il figlio attivo. Farne
@@ -62,7 +64,7 @@ export function ChildSwitcher() {
       if (!annullato) setFigli(lista ?? []);
     });
     return () => { annullato = true; };
-  }, [parentId]);
+  }, [parentId, ripresa]);
 
   // Niente da scegliere: non mostrare nulla.
   if (!ready || figli.length < 2) return null;

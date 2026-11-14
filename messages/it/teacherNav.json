@@ -131,5 +131,8 @@
   "avvisoNotificheDocenteAttivazione": "Attivazione…",
   "avvisoNotificheDocenteErroreDefinitivo": "Non è stato possibile attivarle su questo telefono.",
   "avvisoNotificheDocenteAggiornaApp": "Questa versione dell’app non sa ricevere le notifiche: aggiornala dallo store e riapri Kidville.",
-  "avvisoNotificheDocenteUsaApp": "Dal browser le notifiche non si attivano: su un computer usato da più persone arriverebbero a chi si siede dopo di te. Per riceverle, installa l’app Kidville sul tuo telefono e accedi da lì."
+  "avvisoNotificheDocenteUsaApp": "Dal browser le notifiche non si attivano: su un computer usato da più persone arriverebbero a chi si siede dopo di te. Per riceverle, installa l’app Kidville sul tuo telefono e accedi da lì.",
+  "annoInChiusura": "Anno che si sta chiudendo",
+  "annoPassato": "Anno passato",
+  "soloLetturaAiuto": "Si può solo consultare."
 }

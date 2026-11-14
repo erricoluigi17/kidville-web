@@ -83,6 +83,7 @@ vi.mock('@/lib/auth/use-parent-identity', () => ({
   useParentIdentity: () => ({ parentId: 'p-1', studentId: 's-1', figliIds: ['s-1', 's-2'], ready: true }),
   fetchFigli: async () => FIGLI,
   invalidaFigliCache: () => {},
+  useRipresaApp: () => 0,
 }))
 
 import { ChildSwitcher } from '@/components/features/parent/ChildSwitcher'

@@ -273,7 +273,7 @@ describe('CandidatureInsegnanti — filtro server e paginazione insieme', () => 
     expect(screen.getByTestId('conteggio-risultati')).toHaveTextContent(
       `${RIFIUTATE.length} risultati su ${TUTTE.length}`,
     )
-  })
+  }, 60_000) // timeout PER TEST: deve superare la somma dei waitFor interni (20 s ciascuno), altrimenti il test intero sfora il testTimeout globale (20 s) prima che le attese usino il loro margine; un test verde finisce appena la condizione è vera, quindi non costa nulla
 
   it('🔴 nei 300 ms di debounce «Mostra altre» è SPENTO: chiederebbe la pagina del filtro vecchio', async () => {
     // La finestra è stretta e reale: `chiaveServer` è attesa (300 ms), quindi
@@ -302,7 +302,7 @@ describe('CandidatureInsegnanti — filtro server e paginazione insieme', () => 
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Mostra altre candidature' })).not.toBeDisabled(),
     )
-  })
+  }, 60_000) // timeout PER TEST: deve superare la somma dei waitFor interni (20 s ciascuno), altrimenti il test intero sfora il testTimeout globale (20 s) prima che le attese usino il loro margine; un test verde finisce appena la condizione è vera, quindi non costa nulla
 
   it('la chiave dei filtri viaggia in OGNI richiesta, pagine successive comprese', async () => {
     render(<CandidatureInsegnanti />)
@@ -330,7 +330,7 @@ describe('CandidatureInsegnanti — filtro server e paginazione insieme', () => 
     const conOffset = urlChieste.filter((u) => /offset=(?!0\b)\d+/.test(u))
     expect(conOffset.length).toBeGreaterThan(0)
     for (const u of conOffset) expect(u).toContain('stato=rifiutata')
-  })
+  }, 60_000) // timeout PER TEST: deve superare la somma dei waitFor interni (20 s ciascuno), altrimenti il test intero sfora il testTimeout globale (20 s) prima che le attese usino il loro margine; un test verde finisce appena la condizione è vera, quindi non costa nulla
 
   // Dal 2026-10-17 la posizione sta IN VISTA, a pastiglie spuntabili, e se ne scelgono
   // anche più d'una. Prima era una tendina a scelta singola nascosta dietro «⚙ Filtri»:
@@ -379,7 +379,7 @@ describe('CandidatureInsegnanti — filtro server e paginazione insieme', () => 
     // mai stato applicato.
     expect(screen.queryByText(/^Attesa /)).toBeNull()
     expect(screen.queryByText(/^Respinta /)).toBeNull()
-  })
+  }, 60_000) // timeout PER TEST: deve superare la somma dei waitFor interni (20 s ciascuno), altrimenti il test intero sfora il testTimeout globale (20 s) prima che le attese usino il loro margine; un test verde finisce appena la condizione è vera, quindi non costa nulla
 
   it('togliendo il filtro l’elenco torna intero, senza doppioni', async () => {
     render(<CandidatureInsegnanti />)

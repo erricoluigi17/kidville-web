@@ -349,6 +349,21 @@ describe('PassaggioClient · confermato e annullato', () => {
     s.passaggio = { id: PASS, stato: 'confermato', conteggi: { continuano: 1, nuovi: 0, usciti: 3, cambia_grado: 0, docenti_copiati: 1 }, apribile_dal: '2027-07-01' }
   })
 
+  it('L6-3: «Annulla il passaggio» ha 44px di area di tocco (pseudo-elemento fisso, come i pulsanti IT/EN) senza far crescere il pulsante', async () => {
+    render(<PassaggioClient />)
+    const b = await screen.findByRole('button', { name: itPassaggio.azioneAnnulla })
+    const c = b.className.split(/\s+/)
+    expect(c, 'il pulsante è il riferimento del pseudo-elemento').toContain('relative')
+    expect(c).toContain('before:absolute')
+    expect(c, '44px = h-11, fissi').toContain('before:h-11')
+    expect(c).toContain('before:inset-x-0')
+    expect(c).toContain('before:top-1/2')
+    expect(c).toContain('before:-translate-y-1/2')
+    // il layout non cresce: nessuna altezza minima né padding verticale maggiore sul pulsante stesso
+    const proprie = c.filter((x) => !x.startsWith('before:'))
+    expect(proprie.filter((x) => /^(min-h-|h-|py-(?:3|4|5))/.test(x))).toEqual([])
+  })
+
   it('CONFERMATO: mostra il riepilogo dei conteggi, «Annulla il passaggio» e niente conferma', async () => {
     render(<PassaggioClient />)
     expect(await screen.findByText(itPassaggio.statoConfermato)).toBeTruthy()

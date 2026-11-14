@@ -54,6 +54,10 @@ type SezioneChip = {
   scuolaId: string;
   scuolaNome: string;
   school_type: string | null;
+  /** L6-1: una classe di un anno `in_chiusura` o `chiuso` — si apre, non si scrive. */
+  solaLettura?: boolean;
+  annoEtichetta?: string | null;
+  annoStato?: string | null;
 };
 type Student = {
   id: string;
@@ -139,7 +143,7 @@ function TeacherDashboardInner() {
       .then((r) => r.json())
       .then((d) => { if (active && d?.success) setMe(d.data); })
       .catch((err) => logClient({ livello: 'warn', evento: 'fetch', messaggio: `docente-home-profilo-non-caricato: ${nomeErrore(err)}`, route: '/teacher' }));
-    const sectionsReq = fetch(`/api/educator-sections?userId=${userId}`)
+    const sectionsReq = fetch(`/api/educator-sections?userId=${userId}&passati=1`)
       .then((r) => r.json())
       .then((d) => {
         if (!active) return;
@@ -169,6 +173,7 @@ function TeacherDashboardInner() {
     [sections, activeSectionId],
   );
   const nomeSezione = activeSection?.name ?? '';
+  const solaLettura = activeSection?.solaLettura === true;
   // Con più sedi in elenco l'etichetta deve dire QUALE: due «2 ANNI» nude sono
   // indistinguibili. Con una sola sede il suffisso sarebbe solo rumore.
   const piuSedi = useMemo(
@@ -300,7 +305,7 @@ function TeacherDashboardInner() {
                 // Il nome da solo non identifica più la classe: l'etichetta
                 // accessibile porta anche la sede, altrimenti due chip omonime
                 // sono indistinguibili per chi usa uno screen reader.
-                aria-label={conSede ? `${s.name} — ${s.scuolaNome}` : s.name}
+                aria-label={`${s.name}${s.annoEtichetta ? ` · ${s.annoEtichetta}` : ''}${conSede ? ` — ${s.scuolaNome}` : ''}`}
                 className={`flex shrink-0 items-center gap-2 rounded-pill py-1.5 pl-1.5 pr-3.5 transition ${
                   on ? 'bg-white shadow-[inset_0_0_0_1.5px_var(--color-kidville-green)]' : 'shadow-[inset_0_0_0_1.5px_rgba(0,106,95,.18)]'
                 }`}
@@ -313,7 +318,7 @@ function TeacherDashboardInner() {
                     era il testo meno leggibile della schermata. Token `sub`
                     (5,82:1) e sede a 11px invece di 10. */}
                 <span className="flex min-w-0 flex-col items-start">
-                  <span className={`font-barlow text-sm font-extrabold uppercase leading-none ${on ? 'text-kidville-green' : 'text-kidville-sub'}`}>{s.name}</span>
+                  <span className={`font-barlow text-sm font-extrabold uppercase leading-none ${on ? 'text-kidville-green' : 'text-kidville-sub'}`}>{s.name}{s.annoEtichetta ? ` · ${s.annoEtichetta}` : ''}</span>
                   {conSede && (
                     <span className="mt-0.5 max-w-[9rem] truncate font-maven text-[11px] leading-none text-kidville-sub">{s.scuolaNome}</span>
                   )}
@@ -322,6 +327,12 @@ function TeacherDashboardInner() {
             );
           })}
         </div>
+      )}
+
+      {solaLettura && (
+        <p role="status" data-sola-lettura className="mt-3 rounded-2xl border border-kidville-line bg-kidville-cream px-4 py-2 font-maven text-sm text-kidville-ink">
+          <strong>{activeSection?.annoStato === 'in_chiusura' ? t('annoInChiusura') : t('annoPassato')}.</strong> {t('soloLetturaAiuto')}
+        </p>
       )}
 
       {/* ── DUE PILE DA 1024 px ─────────────────────────────
@@ -524,6 +535,7 @@ function TeacherDashboardInner() {
           </div>
         )}
 
+        {!solaLettura && (
         <div className={colonnaSinistra ? undefined : 'lg:contents'}>
           {/* ── APPELLO DEL GIORNO (DR AppelloCard) ─────────── */}
           <section className="mt-5">
@@ -608,6 +620,7 @@ function TeacherDashboardInner() {
             />
           </section>
         </div>
+        )}
       </div>
 
       {/* footer */}

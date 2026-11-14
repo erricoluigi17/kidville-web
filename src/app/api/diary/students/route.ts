@@ -17,6 +17,7 @@ import { oggiRoma, puoCorreggereStorico } from '@/lib/storici/retroattivita';
 import { appartenenzeNelGiorno } from '@/lib/storici/alunni-giorno';
 import { rispostaErroreStorico } from '@/lib/storici/http';
 import { leggiTutte } from '@/lib/storici/db';
+import { docenteVedeLaSezione, rosterDellAnnoDellaSezione } from '@/lib/sezioni/roster-anno';
 
 // Singolo alunno per id.
 const getByIdQuerySchema = z.object({
@@ -40,6 +41,9 @@ const getBySezioneQuerySchema = z.object({
     // La sede scelta nel SedeSelector (R70): finora non viaggiava mai, e con tre
     // plessi il nome-classe da solo non dice più di quale sede si parli.
     scuola_id: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
+    // `dellAnno=1`: i bambini dell'ANNO di quella classe (sola lettura di un anno passato, L6-1). Senza, la lettura è quella di sempre:
+    // il diario di una classe elenca i bambini che ci sono ORA.
+    dellAnno: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['0', '1']).optional()),
 });
 
 // GET /api/diary/students?sezione=<classe>                    → lista classe (tutti)
@@ -168,6 +172,28 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
         catch (error) { logEvento('registro', 'error', { operazione: 'diary/students:GET', esito: 'appartenenze-non-lette' }, error); return rispostaErroreStorico(error, 'diary/students:GET'); }
         if (!idsStorici.length) return NextResponse.json([]);
     }
+    // Una classe di un anno PASSATO (sola lettura del docente, L6-1): i bambini sono quelli dell'ANNO di quella classe
+    // (`frequenze`), non quelli che `alunni.section_id` indica oggi — dopo la ricopia di settembre punta alla classe nuova.
+    // Con la funzione dell'anno assente (DB E2E non migrato) `rosterDellAnnoDellaSezione` dà `null`: lettura di sempre.
+    // Il roster dell'anno passato dato a chi NON è staff porta solo l'identità che l'appello mostra (vedi sotto).
+    let soloIdentita = false;
+    if (!idsStorici && q.data.dellAnno === '1' && q.data.sectionId && classe.sectionIds.length === 1) {
+        try {
+            const delloAnno = await rosterDellAnnoDellaSezione(admin, q.data.sectionId);
+            if (delloAnno !== null) {
+                // Il docente la vede solo se è fra le sue (`sezioni_visibili_docente`); lo staff la vede già dal proprio gate.
+                if (!puoCorreggereStorico(auth.user) && !(await docenteVedeLaSezione(admin, auth.user.id, q.data.sectionId))) {
+                    return NextResponse.json([]);
+                }
+                if (!delloAnno.length) return NextResponse.json([]);
+                idsStorici = delloAnno;
+                soloIdentita = !puoCorreggereStorico(auth.user);
+            }
+        } catch (error) {
+            logEvento('registro', 'error', { operazione: 'diary/students:GET', esito: 'roster-anno-non-letto' }, error);
+            return NextResponse.json({ error: 'Lettura dei bambini non riuscita', codice: 'LETTURA_FALLITA' }, { status: 500 });
+        }
+    }
     // La lettura storica usa gli UUID del roster; la lettura ordinaria resta
     // agganciata alla sezione e alla sede attuali, come prima.
         // `allergeni` e `allergies` accanto a `note_mediche`: la home del docente
@@ -179,8 +205,12 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
     const colonneAlunni = 'id, nome, cognome, note_mediche, allergeni, allergies, classe_sezione, consenso_privacy';
         // Per UUID, non per nome. `.in` e non `.eq`: un admin multi-plesso che
         // chiede un nome omonimo ha legittimamente più di una sezione.
+    // Il roster dell'anno passato include bambini che da quella classe sono passati ad altre (non del docente) o sono usciti: a
+    // loro l'appello in sola lettura mostra solo il nome. Niente note mediche, allergie, consensi, né i genitori (stesso principio
+    // del ramo `mancanti` del roster storico: soltanto l'identità).
+    const colonneIdentita = 'id, nome, cognome, classe_sezione';
     const queryAlunni = idsStorici
-        ? admin.from('alunni').select(colonneAlunni).in('id', idsStorici).in('scuola_id', plessi)
+        ? admin.from('alunni').select((soloIdentita ? colonneIdentita : colonneAlunni) as typeof colonneAlunni).in('id', idsStorici).in('scuola_id', plessi)
         : admin.from('alunni').select(colonneAlunni).in('section_id', classe.sectionIds).in('scuola_id', plessi);
     const { data: alunni, error } = await queryAlunni
         // Difesa in profondità: il gate impedisce di NOMINARE una sezione
@@ -194,6 +224,12 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
 
     if ((!alunni || alunni.length === 0) && !idsStorici?.length) {
         return NextResponse.json([]);
+    }
+
+    if (soloIdentita) {
+        return NextResponse.json((alunni ?? []).map((a) => ({
+            id: a.id, nome: a.nome, cognome: a.cognome, classe_sezione: a.classe_sezione,
+        })));
     }
 
     const alunnoIds = (alunni ?? []).map(a => a.id);

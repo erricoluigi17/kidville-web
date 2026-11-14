@@ -69,6 +69,7 @@ vi.mock('@/lib/auth/scope', () => ({
   resolveScuoleAttive: h.resolveScuoleAttive,
   resolveScuolaScrittura: h.resolveScuolaScrittura,
   scuoleDiUtente: h.scuoleDiUtente,
+  assertClasseNomeScrivibile: async () => null, assertRigaDiAnnoScrivibile: async () => null, assertSezioneInScope: async () => null,
 }))
 // Il recapito della notifica non è oggetto di questo test: qui si guarda il
 // consenso. Restano finti solo i destinatari, non la regola sotto esame.

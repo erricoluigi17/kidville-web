@@ -97,6 +97,7 @@ vi.mock('@/lib/auth/scope', () => ({
   resolveScuoleAttive: h.resolveScuoleAttive,
   resolveScuolaScrittura: h.resolveScuolaScrittura,
   scuoleDiUtente: h.scuoleDiUtente,
+  assertClasseNomeScrivibile: async () => null, assertRigaDiAnnoScrivibile: async () => null, assertSezioneInScope: async () => null,
 }))
 // Finto è SOLO il Privacy Lock, che qui fa da testimone: se viene interpellato
 // su bambini altrui, il nome esce. Il gate sotto esame (`@/lib/gallery/tag-scope`)

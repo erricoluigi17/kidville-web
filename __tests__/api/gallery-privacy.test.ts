@@ -32,6 +32,11 @@ const h = vi.hoisted(() => ({
   utente: null as Record<string, unknown> | null,
 }))
 
+// Il controllo dell'anno della riga (lotto 8) ha i suoi test in `gallery-classe-passata`: qui le righe del finto non portano `anno_id`.
+vi.mock('@/lib/auth/scope', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/auth/scope')>()),
+  assertRigaDiAnnoScrivibile: async () => null,
+}))
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente }))
 // Appendice logging: si spia SOLO logEvento (il resto del logger resta reale e
 // silenzioso sotto VITEST). Gli eventi di dominio della galleria hanno `evento`

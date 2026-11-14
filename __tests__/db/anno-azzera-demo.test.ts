@@ -396,6 +396,36 @@ describe('azzera-anno-nuovo-demo.sql · quando riesce', () => {
     })
   })
 
+  it('🔴 le voci `da_pagare` con `fattura_stato = non_richiesta` (il predefinito di produzione) si tolgono, con l’alunno nato dopo la partenza; quella con fattura emessa resta', async () => {
+    await inRollback(b.db, async () => {
+      const f = await fotografa()
+      await b.db.query(`SELECT public.anno_apri_iscrizioni($1, $2)`, [annoNuovo, UTENTE])
+      const sezNuova = await una<string>(b.db, `SELECT id FROM public.sections WHERE scuola_id = $1 AND anno_id = $2 AND continua_da = $3`, [DEMO, annoNuovoId, sezioneVecchia])
+      const [esplicita, emessa, predefinita] = [id(61), id(62), id(63)]
+      for (const al of [esplicita, emessa, predefinita]) {
+        const domanda = await una<string>(b.db, `INSERT INTO public.enrollment_submissions (scuola_id, anno_id, data, status) VALUES ($1, $2, '{}'::jsonb, 'approved') RETURNING id`, [DEMO, annoNuovoId])
+        await b.db.query(`INSERT INTO public.alunni (id, scuola_id, stato) VALUES ($1, $2, 'in_arrivo')`, [al, DEMO])
+        await b.db.query(`SELECT public.anno_registra_frequenza($1::uuid, $2::uuid, 'nuova', 'domanda', $3::uuid, $4::uuid, NULL, '{}'::jsonb, $5::uuid)`, [al, annoNuovo, domanda, sezNuova, UTENTE])
+      }
+      const voce = (al: string, extra = '', val = '') =>
+        una<string>(b.db, `INSERT INTO public.pagamenti (alunno_id, scuola_id, descrizione, importo, scadenza, anno_id${extra}) VALUES ($1, $2, 'voce', 100, DATE '2027-11-05', $3${val}) RETURNING id`, [al, DEMO, annoNuovoId])
+      const vEsplicita = await voce(esplicita, ', fattura_stato', ", 'non_richiesta'")
+      const vEmessa = await voce(emessa, ', fattura_stato', ", 'emessa'")
+      const vPredefinita = await voce(predefinita)
+      expect(await una<string>(b.db, `SELECT fattura_stato FROM public.pagamenti WHERE id = $1`, [vPredefinita]), 'il predefinito di produzione').toBe('non_richiesta')
+
+      await b.db.exec(dentro(compila({ sede: DEMO, foto: f.fotografia! })))
+
+      const resta = (tab: string, i: string) => conta(`SELECT 1 FROM public.${tab} WHERE id = $1`, [i])
+      expect(await resta('pagamenti', vEsplicita), 'voce da_pagare con fattura_stato non_richiesta (esplicito)').toBe(0)
+      expect(await resta('pagamenti', vPredefinita), 'voce da_pagare con il predefinito').toBe(0)
+      expect(await resta('alunni', esplicita), 'il suo alunno nato dopo la partenza').toBe(0)
+      expect(await resta('alunni', predefinita)).toBe(0)
+      expect(await resta('pagamenti', vEmessa), 'voce con fattura emessa: resta').toBe(1)
+      expect(await resta('alunni', emessa), 'e con lei il suo alunno').toBe(1)
+    })
+  })
+
   it('senza collaudo (niente da togliere) riesce e lascia tutto com’era', async () => {
     await inRollback(b.db, async () => {
       const dal = await adesso()

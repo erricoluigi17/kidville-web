@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextResponse } from 'next/server'
 const h = vi.hoisted(() => ({
   auth: vi.fn(), sede: vi.fn(), scope: vi.fn(), consenso: vi.fn(), rpc: vi.fn(),
-  notify: vi.fn(), destinatari: vi.fn(), insert: vi.fn(), log: vi.fn(),
+  notify: vi.fn(), destinatari: vi.fn(), insert: vi.fn(), log: vi.fn(), nome: vi.fn(async (...a: unknown[]) => (a.length < 0 ? ({} as never) : null)),
 }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.auth, requireStaff: h.auth }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuolaScrittura: h.sede, resolveScuoleAttive: vi.fn(), scuoleDiUtente: vi.fn() }))
+vi.mock('@/lib/auth/scope', () => ({ resolveScuolaScrittura: h.sede, resolveScuoleAttive: vi.fn(), assertClasseNomeScrivibile: h.nome, assertSezioneInScope: async () => null, scuoleDiUtente: vi.fn() }))
 vi.mock('@/lib/gallery/tag-scope', () => ({ assertTagStudentsInScope: h.scope }))
 vi.mock('@/lib/gallery/privacy', () => ({ alunniSenzaConsenso: h.consenso }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: h.notify }))
@@ -41,6 +41,9 @@ beforeEach(() => {
 describe('POST foto · protocollo idempotente dopo tutti i gate', () => {
   it('usa autore autenticato, sede validata e payload canonico nella RPC', async () => {
     const res = await POST(req({ ...BODY, uploaded_by: ALTRO, tag_students: [ALTRO, OWNER, ALTRO], target_classes: ['B', 'A', 'B'] }))
+    // il controllo della classe per nome è stato eseguito, per ciascuna classe, e una POST normale PASSA (non 403)
+    expect(h.nome.mock.calls.map(c => c[2]).sort()).toEqual(['A', 'B'])
+    expect(res.status).not.toBe(403)
     expect(res.status).toBe(201)
     expect(h.rpc).toHaveBeenCalledWith('gallery_publish_photo', {
       p_owner_id: OWNER, p_scuola_id: SEDE, p_upload_id: UPLOAD,

@@ -32,7 +32,7 @@ export function ModuliInviabili() {
   // dei CAMPI da `adminModulistica`, dove i filtri di questa schermata vivono tutti insieme.
   const tShared = useTranslations('shared')
   const tFiltri = useTranslations('adminModulistica')
-  const { sedi } = useSediAttive()
+  const { sedi, sedeCorrente } = useSediAttive()
   const [models, setModels] = useState<FormModel[]>([])
   const [loading, setLoading] = useState(true)
   /**
@@ -42,6 +42,8 @@ export function ModuliInviabili() {
   const [erroreLettura, setErroreLettura] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
+  /** L'ultimo indirizzo copiato per il modulo d'iscrizione: resta scritto, perché «Copiato» da solo non dice COSA. */
+  const [indirizzoStd, setIndirizzoStd] = useState<string | null>(null)
   const [resetting, setResetting] = useState(false)
 
   /**
@@ -128,9 +130,19 @@ export function ModuliInviabili() {
   }
 
   const copyLink = async (url: string, id: string) => {
-    try { await navigator.clipboard.writeText(url); setCopied(id); setTimeout(() => setCopied(null), 2000) } catch { /* no-op */ }
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(id)
+      if (id === 'std' || id === 'std-sede') setIndirizzoStd(url)
+      setTimeout(() => setCopied(null), 2000)
+    } catch (err: unknown) {
+      // Gli appunti possono essere negati (permessi, contesto non sicuro): lo si dice nei log, e l'indirizzo resta comunque a schermo.
+      logClient({ livello: 'warn', evento: 'fetch', messaggio: `ModuliInviabili: copia del link non riuscita — ${nomeErrore(err)}` })
+      if (id === 'std' || id === 'std-sede') setIndirizzoStd(url)
+    }
   }
 
+  const nomeSedeCorrente = sedi.find((s) => s.id === sedeCorrente)?.nome ?? null
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
 
   return (
@@ -163,8 +175,22 @@ export function ModuliInviabili() {
             <button onClick={() => copyLink(`${origin}/iscrizione`, 'std')} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green/30 px-3 py-1.5 text-sm text-kidville-green">
               {copied === 'std' ? <><CheckCircle2 size={14} /> {t('inviabiliCopiato')}</> : <><Copy size={14} /> {t('inviabiliCopiaLink')}</>}
             </button>
+            {/* Il link della SEDE si aggiunge a quello unico, non lo sostituisce. Sta solo con una sede in vista:
+                con più sedi il link «di una» non esiste. La sede di prova non è nell'elenco pubblico, ma questo link ci arriva. */}
+            {sedeCorrente && (
+              <button onClick={() => copyLink(`${origin}/iscrizione?scuola=${sedeCorrente}`, 'std-sede')} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green/30 px-3 py-1.5 text-sm text-kidville-green">
+                {copied === 'std-sede'
+                  ? <><CheckCircle2 size={14} /> {t('inviabiliCopiato')}</>
+                  : <><Copy size={14} /> {nomeSedeCorrente ? t('inviabiliCopiaLinkSede', { nome: nomeSedeCorrente }) : t('inviabiliCopiaLinkSedeSenzaNome')}</>}
+              </button>
+            )}
           </div>
         </div>
+        {indirizzoStd && (
+          <p role="status" className="mt-2 break-all font-maven text-xs text-kidville-ink">
+            {t('inviabiliIndirizzoCopiato')} <code className="font-mono">{indirizzoStd}</code>
+          </p>
+        )}
       </div>
 
       {/* Candidatura insegnanti: modulo pubblico `/lavora-con-noi`.

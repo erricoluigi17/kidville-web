@@ -2702,7 +2702,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // routeConServiceRole era 411: 404 + le sette route del passaggio d’anno (PR 4.8), tutte CONTROLLATE. Misurato rieseguendo il lock dopo l’allineamento a main.
             // 411 → 420 il 2026-11-13 (CRM, accesso AI, ramo `ripresa-crm` allineato a main): 7 route `crm/ai/*` e 2 `admin/crm/integrazioni*`,
             // tutte CONTROLLATE. La sede viene dalla chiave AI o dalla sessione di Direzione. Misurato rieseguendo il lock: 411 → 420.
-            routeConServiceRole: 420,
+            // 420 → 421 il 2026-11-14 (modulo pubblico: anno, quota e documenti): entra `iscrizione/info-anno` (GET), la sorella di
+            // `iscrizione/anni`. Pubblica come lei: la sede si valida contro `sediReali` e l'anno contro quelli con le domande aperte
+            // per quella sede; restituisce solo importi e titoli di configurazione. Misurato rieseguendo il lock: 420 → 421.
+            routeConServiceRole: 421,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -3070,7 +3073,8 @@ describe('coverage-lock isolamento fra sedi', () => {
             // handlerControllati era 631: 623 + otto handler del passaggio (PR 4.8, GET/PUT/POST delle sette route), tutti CONTROLLATI; handlerEsentati non cambia (108).
             // 631 → 641 il 2026-11-13 (CRM, accesso AI): 7 handler AI e 3 di Direzione (elenco, creazione, revoca), tutti CONTROLLATI;
             // `handlerEsentati` non cambia (108). Misurato rieseguendo il lock: 631 → 641.
-            handlerControllati: 641,
+            // 641 → 642 il 2026-11-14: `iscrizione/info-anno:GET` (vedi sopra). Misurato rieseguendo il lock: 641 → 642.
+            handlerControllati: 642,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

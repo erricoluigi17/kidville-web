@@ -1819,6 +1819,9 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
    copertura basata su `var(--color-kidville-white)` nasca senza la sua
    controparte in Alto Contrasto. */
 .kv-table-scroll {
+  /* `relative` fa da blocco di contenimento: un figlio `absolute` (un `sr-only` dentro una riga)
+     altrimenti sfugge al taglio dell'overflow e allarga la PAGINA (lotto 7, Conferme a 390 px). */
+  position: relative;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   background:

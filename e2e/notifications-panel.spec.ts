@@ -1,25 +1,19 @@
 import { test, expect } from '@playwright/test';
-import { STORAGE } from './fixtures';
+import { conNotificaPropria, segnaTutteLette } from './helpers/notifica-propria';
+import { IDS, STORAGE } from './fixtures';
 
 // Centro notifiche della AppBar genitore/docente (NotificationsPanel):
 // badge non lette, dropdown, "Segna tutte lette". Mirror dello spec admin.
+// Il perché della notifica propria per ogni tentativo sta in `helpers/notifica-propria.ts`.
 
 test.describe('genitore', () => {
   test.use({ storageState: STORAGE.genitore });
 
   test('badge non lette → dropdown → segna tutte lette', async ({ page }) => {
-    await page.goto('/parent');
-
-    const campanella = page.getByRole('button', { name: /Notifiche \(\d+ non lett/ });
-    await expect(campanella).toBeVisible({ timeout: 15_000 });
-
-    await campanella.click();
-    await expect(page.getByText('Notifica genitore E2E')).toBeVisible();
-
-    await page.getByRole('button', { name: 'Segna tutte lette' }).click();
-
-    await expect(page.getByRole('button', { name: 'Notifiche', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Segna tutte lette' })).toHaveCount(0);
+    await conNotificaPropria(IDS.GENITORE, async (db, id, titolo) => {
+      await page.goto('/parent');
+      await segnaTutteLette(page, db, id, titolo);
+    });
   });
 });
 

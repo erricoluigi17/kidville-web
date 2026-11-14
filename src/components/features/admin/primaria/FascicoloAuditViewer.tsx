@@ -105,7 +105,7 @@ export function FascicoloAuditViewer({ userId }: { scuolaId: string; userId: str
         {t('fascicoloIncludiAnagrafica')}
       </label>
 
-      <div className="overflow-x-auto">
+      <div className="relative overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left font-maven text-xs text-kidville-muted">

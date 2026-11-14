@@ -385,7 +385,7 @@ function ElencoConferme({ annoSedeId }: { annoSedeId: string }) {
       {visibili.length === 0 ? (
         <p className="mt-4 font-maven text-sm text-kidville-sub">{vista === 'nuove' ? t('vuotoNuove') : t('vuoto')}</p>
       ) : (
-        <div className="mt-3 overflow-x-auto">
+        <div className="relative mt-3 overflow-x-auto">
           <table className="w-full min-w-[720px] border-collapse text-left font-maven text-sm text-kidville-green">
             <thead>
               <tr className="border-b border-kidville-line text-xs uppercase text-kidville-sub">

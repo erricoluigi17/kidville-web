@@ -419,7 +419,7 @@ export function OrarioManager({ sectionId, scuolaId, userId }: { sectionId: stri
       )}
 
       {campanelle.length > 0 ? (
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
           <table className="w-full border-collapse text-xs font-maven">
             <thead>
               <tr>

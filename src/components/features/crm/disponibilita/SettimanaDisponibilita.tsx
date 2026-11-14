@@ -228,7 +228,7 @@ export function SettimanaDisponibilita({ scuolaId }: { scuolaId: string }) {
       ) : (
         <div
           aria-busy={inCaricamento}
-          className={`overflow-x-auto rounded-card border border-kidville-line bg-kidville-white ${inCaricamento ? 'pointer-events-none opacity-60' : ''}`}
+          className={`relative overflow-x-auto rounded-card border border-kidville-line bg-kidville-white ${inCaricamento ? 'pointer-events-none opacity-60' : ''}`}
         >
           <table className="w-full min-w-[56rem] border-collapse text-left">
             <caption className="sr-only">{periodo(settimanaTabella)}</caption>

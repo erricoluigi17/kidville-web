@@ -177,7 +177,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
     return (
         <div className="bg-kidville-white rounded-card shadow-sm overflow-hidden">
             {/* ≥sm: tabella con scroll orizzontale rifinito. */}
-            <div className="hidden sm:block kv-table-scroll overflow-x-auto">
+            <div className="relative hidden sm:block kv-table-scroll overflow-x-auto">
                 <table className="w-full">
                     <thead className="bg-kidville-cream/50 border-b border-kidville-line">
                         <tr>

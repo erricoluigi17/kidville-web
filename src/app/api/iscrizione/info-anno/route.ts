@@ -27,26 +27,32 @@ const OPERAZIONE = 'iscrizione/info-anno:GET'
  *
  * È ANONIMA (il prefisso `/api/iscrizione` è nell'allowlist), quindi:
  *  - legge e restituisce SOLO configurazione pubblica: importi e titoli dei moduli, mai una riga di bambini o famiglie;
- *  - la sede deve essere fra quelle del deployment (`tutte` di `sediReali`, la Demo inclusa: come `anni` e come il
+ *  - SCELTA DICHIARATA (rilievo 2 della revisione): la sede deve essere fra quelle del deployment (`tutte` di `sediReali`, la Demo inclusa: come `anni` e come il
  *    POST, si raggiunge col link della sede) e l'anno deve essere fra quelli con le domande aperte per quella sede;
- *  - sta dietro un rate-limit anti-abuso.
+ *    Come `/anni` e il POST usa `tutte` senza il filtro `attiva`: anche una sede disattivata risponde (stessi dati pubblici);
+ *  - sta dietro un rate-limit anti-abuso per IP + sede (120 ogni 10 minuti).
  *
  * Una quota assente, nulla o non positiva NON compare: nessun importo si inventa. `quote` è un elenco perché la
  * quota può essere per fascia (`fascia: null` = per tutte). Database non migrato (E2E della CI): 200 con elenchi
  * vuoti, senza cache. Nei log passano solo conteggi: né titoli né importi.
  */
 export const GET = withRoute('iscrizione/info-anno:GET', async (request: NextRequest) => {
-  const rl = await rateLimit(`iscrizione-info-anno:${clientIp(request)}`, { limit: 30, windowMs: 10 * 60 * 1000 })
-  if (!rl.ok) {
-    return NextResponse.json(
+  const troppe = (retryAfterMs: number) =>
+    NextResponse.json(
       { error: 'Troppe richieste. Riprova tra qualche minuto.', codice: 'TROPPE_RICHIESTE' },
-      { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(retryAfterMs / 1000)) } },
     )
-  }
+  // Tetto largo per solo IP, prima di ogni lettura: senza, un uuid di sede diverso a ogni richiesta aggirerebbe quello per sede.
+  const rlIp = await rateLimit(`iscrizione-info-anno:${clientIp(request)}`, { limit: 600, windowMs: 10 * 60 * 1000 })
+  if (!rlIp.ok) return troppe(rlIp.retryAfterMs)
 
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
   const { scuola_id: scuolaId, anno_id: annoId } = q.data
+
+  // Per IP + sede e largo: più famiglie dietro lo stesso NAT (open day, wifi della sede) non devono restare senza quota.
+  const rl = await rateLimit(`iscrizione-info-anno:${clientIp(request)}:${scuolaId}`, { limit: 120, windowMs: 10 * 60 * 1000 })
+  if (!rl.ok) return troppe(rl.retryAfterMs)
 
   const supabase = await createAdminClient()
   const { tutte, error } = await sediReali(supabase, OPERAZIONE)

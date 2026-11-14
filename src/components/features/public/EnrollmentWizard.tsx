@@ -1139,11 +1139,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                           })}
                         </p>
                       </div>
-                      {mostraAnno && annoEffettivo && (
-                        <p className="px-4 text-sm text-kidville-ink">
-                          {ta('annoRiepilogoRiga', { anno: etichettaAnnoEffettivo ?? '' })}
-                        </p>
-                      )}
+                      {/* L'anno si dice UNA volta: lo dice il titolo del pannello (rilievo 5 della revisione). */}
                       {etichettaAnnoEffettivo && <InfoAnnoIscrizione anno={etichettaAnnoEffettivo} info={infoAnno} />}
                       <p className="text-xs text-kidville-sub leading-relaxed">
                         {t.rich('wizardRiepilogoNota', {

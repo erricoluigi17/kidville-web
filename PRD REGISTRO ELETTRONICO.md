@@ -1,3 +1,33 @@
+## 🧭 Changelog — Anno scolastico, semplificazioni dopo la prova con una segretaria inesperta (agente 2, primo giro) — 2026-11-14 (ramo `feat/anno-collaudo-giro-agente2`)
+
+**Perché.** Il primo giro dell'agente 2 ha preparato il 2027/28 da solo senza conoscere l'app. Esito: ACCETTABILE, non un ok. Due passaggi non li ha superati da solo: la quota pagata (4/5) e il bambino nuovo (5/5). Quattro sessioni parallele (A, B, C, D) hanno semplificato i punti dove si è fermato. Ognuna è passata da una revisione indipendente, e i rilievi sono stati corretti tutti (vedi sotto). Il giro ha avuto anche un incidente: il modulo pubblico non offre la Demo, quindi l'agente ha scelto una sede vera e lì ha inviato una domanda finta, con 3 notifiche e 7 PDF finti. Le righe le ha cancellate il titolare, i 7 file li ha tolti l'assistente dalla dashboard di Storage, una per nome esatto. Verifica finale: 0 PDF finti, 2.521 documenti veri intatti.
+
+- **A — Conferme (`/admin/students/conferme`).** La quota si incassa dalla riga del bambino con «Incassa», che apre la stessa finestra «Registra incasso» della Contabilità. La route porta la voce della quota della frequenza dell'anno giusto, quindi niente più ricerca in Contabilità. L'avviso sui contanti è in parole semplici. Con l'anno in corso selezionato, al posto di una pagina vuota compare «Lavora sul 2027/28». Il selettore resta persistente (decisione 20): l'anno cambia solo al clic. La spunta dei moduli si vede subito e non si toglie con un secondo clic. Si vedono il motivo del «no», «In attesa: di cosa» e la spiegazione di «Va alla primaria». La pagina vuota delle nuove iscrizioni rimanda ai moduli ricevuti. I nomi sono «Nome Cognome». Il test è `anno-conferme-quota-voce`.
+- **B — Anno scolastico e modulo per le famiglie.** Dopo «Apri le iscrizioni» si aggiornano subito stato, classi e bottoni. «Copia link» mostra l'indirizzo e offre anche il link della singola sede (`/iscrizione?scuola=<id>`, la scorciatoia che c'era già). Il link unico resta, per decisione del titolare. La Demo resta fuori dall'elenco pubblico e si raggiunge solo col suo link. Il modulo pubblico mostra l'anno, la quota di nuova iscrizione e i documenti richiesti: SÌ del titolare il 14/11. Li fornisce la nuova route pubblica `GET /api/iscrizione/info-anno` (`withRoute`, zod, rate limit, solo dati non personali: anno, fascia, importo, titoli dei moduli). Il POST non cambia.
+- **C — Cruscotto, Passaggio e ricerca.** `anno_cruscotto` (migrazione `20261114120434_anno_cruscotto_completi_per_sezione.sql`, sola lettura, stessa firma, GRANT invariati) conta per classe i bambini davvero iscritti (`completi`: moduli + quota), non più le sole frequenze. Il Passaggio ha un riquadro «non hanno risposto» con il conteggio. Nei Posti la colonna si chiama «bambini in lista». La ricerca trova i nomi in qualunque ordine. Nelle pagine dei bambini (scheda, riga, scheda e elenco del docente) i nomi sono «Nome Cognome». Revisione: le frequenze di `recupero` restano fuori da `completi`. Una frequenza con una sezione di un altro anno conta fra i «senza classe». La ricerca ignora `*` e le parole di una lettera.
+- **D — Riportare la Demo alla partenza senza file SQL.** La migrazione `20261114124928_demo_funzioni_ripristino.sql` aggiunge `demo_fotografa(p_scuola)`, `demo_ripristina(p_scuola, p_partenza, p_prova_a_secco DEFAULT true)` e `demo_controllo(p_scuola)`, con la tabella privata `demo_fotografie`. Sono `SECURITY DEFINER` con `search_path` fisso e `EXECUTE` solo per `service_role`. Rifiutano, prima di qualunque scrittura, ogni sede il cui uuid non comincia per `e2e00000`. La prova a secco non lascia niente. L'assistente le chiama con una `SELECT`. Il freno resta acceso e nega ancora `DELETE` su `execute_sql`. Decisione del titolare del 14/11: «le cancellazioni delle cose fatte per provare le fa l'assistente». Procedura in `docs/superpowers/simulazione/anno-intero-demo.md`, con un paragrafo in `CLAUDE.md` e `AGENTS.md`. Il test è `demo-funzioni-ripristino` (PGlite), e c'è un caso nuovo nel test del freno.
+- **Revisione indipendente, rilievi corretti.**
+  - **A** (2 importanti, 4 minori):
+    - «Incassa» compare solo sulle frequenze vive (`in_attesa`/`iscritto`). La GET non offre la voce delle altre. Il 409 sulla route condivisa degli incassi non c'è di proposito, perché bloccherebbe la Contabilità.
+    - Aree di tocco di 44 px, e la finestra esce dalla tabella con un portale.
+    - Se le voci non si leggono, l'elenco resta, con un avviso e il pulsante spento (`voci_non_lette`). Se la voce manca, un testo spiega cosa fare.
+    - Il riferimento a TUIR e AdE sta in un «Perché?» chiuso.
+  - **B** (1 importante, 4 minori):
+    - Una quota di una sola fascia non viene più presentata come «la quota».
+    - La Demo si raggiunge solo con il suo uuid, e un test lo fissa.
+    - Il rate limit è 120 ogni 10 minuti per IP+sede, più 600 per solo IP.
+    - Una fascia sconosciuta mostra il suo codice.
+    - L'anno compare una volta sola nel riepilogo.
+    - Ripristinati i segnaposto `{sede}` di tre testi delle pratiche del personale: il primo giro li aveva rotti.
+  - **C** (2 importanti, 4 minori): sopra.
+  - **D** (1 critico, 1 importante, 4 minori):
+    - Il blocco delle voci fatturate usava `fattura_stato IS NOT NULL`, sempre vero in produzione (enum `NOT NULL DEFAULT 'non_richiesta'`): il ripristino non avrebbe tolto nessuna voce. Ora usa `coalesce(…) <> 'non_richiesta'`, con il banco fedele alla produzione.
+    - Un test mette righe nate dopo la partenza in altre sedi e le ritrova tutte: senza il filtro per sede diventa rosso.
+    - Gestite le FK composte.
+    - L'esito conta la cascata sui periodi di scrutinio.
+    - `anno_chiuso.oblio` torna al valore di prima, e si rimettono immediati solo i vincoli differiti.
+- **Dopo il merge.** Una PR-B rigenera le fotografie dalla produzione per le due migrazioni e svuota `MIGRAZIONI_ATTESE_AL_MERGE`. Poi si riporta la Demo alla partenza con `demo_ripristina` (prima a secco) e parte un agente 2 nuovo, che non conosce l'app.
+
 ## 🧹 Changelog — CRM per l’assistente: pulizia dopo il merge, accensione sulla Demo e collaudo — 2026-11-14 (ramo `crm-ai-pulizia`)
 
 **Stato.** ✅ codice e fotografie su questo ramo; **accensione e collaudo già fatti in produzione** il 14/11 (non dipendono dal merge di questa PR). Nessuna migrazione.

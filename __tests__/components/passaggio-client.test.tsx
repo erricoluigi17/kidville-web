@@ -320,7 +320,7 @@ describe('PassaggioClient · le scritture', () => {
     const riquadro = await screen.findByRole('region', { name: itPassaggio.riquadroNonRispostoTitolo })
     expect(riquadro.textContent).toMatch(/2 famiglie non hanno risposto/)
     expect(riquadro.textContent).toMatch(/escono/)
-    expect(riquadro.textContent).toMatch(/solo un'anteprima, non è cambiato niente/)
+    expect(riquadro.textContent).toMatch(/solo un’anteprima, non è cambiato niente/)
     expect(within(riquadro).getByRole('link', { name: itPassaggio.riquadroVaiAConferme }).getAttribute('href')).toBe('/admin/students/conferme')
     // sta SOPRA l'elenco dei bambini
     const elenco = screen.getByText('NomeUno CognomeUno')

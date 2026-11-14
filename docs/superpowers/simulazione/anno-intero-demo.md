@@ -166,12 +166,18 @@ risultati ci sono solo uuid e conteggi. Si chiamano con una `SELECT`, che il fre
 1. **Fotografia**, prima che un agente di collaudo tocchi la Demo: `SELECT public.demo_fotografa('D');`. Si annota `scattata_il` (è la partenza). Solo
    uuid, date e conteggi: niente nomi.
 2. **Giro di prova**: l'agente (o la segreteria finta) lavora in Demo.
-3. **Prova a secco**: `SELECT public.demo_ripristina('D', '<scattata_il>'::timestamptz);`. L'esito giusto è **un errore** `DEMO_PROVA_A_SECCO` con il
-   riassunto in JSON (quante righe toglie, rimette, lascia; gli incassi e i periodi di scrutinio; gli uuid delle domande tolte e delle righe lasciate).
-   Qualunque altro codice (`AZZERA_*`, `RIPRISTINO_*`, `DEMO_*`) è la causa da guardare: **non si passa al vero**.
+3. **Prova a secco, OBBLIGATORIA**: `SELECT public.demo_ripristina('D', '<scattata_il>'::timestamptz);`. L'esito giusto è **un errore** `DEMO_PROVA_A_SECCO`
+   con il riassunto in JSON (quante righe toglie, rimette, lascia; gli incassi e i periodi di scrutinio **con ciò che portano via a cascata**; gli uuid
+   delle domande tolte e delle righe lasciate). **Si leggono `righe_non_coperte`, `cascata_dei_periodi_di_scrutinio` e `lasciate` prima del vero**:
+   la funzione cancella per finestra di tempo («nato dopo la partenza, in questa sede»), non per uuid elencati, quindi è il riassunto a dire che cosa
+   sta per andare via. Qualunque altro codice (`AZZERA_*`, `RIPRISTINO_*`, `DEMO_*`) è la causa da guardare: **non si passa al vero**.
 4. **Ripristino vero**: `SELECT public.demo_ripristina('D', '<scattata_il>'::timestamptz, false);`. Restituisce il riassunto; tutto avviene in una
    transazione, un errore annulla tutto.
 5. **Controllo**: `SELECT * FROM public.demo_controllo('D');` → tutte le righe `ok = true`. Ripetere il passo 4 non cambia niente e non dà errore.
+
+**Ogni funzione si chiama da sola**, una `SELECT` per volta, non dentro un blocco di più istruzioni dell'editor: per giudicare subito i vincoli
+differiti la funzione li mette «immediati» e li rimette «differiti» (solo quelli nati differiti), e l'interruttore `anno_chiuso.oblio` torna al valore
+che aveva. Sono locali alla transazione, ma un blocco di più istruzioni condivide la transazione e ne risentirebbe.
 
 La fotografia non si ripete a ogni giro: si rifà solo se l'anno nuovo viene preparato di nuovo a mano. Per una partenza che esiste solo come
 file (la fotografia del 13/11/2026, scattata col file SQL) si passa il JSON come quarto parametro di `demo_ripristina` e di `demo_controllo`
@@ -180,7 +186,10 @@ file (la fotografia del 13/11/2026, scattata col file SQL) si passa il JSON come
 **Che cosa cancella, oltre all'azzeramento dell'anno nuovo:** gli incassi nati dopo la partenza su voci nate dopo la partenza; le sezioni degli
 anni nati dopo la partenza e successivi all'anno nuovo (il 2028/29 del tick); i `scrutinio_periodi` della sede nati dopo la partenza, di
 qualunque anno. Per il periodo dell'anno chiuso la funzione accende `anno_chiuso.oblio` solo per quel `DELETE` (con la guardia accesa lo
-fermerebbe) e lo rispegne subito; il gettone che l'oblio lascia lo toglie il passo dei gettoni, che viene dopo.
+fermerebbe) e poi **rimette il valore che c'era**; il gettone che l'oblio lascia lo toglie il passo dei gettoni, che viene dopo.
+**A cascata** la cancellazione di un periodo porta via anche i suoi `scrutini` (e, a cascata da questi, pagelle, comportamento e giudizi) e i
+`scrutinio_giudizio_descrittivo`: nel riassunto (`cascata_dei_periodi_di_scrutinio`) ci sono i conteggi di scrutini e giudizi descrittivi, contati
+prima. Il rischio è limitato alla Demo, e la prova a secco li mostra prima del vero.
 
 **Che cosa NON copre** (si legge nel risultato, `incassi_su_voci_precedenti_non_toccati`, e nelle righe lasciate): un incasso nato dopo la partenza su una
 voce che c'era già prima; i file finti in Storage (si tolgono dalla dashboard, uno per nome esatto); `armadietto_richieste`, gli account dei genitori
@@ -189,7 +198,11 @@ resta ferma al freno.
 
 Provato in `__tests__/db/demo-funzioni-ripristino.test.ts` (PGlite): una sede vera è rifiutata da tutte e tre le funzioni; la prova a secco non lascia
 scritto niente; il ripristino vero, dopo un giro con quattro conferme, un «non rinnova», una quota incassata, l'anteprima del passaggio e un anno
-2028/29 nato dopo, riporta i conteggi della partenza e fa passare il controllo; ripeterlo non fa niente; le altre sedi restano identiche riga per riga.
+2028/29 nato dopo, riporta i conteggi della partenza e fa passare il controllo (con la colonna `fattura_stato` fedele alla produzione: NOT NULL, predefinito
+`non_richiesta`); ripeterlo non fa niente; le altre sedi restano identiche anche con righe di ogni tipo **nate dopo la partenza** (sezioni, voci e
+incassi, domande, alunni, periodi di scrutinio con i loro scrutini, sezioni dell'anno nato dopo), e un alunno nato in Demo ma con una voce di una sede
+vera resta fra le «lasciate»; le chiavi esterne composte tengono ferma una riga; il percorso con `p_fotografia` e la riga di log del successo
+(`app_log`) sono provati.
 **Mai eseguite sul database di produzione** finché l'integrazione non applica la migrazione: la prima esecuzione è una prova a secco.
 
 ## Dopo: il ripristino a mano (file SQL: storia e riserva)

@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/funzioni-registro-fotografia.mjs --sql | (esegui su prod) ; node scripts/funzioni-registro-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-09",
-  "generato_alle": "2026-11-09T16:51:16Z",
-  "sha256": "3f432e5d19ccae119647e8481947a26918c4610e318042865ef971a2cddac451",
+  "generato_il": "2026-11-14",
+  "generato_alle": "2026-11-14T09:56:51Z",
+  "sha256": "241eb4437aaa4ba395e013651a08f822fb2b093bb693bb2b5d58487e7450ba02",
   "funzioni": [
     {
       "funzione": "_video_originale_applica",
@@ -46,6 +46,13 @@
         "crm_bambini"
       ],
       "classe": "corrente"
+    },
+    {
+      "funzione": "crm_ai_bambini",
+      "tabelle": [
+        "crm_bambini"
+      ],
+      "classe": "dichiara"
     },
     {
       "funzione": "crm_quota_passa",
@@ -162,6 +169,36 @@
       "tabelle": [
         "nota_ricezioni",
         "note_disciplinari"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "passaggio_annulla",
+      "tabelle": [
+        "frequenze",
+        "utenti_sezioni"
+      ],
+      "classe": "passaggio"
+    },
+    {
+      "funzione": "passaggio_conferma",
+      "tabelle": [
+        "frequenze",
+        "utenti_sezioni"
+      ],
+      "classe": "passaggio"
+    },
+    {
+      "funzione": "passaggio_conferma_tardiva",
+      "tabelle": [
+        "frequenze"
+      ],
+      "classe": "corrente"
+    },
+    {
+      "funzione": "passaggio_ricopia_schede",
+      "tabelle": [
+        "frequenze"
       ],
       "classe": "corrente"
     },

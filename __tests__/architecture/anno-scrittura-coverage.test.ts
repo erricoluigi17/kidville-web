@@ -619,7 +619,7 @@ function violazioniAnnoAMano(files: Analisi[], elenco = ANNO_A_MANO_DI_OGGI, tet
 
 interface Migrazione { nome: string; testo: string }
 
-const CLASSI_AMMESSE = ['corrente', 'dichiara', 'esente-colonne', 'oblio', 'macchina-a-stati']
+const CLASSI_AMMESSE = ['corrente', 'dichiara', 'esente-colonne', 'oblio', 'macchina-a-stati', 'passaggio']
 const togliCommentiSql = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ')
 
 /** L'ULTIMA definizione di `nome`: nel file con la version più alta che la contiene, l'ultima del file. */
@@ -645,6 +645,8 @@ function ultimaDefinizione(nome: string, migrazioni: Migrazione[]): { migrazione
 }
 
 const RE_INTERRUTTORE = /anno_oblio_attiva|set_config\(\s*'anno_chiuso\.oblio'/i
+/** La classe `passaggio` (PR 4.9): l'ultima definizione accende `anno_passaggio.in_corso`, che la guardia tratta come l'oblio. */
+const RE_INTERRUTTORE_PASSAGGIO = /set_config\(\s*'anno_passaggio\.in_corso'\s*,\s*'on'/i
 
 /**
  * Le cinque funzioni `video_*` di classe `oblio` che passano la guardia ACCESA senza interruttore: via (i) di P32.
@@ -687,6 +689,16 @@ function violazioniSql(funzioni: FunzioneRegistro[], migrazioni: Migrazione[]): 
     if (!d) continue // l'ultima definizione sta solo in produzione: la riporta il rapporto, il lock non la vede
     if (!RE_INTERRUTTORE.test(d.corpo)) {
       out.push(`${f.funzione} (classe oblio) — l'ultima definizione, in ${d.migrazione}, non accende l'interruttore (anno_oblio_attiva / set_config('anno_chiuso.oblio'))`)
+    }
+  }
+  for (const f of funzioni.filter((x) => x.classe === 'passaggio')) {
+    const d = ultimaDefinizione(f.funzione, migrazioni)
+    if (!d) {
+      out.push(`${f.funzione} (classe passaggio) — nessuna definizione nelle migrazioni: la classe si dà solo a chi accende l'interruttore in una migrazione`)
+      continue
+    }
+    if (!RE_INTERRUTTORE_PASSAGGIO.test(d.corpo)) {
+      out.push(`${f.funzione} (classe passaggio) — l'ultima definizione, in ${d.migrazione}, non accende l'interruttore (set_config('anno_passaggio.in_corso', 'on', true))`)
     }
   }
   return out
@@ -757,7 +769,7 @@ const MINIMI: { chiave: keyof Misure; minimo: number; nota: string }[] = [
   { chiave: 'dichiarateNonPagamenti', minimo: 9, nota: 'misurate 9 il 2026-11-07 (crm 2, enrollment 2, elenco 1, scrutinio 1, sections 1, votazioni 1, certificati 1)' },
   { chiave: 'pagamenti', minimo: 12, nota: 'misurate 12 il 2026-11-07' },
   { chiave: 'sitiAlunni', minimo: 20, nota: 'misurati 20 il 2026-11-07 (bozza: 12; la misura conta anche i file con l’oggetto in una variabile)' },
-  { chiave: 'funzioni', minimo: 66, nota: 'misurate 66 il 2026-11-08 (bozza 55, poi P13: 60, 65 il 2026-11-07; la PR 4.3-B aggiunge frequenza_segue_classe_alunno)' },
+  { chiave: 'funzioni', minimo: 71, nota: 'misurate 71 il 2026-11-14 (+1 crm_ai_bambini del CRM per l’assistente, +4 passaggio_* della 4.8 mai fotografate prima); 66 il 2026-11-08 (bozza 55, poi P13: 60, 65 il 2026-11-07; la PR 4.3-B aggiunge frequenza_segue_classe_alunno)' },
 ]
 /** Per ogni tabella dichiarata (esclusa `frequenze` e `pagamenti`) misurati il 2026-11-07: crm_bambini 2, enrollment_submissions 2, il resto 1. */
 const MINIMI_PER_TABELLA: Record<string, number> = {
@@ -1045,6 +1057,24 @@ describe('anno-scrittura-coverage — 1. lo scanner, provato su sorgenti finti',
     expect(violazioniSql([{ funzione: 'nuova_fn', tabelle: ['presenze'] }], [])).toHaveLength(1)
   })
 
+  it('SQL: una funzione di classe passaggio senza l’interruttore del passaggio (o senza definizione) è segnalata; con l’interruttore no', () => {
+    const f: FunzioneRegistro[] = [{ funzione: 'passaggio_conferma', tabelle: ['frequenze'], classe: 'passaggio' }]
+    const buona: Migrazione = {
+      nome: '20260101000000_a.sql',
+      testo: "CREATE OR REPLACE FUNCTION public.passaggio_conferma(p uuid)\nRETURNS void LANGUAGE plpgsql AS $$\nBEGIN PERFORM set_config('anno_passaggio.in_corso', 'on', true); UPDATE public.frequenze SET stato = 'uscito'; END $$;",
+    }
+    expect(violazioniSql(f, [buona])).toEqual([])
+    // l'interruttore dell'oblio non vale per il passaggio, e spegnere non è accendere
+    const sbagliata: Migrazione = {
+      nome: '29990101000000_finta.sql',
+      testo: "CREATE OR REPLACE FUNCTION public.passaggio_conferma(p uuid)\nRETURNS void LANGUAGE plpgsql AS $$\nBEGIN PERFORM set_config('anno_chiuso.oblio','on',true); PERFORM set_config('anno_passaggio.in_corso', 'off', true); UPDATE public.frequenze SET stato = 'uscito'; END $$;",
+    }
+    const v = violazioniSql(f, [buona, sbagliata])
+    expect(v).toHaveLength(1)
+    expect(v[0]).toContain('29990101000000_finta.sql')
+    expect(violazioniSql(f, [])).toHaveLength(1)
+  })
+
   it('zero file letti fanno rosso i minimi (la cecità)', () => {
     const vuoto = misura([], COLONNE_COPIATE, FIXTURE_FUNZIONI.funzioni)
     expect(vuoto.fileEsaminati).toBe(0)
@@ -1232,12 +1262,13 @@ describe('anno-scrittura-coverage — 5. l’anno non si calcola a mano', () => 
 })
 
 describe('anno-scrittura-coverage — 6. SQL', () => {
-  it('ogni funzione che scrive il registro ha una classe, e le funzioni di oblio accendono l’interruttore nella loro ULTIMA definizione', () => {
+  it('ogni funzione che scrive il registro ha una classe, e le funzioni di oblio e di passaggio accendono il loro interruttore nella loro ULTIMA definizione', () => {
     const v = violazioniSql(FIXTURE_FUNZIONI.funzioni, MIGRAZIONI)
     expect(
       v,
       `SQL del registro dell'anno (${v.length}). Una funzione nuova in funzioni-scrivono-registro.json vuole una \`classe\`; ` +
-        `una funzione di oblio vuole anno_oblio_attiva() / set_config('anno_chiuso.oblio','on',true) nella sua ultima definizione. ` +
+        `una funzione di oblio vuole anno_oblio_attiva() / set_config('anno_chiuso.oblio','on',true) nella sua ultima definizione, ` +
+        `una di passaggio set_config('anno_passaggio.in_corso','on',true). ` +
         `Il fixture si rigenera così (il catalogo non è in PGlite): ${COME_SI_RIGENERA_FUNZIONI}` +
         elenco(v),
     ).toEqual([])

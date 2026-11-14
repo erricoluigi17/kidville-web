@@ -53,7 +53,18 @@ describe('migrazione crm_accesso_ai · il testo', () => {
   it('chiude dicendo a PostgREST di rileggere lo schema', () => {
     expect(CODICE.trim().endsWith("NOTIFY pgrst, 'reload schema';")).toBe(true)
   })
-  it('è dichiarata fra le migrazioni attese al merge (si toglie nella PR-B)', () => {
-    expect(Object.keys(MIGRAZIONI_ATTESE_AL_MERGE)).toContain(FILE[0])
+  it('è applicata in produzione con la version del file, e non è più attesa al merge (con la sua compagna dei servizi)', () => {
+    // Fino al merge di #315 le due migrazioni stavano in MIGRAZIONI_ATTESE_AL_MERGE: le applicava l'integrazione.
+    // Dalla PR-B del 14/11/2026 stanno nella fotografia delle migrazioni, una riga sola ciascuna e con la version del
+    // file: una version diversa vorrebbe dire un'applicazione a mano.
+    const foto = JSON.parse(
+      readFileSync(join(process.cwd(), '__tests__', 'fixtures', 'migrazioni-applicate-snapshot.json'), 'utf8'),
+    ) as { migrazioni: { version: string; name: string }[] }
+    const servizi = readdirSync(CARTELLA).filter((f) => /^\d{14}_crm_servizi_sede\.sql$/.test(f))
+    expect(servizi).toHaveLength(1)
+    for (const [nome, file] of [['crm_accesso_ai', FILE[0]], ['crm_servizi_sede', servizi[0]]] as const) {
+      expect(foto.migrazioni.filter((m) => m.name === nome).map((m) => m.version), nome).toEqual([file.slice(0, 14)])
+      expect(Object.keys(MIGRAZIONI_ATTESE_AL_MERGE)).not.toContain(file)
+    }
   })
 })

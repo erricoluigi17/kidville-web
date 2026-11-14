@@ -33,6 +33,9 @@
  *   oblio             cancella/anonimizza: retention, GDPR, eliminazione
  *   macchina-a-stati  pipeline video e simili: stato, non contenuto
  *   dichiara          INSERT su una tabella di modo `dichiarato` (l'anno lo dichiara chi scrive)
+ *   passaggio         accende l'interruttore `anno_passaggio.in_corso` per la durata della sua transazione: la
+ *                     guardia la lascia passare con un gettone di codice `passaggio` (PR 4.9, `20261112181554`).
+ *                     Solo `passaggio_conferma` e `passaggio_annulla`; il lock lo verifica sull'ultima definizione.
  *
  * ─── LIMITI DELLA QUERY (falsi negativi possibili) ─────────────────────────────
  * E' una scansione di testo del corpo: non vede SQL dinamico (`execute '…'`), scritture indirette
@@ -140,6 +143,7 @@ export const CLASSI = {
     crm_quota_segna: C('corrente', 'aggiorna lo stato della quota di una scheda CRM viva'),
     crm_quota_togli: C('corrente', 'azzera la quota di una scheda CRM viva'),
     crm_aggancia_alunno: C('corrente', 'collega una scheda CRM viva a un alunno'),
+    crm_ai_bambini: C('dichiara', 'accesso AI (#315): inserisce i bambini di una scheda CRM con l\'anno dichiarato (corrente o prossimo della sede)'),
     // ── iscrizioni ──
     iscrizioni_annulla: C('corrente', 'riporta una domanda a pending: domande di oggi'),
     iscrizioni_chiudi: C('corrente', 'chiude (approva) una domanda in lavorazione'),
@@ -159,6 +163,11 @@ export const CLASSI = {
     salva_giudizi_scrutinio: C('corrente', 'salva i giudizi di uno scrutinio aperto'),
     scala_ticket_e_prenota: C('corrente', 'crea una prenotazione mensa'),
     storici_versione_aggregato: C('esente-colonne', 'trigger: incrementa solo storico_versione, contatore tecnico che M3 rendera\' esente sulle tabelle che tocca'),
+    // ── passaggio d'anno (PR 4.8 e 4.9; classificate il 14/11/2026, la fotografia non era stata rigenerata dopo #307) ──
+    passaggio_conferma: C('passaggio', 'accende anno_passaggio.in_corso: chiude le frequenze del vecchio anno, sistema le classi e scrive utenti_sezioni'),
+    passaggio_annulla: C('passaggio', 'accende anno_passaggio.in_corso: riporta le frequenze com\'erano e toglie le assegnazioni scritte dalla conferma'),
+    passaggio_conferma_tardiva: C('corrente', 'riapre o inserisce la frequenza dell\'anno nuovo di un bambino confermato tardi: passa dalla guardia'),
+    passaggio_ricopia_schede: C('corrente', 'job del giorno d\'inizio: chiude la frequenza nuova di chi è stato archiviato dopo la conferma (anno nuovo corrente), passa dalla guardia'),
     // ── oblio ──
     elimina_alunno_definitivo: C('oblio', 'cancella l\'alunno e il suo registro (diario, pagamenti, moduli, fascicolo)'),
     presenze_giustificazioni_retention_tick: C('oblio', 'job notturno: toglie giustificazione_testo e note_appello dalle presenze'),
@@ -181,7 +190,7 @@ const confronta = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
 export function normalizza(f) {
     const registro = new Set((f.registro ?? []).map(String))
     if (registro.size === 0) throw new Error('Manca `registro` nella risposta: rilancia la query di --sql.')
-    const CLASSI_VALIDE = ['corrente', 'esente-colonne', 'oblio', 'macchina-a-stati', 'dichiara']
+    const CLASSI_VALIDE = ['corrente', 'esente-colonne', 'oblio', 'macchina-a-stati', 'dichiara', 'passaggio']
     for (const [nome, { classe }] of Object.entries(CLASSI)) {
         if (!CLASSI_VALIDE.includes(classe)) {
             throw new Error(`Classe «${classe}» non valida per ${nome}: ammesse ${CLASSI_VALIDE.join(', ')}.`)

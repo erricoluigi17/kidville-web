@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/fk-utenti-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/fk-utenti-fotografia.mjs < risposta.json",
-  "generato_il": "2026-11-13",
-  "generato_alle": "2026-11-13T12:09:06Z",
-  "sha256": "767ee28680284a3c3e079f1c40d728a485b2f6c1c47acb02bfabf83bf7a10c31",
+  "generato_il": "2026-11-14",
+  "generato_alle": "2026-11-14T09:52:13Z",
+  "sha256": "01f8d39f2add859e02b6a3512632fc38244bd573e190728b5e9f6975106a9e11",
   "fk": [
     {
       "tabella": "allegati_registro",
@@ -152,6 +152,16 @@
     {
       "tabella": "crm_indisponibilita",
       "colonna": "utente_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_integrazioni",
+      "colonna": "creata_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "crm_integrazioni",
+      "colonna": "revocata_da",
       "azione": "blocca"
     },
     {

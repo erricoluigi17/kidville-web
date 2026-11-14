@@ -448,10 +448,16 @@ export function posterioriCheContengono(
 // 2026-11-13 · CRM, servizi offerti dalla sede (`20261113212652_crm_servizi_sede.sql`): una tabella privata con i valori iniziali. Stessa regola.
 // Rinominate il 13/11 allineando il ramo a main: le version erano 20261111225125 e 20261113100000, la prima PIÙ VECCHIA delle due migrazioni
 // del 12/11 già in produzione (l'integrazione applica in ordine) e la seconda con un orario tondo.
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-  '20261113212650_crm_accesso_ai.sql': 'L’integrazione applica al merge tabelle private, vincoli e funzioni CRM; fotografie nella PR-B.',
-  '20261113212652_crm_servizi_sede.sql': 'L’integrazione applica al merge la tabella privata dei servizi per sede (RLS accesa, solo service-role); fotografie nella PR-B.',
-}
+// SVUOTATA il 14/11/2026 (PR-B dopo il merge di #315, `46ce4a02`): le due migrazioni sono registrate una volta sola, con la version
+// del file, e le fotografie sono rigenerate dalla produzione senza trascrivere (`supabase db query --linked -o json`, sola lettura).
+// Cambiano davvero: migrazioni 277 -> 279; indici unici 292 -> 299 (chiavi, impronta, una chiave attiva per sede, richieste,
+// servizi); FK verso `utenti` 83 -> 85 (`crm_integrazioni.creata_da` e `revocata_da`, censite in `tracce-docente-voci.ts`);
+// tabelle con `scuola_id` e FK di sede 99 -> 102 (`crm_integrazioni`, `crm_ai_richieste`, `crm_servizi_sede`); la fotografia della
+// RLS (le tre tabelle con RLS accesa, sempre 40 policy); funzioni che scrivono nel registro 66 -> 71 (`crm_ai_bambini`, classe
+// `dichiara`, e le quattro `passaggio_*` della 4.8, in produzione dal 12/11 ma mai fotografate: classe nuova `passaggio` per
+// `passaggio_conferma` e `passaggio_annulla`, che accendono `anno_passaggio.in_corso`). Tabelle dell'anno (46), bucket (21) e
+// schema delle candidature hanno solo l'istante nuovo.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

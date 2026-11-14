@@ -50,8 +50,9 @@ const ok = (data: unknown): Risposta => ({ status: 200, body: { success: true, d
 const CRUSCOTTO = {
   anno: { inizio: '2027-09-01', fine: '2028-08-31', stato: 'iscrizioni_aperte' },
   sezioni: [
-    { section_id: 's1', nome: 'Sezione Prova A', fascia: 'infanzia', iscritti: 12 },
-    { section_id: null, nome: null, fascia: null, iscritti: 2 },
+    { section_id: 's1', nome: 'Sezione Prova A', fascia: 'infanzia', iscritti: 12, completi: 5 },
+    { section_id: 's2', nome: 'Sezione Prova B', fascia: 'infanzia', iscritti: 0, completi: 0 },
+    { section_id: null, nome: null, fascia: null, iscritti: 2, completi: 0 },
   ],
   fasce: [
     { fascia: 'infanzia', iscritti: 12, posti: 10, oltre: true },
@@ -125,6 +126,24 @@ describe('CruscottoClient — i numeri', () => {
     expect(screen.getByText(/3 iscritti, posti non indicati/)).toBeInTheDocument()
     expect(screen.getByText('Sezione Prova A')).toBeInTheDocument()
     expect(screen.getByText(itCruscotto.sezioneSenza)).toBeInTheDocument()
+  })
+
+  // Prova di facilità d'uso del 14/11: «iscritti» per classe contava anche chi ha solo confermato, e contraddiceva la regola
+  // «iscritto = moduli completi + quota saldata». Ora ogni classe dice quanti sono in lista e, di questi, quanti sono iscritti
+  // davvero; le classi vuote compaiono con 0; i senza classe stanno in una riga loro.
+  it('per classe: in lista e, di questi, iscritti a tutti gli effetti; classi vuote a 0; senza classe in una riga a parte', async () => {
+    render(<CruscottoClient />)
+    await screen.findByRole('heading', { name: itCruscotto.sezioniTitolo })
+    const riga = (nome: string) => screen.getByText(nome).closest('li') as HTMLElement
+    expect(riga('Sezione Prova A').textContent).toMatch(/12 bambini in lista/)
+    expect(riga('Sezione Prova A').textContent).toMatch(/5 iscritti a tutti gli effetti/)
+    expect(riga('Sezione Prova B').textContent).toMatch(/0 bambini in lista/)
+    expect(riga('Sezione Prova B').textContent).toMatch(/0 iscritti a tutti gli effetti/)
+    expect(riga(itCruscotto.sezioneSenza).textContent).toMatch(/2 bambini in lista/)
+    // la legenda dice cosa vuol dire «in lista» e cosa «iscritto»
+    expect(screen.getByText(itCruscotto.sezioniLegenda)).toBeInTheDocument()
+    // l'etichetta bugiarda non c'è più: nessuna riga di classe dice «12 iscritti» e basta
+    expect(riga('Sezione Prova A').textContent).not.toMatch(/12 iscritti/)
   })
 
   it('gli importi sono in euro con la lingua della pagina; la stima è dichiarata tale e non si somma agli incassi', async () => {

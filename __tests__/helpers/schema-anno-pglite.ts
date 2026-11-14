@@ -484,6 +484,8 @@ const SUFFISSI_PR2 = {
   // PR 4.9 (due testate nate nel compito 4.9.0). Si applicano nell'ordine a, b. Dopo M48b.
   M49a: '_anno_stati_automatici.sql',
   M49b: '_anno_passaggio_da_fare.sql',
+  // Cruscotto: «iscritti» per classe che dicono il vero (in lista / iscritti a tutti gli effetti, classi vuote a 0). Dopo M47: la funzione non è più ridefinita (nel banco la catena la mette subito dopo, dove M48+ non servono).
+  M47b: '_anno_cruscotto_completi_per_sezione.sql',
 } as const
 
 /**
@@ -786,7 +788,7 @@ export async function creaAnniFissi(db: PGlite, sedi: string[]): Promise<void> {
 
 export interface OpzioniDbPr2 {
   sedi: string[]
-  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43 → M44a → M44b → M44g → M45a → M45b → M45d → M45c → M45e → M46a → M46b → M47 → M48a → M48c → M48b → M49a → M49b. */
+  /** Fin dove si applica la catena M1 → F1 → V1 → FOTO → V2 → M3 → M42 → M43 → M44a → M44b → M44g → M45a → M45b → M45d → M45c → M45e → M46a → M46b → M47 → M47b → M48a → M48c → M48b → M49a → M49b. */
   fino: keyof typeof SUFFISSI_PR2
   /** Con `SCHEMA_PR2` e `SCHEMA_PR2_RIEMPIMENTO` (le tabelle grandi); senza, solo il banco minimo della PR 1. */
   completo?: boolean
@@ -808,8 +810,8 @@ export async function creaDbAnnoPr2(o: OpzioniDbPr2): Promise<PGlite> {
     codaPrima: (o.completo ? SCHEMA_PR2 + SCHEMA_PR2_RIEMPIMENTO : '') + (o.codaPrima ?? ''),
   })
   await creaAnniFissi(db, o.sedi)
-  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43', 'M44a', 'M44b', 'M44g', 'M45a', 'M45b', 'M45d', 'M45c', 'M45e', 'M46a', 'M46b', 'M47', 'M48a', 'M48c', 'M48b', 'M49a', 'M49b']
-  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined, M44a: undefined, M44b: undefined, M44g: undefined, M45a: undefined, M45b: undefined, M45d: undefined, M45c: undefined, M45e: undefined, M46a: undefined, M46b: undefined, M47: undefined, M48a: undefined, M48c: undefined, M48b: undefined, M49a: undefined, M49b: undefined } as const
+  const ordine: Array<keyof typeof SUFFISSI_PR2> = ['M1', 'F1', 'V1', 'FOTO', 'V2', 'M3', 'M42', 'M43', 'M44a', 'M44b', 'M44g', 'M45a', 'M45b', 'M45d', 'M45c', 'M45e', 'M46a', 'M46b', 'M47', 'M47b', 'M48a', 'M48c', 'M48b', 'M49a', 'M49b']
+  const gancio = { M1: o.dopoM1, F1: o.dopoF1, V1: o.dopoV1, FOTO: undefined, V2: undefined, M3: undefined, M42: undefined, M43: undefined, M44a: undefined, M44b: undefined, M44g: undefined, M45a: undefined, M45b: undefined, M45d: undefined, M45c: undefined, M45e: undefined, M46a: undefined, M46b: undefined, M47: undefined, M47b: undefined, M48a: undefined, M48c: undefined, M48b: undefined, M49a: undefined, M49b: undefined } as const
   for (const passo of ordine) {
     await applicaPr2(db, passo)
     await gancio[passo]?.(db)

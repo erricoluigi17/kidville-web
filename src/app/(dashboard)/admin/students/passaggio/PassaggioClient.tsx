@@ -270,7 +270,7 @@ function Passaggio({ annoSedeId, puoCalcolare, inPreparazione }: { annoSedeId: s
   const nomi = nomiLetti.fase === 'ok' ? nomiLetti.dati : {};
   const nomeDi = (id: string): string => {
     const n = nomi[id];
-    return (n ? `${n.cognome} ${n.nome}`.trim() : '') || t('bambinoSenzaNome');
+    return (n ? `${n.nome} ${n.cognome}`.trim() : '') || t('bambinoSenzaNome');
   };
 
   // ── le scritture ──────────────────────────────────────────────────────────────────────────
@@ -425,6 +425,17 @@ function Passaggio({ annoSedeId, puoCalcolare, inPreparazione }: { annoSedeId: s
       <p className="font-barlow text-sm font-extrabold uppercase tracking-[0.05em] text-kidville-green">
         {confermato ? t('statoConfermato') : t('statoAnteprima')}
       </p>
+      {inAnteprima && (esiti?.non_risposto ?? 0) > 0 && (
+        <section
+          aria-label={t('riquadroNonRispostoTitolo')}
+          className="mt-3 rounded-input border-2 border-kidville-yellow bg-kidville-yellow-soft px-4 py-3 font-maven text-sm text-kidville-ink"
+        >
+          <p className="m-0 font-semibold">{t('riquadroNonRisposto', { n: esiti?.non_risposto ?? 0 })}</p>
+          <p className="m-0 mt-2">
+            <Link href={PERCORSO_CONFERME} className="font-semibold underline underline-offset-2">{t('riquadroVaiAConferme')}</Link>
+          </p>
+        </section>
+      )}
       {inAnteprima && nonAncora && passaggio.apribile_dal && (
         <p role="status" className="mt-2 rounded-input border border-kidville-line bg-kidville-yellow-soft px-3 py-2 font-maven text-sm text-kidville-ink">
           {t('nonAncora', { data: giorno(passaggio.apribile_dal) })} {t('nonAncoraNota')}
@@ -486,6 +497,7 @@ function Passaggio({ annoSedeId, puoCalcolare, inPreparazione }: { annoSedeId: s
         />
       </div>
       <p className={hint}>{t('totaleBambini', { totale })}</p>
+      {inAnteprima && <p className={hint}>{t('cambiaGradoNota')}</p>}
       {inAnteprima && (
         <p className={hint}>
           {t('rimandoConfermeNota')}{' '}
@@ -716,7 +728,7 @@ function PannelloDocenti({
   const [sezione, setSezione] = useState('');
   const nomeStaff = (uid: string): string => {
     const s = staff.find((x) => x.id === uid);
-    return (s ? `${s.cognome ?? ''} ${s.nome ?? ''}`.trim() : '') || t('docenteSenzaNome');
+    return (s ? `${s.nome ?? ''} ${s.cognome ?? ''}`.trim() : '') || t('docenteSenzaNome');
   };
   const origineTesto = (o: DocenteApi['origine']) => (o === 'copiata' ? t('docenteCopiata') : o === 'aggiunta' ? t('docenteAggiunta') : t('docenteTolta'));
   return (
@@ -755,7 +767,7 @@ function PannelloDocenti({
           <label className={label} htmlFor={`${id}-utente`}>{t('docenteScegli')}</label>
           <select id={`${id}-utente`} className={`${input} min-h-11 w-full`} value={utente} onChange={(e) => setUtente(e.target.value)}>
             <option value="">{t('docenteScegli')}</option>
-            {staff.map((s) => <option key={s.id} value={s.id}>{`${s.cognome ?? ''} ${s.nome ?? ''}`.trim() || t('docenteSenzaNome')}</option>)}
+            {staff.map((s) => <option key={s.id} value={s.id}>{`${s.nome ?? ''} ${s.cognome ?? ''}`.trim() || t('docenteSenzaNome')}</option>)}
           </select>
         </div>
         <div className="min-w-0 basis-48">

@@ -16,7 +16,10 @@ vi.mock('@/lib/auth/scope', () => ({ scuoleDiUtente: h.scuoleDiUtente, resolveAn
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from(table: string) {
-      const rows = () => h.rows[table] ?? []
+      // Il banco finto APPLICA i filtri di nome: ogni `or('nome.ilike.%x%,cognome.ilike.%x%,…')` tiene le righe in cui ALMENO
+      // UNA colonna contiene x, e più `or` si sommano in AND (come PostgREST). Gli altri filtri (plesso, ruolo) non si valutano.
+      const orDiNome: Array<(r: Record<string, unknown>) => boolean> = []
+      const rows = () => (h.rows[table] ?? []).filter((r) => orDiNome.every((f) => f(r)))
       const b: Record<string, unknown> = {
         then: (res: (v: { data: unknown; error: null }) => unknown) =>
           res({ data: rows(), error: null }),
@@ -27,7 +30,18 @@ vi.mock('@/lib/supabase/server-client', () => ({
       }
       b.select = track('select')
       b.in = track('in')
-      b.or = track('or')
+      b.or = (...args: unknown[]) => {
+        track('or')(...args)
+        const parti = String(args[0]).split(',')
+        if (parti.every((x) => /^(nome|cognome|codice_fiscale)\.ilike\./.test(x))) {
+          orDiNome.push((r) => parti.some((x) => {
+            const [col, , ...resto] = x.split('.')
+            const pezzo = resto.join('.').replace(/%/g, '').toLowerCase()
+            return String(r[col] ?? '').toLowerCase().includes(pezzo)
+          }))
+        }
+        return b
+      }
       b.ilike = track('ilike')
       b.limit = track('limit')
       return b
@@ -124,7 +138,38 @@ describe('GET /api/admin/search', () => {
   it('sanifica i metacaratteri ilike/or dal termine di ricerca', async () => {
     await GET(req(`q=${encodeURIComponent('ro,ss(i%_)')}`))
     const orAlunni = h.filters.find((f) => f.table === 'alunni' && f.method === 'or')
-    expect(String(orAlunni?.args[0])).toContain('nome.ilike.%ro ss i%')
+    // Il termine ripulito è «ro ss i»: ogni parola ha il suo `or` (nome o cognome o codice fiscale), tutte in AND.
+    expect(String(orAlunni?.args[0])).toContain('nome.ilike.%ro%')
+    const orAlunniTutti = h.filters.filter((f) => f.table === 'alunni' && f.method === 'or').map((f) => String(f.args[0]))
+    expect(orAlunniTutti).toHaveLength(3)
+    expect(orAlunniTutti.every((x) => x.split(',').length === 3)).toBe(true) // ogni `or` ha le sue tre colonne
+    expect(orAlunniTutti.some((x) => x.includes('%ss%'))).toBe(true)
+  })
+
+  // Prova di facilità d'uso del 14/11: «Test INF Alunno1» (cognome nome) non trovava niente, «Alunno1» sì.
+  // La ricerca trova il bambino con le parole del nome e del cognome in QUALUNQUE ordine, e anche a pezzi.
+  describe('nome e cognome in qualunque ordine', () => {
+    const BAMBINI = [
+      { id: 'al-1', nome: 'Alunno1', cognome: 'Test INF', classe_sezione: 'Infanzia', stato: 'iscritto', codice_fiscale: null },
+      { id: 'al-2', nome: 'Alunno2', cognome: 'Test INF', classe_sezione: 'Infanzia', stato: 'iscritto', codice_fiscale: null },
+      { id: 'al-3', nome: 'Rosa', cognome: 'Altra Famiglia', classe_sezione: 'Girasoli', stato: 'iscritto', codice_fiscale: null },
+    ]
+    const ids = async (q: string) => {
+      const { data } = await (await GET(req(`q=${encodeURIComponent(q)}`))).json()
+      return data.alunni.map((a: { id: string }) => a.id)
+    }
+    beforeEach(() => { h.rows['alunni'] = BAMBINI })
+
+    it('«cognome nome» trova il bambino', async () => { expect(await ids('Test INF Alunno1')).toEqual(['al-1']) })
+    it('«nome cognome» trova lo stesso bambino', async () => { expect(await ids('Alunno1 Test INF')).toEqual(['al-1']) })
+    it('un ordine misto e le maiuscole non contano', async () => { expect(await ids('inf alunno1 test')).toEqual(['al-1']) })
+    it('una parola sola funziona come prima: il solo cognome trova i fratelli', async () => { expect(await ids('Test')).toEqual(['al-1', 'al-2']) })
+    it('tutte le parole devono corrispondere: una parola estranea non trova nessuno', async () => { expect(await ids('Alunno1 Rossi')).toEqual([]) })
+    it('lo stesso vale per lo staff', async () => {
+      h.rows['utenti'] = [{ id: 'ut-1', nome: 'Remo', cognome: 'Rossini', role: 'educator', ruolo: null }]
+      const { data } = await (await GET(req('q=Rossini%20Remo'))).json()
+      expect(data.utenti.map((u: { id: string }) => u.id)).toEqual(['ut-1'])
+    })
   })
 
   it('gruppi vuoti se il termine sanificato resta sotto i 2 caratteri', async () => {

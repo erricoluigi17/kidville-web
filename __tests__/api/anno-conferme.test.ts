@@ -287,7 +287,7 @@ describe('GET conferme', () => {
     const per = (f: string) => data.righe.find((r: { frequenza_id: string }) => r.frequenza_id === f)
     expect(per(F1)).toEqual({
       frequenza_id: F1, alunno_id: AL[0], section_id: S_INF, nuova_frequenza_id: N1, nuova_section_id: S_NUOVA_PRIM,
-      conferma: 'confermato', non_rinnova_motivo: null, moduli: { fatti: 1, richiesti: 2 }, quota: 'da_pagare', quota_piu_voci: false, cambia_grado: true, grado_partenza: 'infanzia',
+      conferma: 'confermato', non_rinnova_motivo: null, moduli: { fatti: 1, richiesti: 2 }, quota: 'da_pagare', quota_piu_voci: false, quota_voce: null, cambia_grado: true, grado_partenza: 'infanzia',
       stato_frequenza: 'in_attesa', nome: 'NomeProva1', cognome: 'CognomeProva1', classe: 'Sezione Prova A',
     })
     expect(per(F2)).toMatchObject({ conferma: 'no', non_rinnova_motivo: 'trasloco', quota: 'assente', cambia_grado: false, nuova_frequenza_id: null })
@@ -446,7 +446,7 @@ describe('GET conferme — vista=nuove e mancano_moduli', () => {
     const prima = data.righe.find((r: { frequenza_id: string }) => r.frequenza_id === FN[0])
     expect(prima).toEqual({
       frequenza_id: FN[0], alunno_id: NA[0], section_id: S_NUOVA_PRIM, nuova_frequenza_id: FN[0], nuova_section_id: S_NUOVA_PRIM,
-      conferma: 'confermato', non_rinnova_motivo: null, moduli: { fatti: 2, richiesti: 2 }, quota: 'assente', quota_piu_voci: false, cambia_grado: false,
+      conferma: 'confermato', non_rinnova_motivo: null, moduli: { fatti: 2, richiesti: 2 }, quota: 'assente', quota_piu_voci: false, quota_voce: null, cambia_grado: false,
       stato_frequenza: 'in_attesa', nome: 'Nuovo1', cognome: 'Arrivo1', classe: 'Classe Prova B',
     })
     expect(data.righe.find((r: { frequenza_id: string }) => r.frequenza_id === FN[4])).toMatchObject({ quota: 'saldata', moduli: { fatti: 0, richiesti: 2 } })

@@ -2,8 +2,9 @@
 
 > **La PR 4.9 è in produzione** (le migrazioni M49a e M49b le ha applicate l'integrazione al merge): la simulazione si può fare. Questo
 > manuale lo segue la chat principale insieme al titolare; l'agente di una sessione parallela non lo esegue.
-> I comandi che scrivono (il tick, il passaggio, il ripristino) li lancia il titolare dall'editor SQL: il freno nega `anno_regole`,
-> `DELETE` e `UPDATE` all'agente, giustamente.
+> I comandi che scrivono (il tick, il passaggio) li lancia il titolare dall'editor SQL: il freno nega `anno_regole`,
+> `DELETE` e `UPDATE` all'agente, giustamente. **Dal 14/11/2026 il ripristino della Demo lo fa l'assistente, con le funzioni `demo_*`**
+> (sezione «Il ripristino con le funzioni `demo_*`»): il freno resta acceso e non si aggira.
 
 ## ⚠️ Prima di cominciare: dillo al titolare
 
@@ -18,7 +19,7 @@ Regole che non si derogano:
   database la ammette da sé e il titolare non deve scrivere niente in `sedi_simulazione`. Per una sede che non comincia per `e2e00000` e non è
   in elenco il database rifiuta (`ANNI_TICK_OGGI_NON_AMMESSO`, `PASSAGGIO_OGGI_NON_AMMESSO`): non si cerca un'altra via.
 - **Mai nomi, mai codici fiscali, mai righe di anagrafica** nei risultati: conteggi, stati, codici d'errore.
-- **L'agente non esegue il ripristino.** Lo esegue il titolare dall'editor SQL.
+- **Il ripristino lo fa l'assistente, solo con le funzioni `demo_*`**, che rifiutano ogni sede il cui uuid non comincia per `e2e00000`. Mai un `DELETE` scritto a mano: il freno lo nega, giustamente.
 
 ## Che cosa si può simulare in Demo, e che cosa no
 
@@ -147,7 +148,54 @@ l'inizio del successivo; rifiuta `CONFINE_NON_VALIDO` se la nuova fine precede l
 non precede la sua fine, `ANNO_CHIUSO` se uno dei due è `chiuso`, `CONFINE_CON_RIGHE` se nei giorni che cambiano anno ci sono righe già assegnate).
 Poi si ripetono i passi 5, 6, 11 e 12 **senza** `p_oggi` finto, e il titolare decide se accendere la guardia per tutti.
 
-## Dopo: il ripristino
+## Il ripristino con le funzioni `demo_*` (dal 14/11/2026)
+
+Il titolare ha deciso: «le cancellazioni delle cose fatte per provare le fa l'assistente». Il pacchetto di sei file SQL che lanciava lui è
+diventato tre funzioni del database (migrazione `20261114124928_demo_funzioni_ripristino.sql`, applicata dall'integrazione al merge). Ogni
+funzione **rifiuta una sede il cui uuid non comincia per `e2e00000`** con `DEMO_SEDE_NON_DI_PROVA`, prima di toccare qualsiasi riga; nei
+risultati ci sono solo uuid e conteggi. Si chiamano con una `SELECT`, che il freno lascia passare.
+
+| Funzione | Che cosa fa |
+|---|---|
+| `public.demo_fotografa(p_scuola)` | Scatta la fotografia (versione 2: configurazione dell'anno nuovo, frequenze e date dell'anno corrente, conteggi), la **salva** in `demo_fotografie` e la restituisce. `scattata_il` è la **partenza**. Si ferma con `DEMO_ANNO_NUOVO_NON_UNO` se la sede non ha un solo anno in preparazione o con le iscrizioni aperte. |
+| `public.demo_ripristina(p_scuola, p_partenza, p_prova_a_secco DEFAULT true, p_fotografia DEFAULT NULL)` | Riporta la Demo alla partenza in un colpo solo (passi 1, 2, 3, 4 e 4bis del pacchetto): stati degli anni, gettoni, passaggi e cronologia; incassi e sezioni di anni nati dopo la partenza, e periodi di scrutinio nati dopo; azzeramento dell'anno nuovo dalla fotografia. A secco fa tutto e poi alza `DEMO_PROVA_A_SECCO` col riassunto: non resta scritto niente. |
+| `public.demo_controllo(p_scuola, p_partenza DEFAULT NULL, p_fotografia DEFAULT NULL)` | Solo lettura: una riga per controllo (`controllo`, `ok`, `dettaglio`), tutte devono essere `ok`. Senza partenza usa l'ultima fotografia salvata. |
+
+**Procedura, passo per passo** (`D` = l'uuid della sede di Demo, che comincia per `e2e00000`):
+
+1. **Fotografia**, prima che un agente di collaudo tocchi la Demo: `SELECT public.demo_fotografa('D');`. Si annota `scattata_il` (è la partenza). Solo
+   uuid, date e conteggi: niente nomi.
+2. **Giro di prova**: l'agente (o la segreteria finta) lavora in Demo.
+3. **Prova a secco**: `SELECT public.demo_ripristina('D', '<scattata_il>'::timestamptz);`. L'esito giusto è **un errore** `DEMO_PROVA_A_SECCO` con il
+   riassunto in JSON (quante righe toglie, rimette, lascia; gli incassi e i periodi di scrutinio; gli uuid delle domande tolte e delle righe lasciate).
+   Qualunque altro codice (`AZZERA_*`, `RIPRISTINO_*`, `DEMO_*`) è la causa da guardare: **non si passa al vero**.
+4. **Ripristino vero**: `SELECT public.demo_ripristina('D', '<scattata_il>'::timestamptz, false);`. Restituisce il riassunto; tutto avviene in una
+   transazione, un errore annulla tutto.
+5. **Controllo**: `SELECT * FROM public.demo_controllo('D');` → tutte le righe `ok = true`. Ripetere il passo 4 non cambia niente e non dà errore.
+
+La fotografia non si ripete a ogni giro: si rifà solo se l'anno nuovo viene preparato di nuovo a mano. Per una partenza che esiste solo come
+file (la fotografia del 13/11/2026, scattata col file SQL) si passa il JSON come quarto parametro di `demo_ripristina` e di `demo_controllo`
+(`p_fotografia`); in quel caso `scattata_il` del JSON deve essere uguale alla partenza (`DEMO_FOTOGRAFIA`).
+
+**Che cosa cancella, oltre all'azzeramento dell'anno nuovo:** gli incassi nati dopo la partenza su voci nate dopo la partenza; le sezioni degli
+anni nati dopo la partenza e successivi all'anno nuovo (il 2028/29 del tick); i `scrutinio_periodi` della sede nati dopo la partenza, di
+qualunque anno. Per il periodo dell'anno chiuso la funzione accende `anno_chiuso.oblio` solo per quel `DELETE` (con la guardia accesa lo
+fermerebbe) e lo rispegne subito; il gettone che l'oblio lascia lo toglie il passo dei gettoni, che viene dopo.
+
+**Che cosa NON copre** (si legge nel risultato, `incassi_su_voci_precedenti_non_toccati`, e nelle righe lasciate): un incasso nato dopo la partenza su una
+voce che c'era già prima; i file finti in Storage (si tolgono dalla dashboard, uno per nome esatto); `armadietto_richieste`, gli account dei genitori
+creati accogliendo una domanda, `alunni_classi_storico`, il CRM e `app_log` (non sono dati d'anno); una prova finita in una **sede vera**, che
+resta ferma al freno.
+
+Provato in `__tests__/db/demo-funzioni-ripristino.test.ts` (PGlite): una sede vera è rifiutata da tutte e tre le funzioni; la prova a secco non lascia
+scritto niente; il ripristino vero, dopo un giro con quattro conferme, un «non rinnova», una quota incassata, l'anteprima del passaggio e un anno
+2028/29 nato dopo, riporta i conteggi della partenza e fa passare il controllo; ripeterlo non fa niente; le altre sedi restano identiche riga per riga.
+**Mai eseguite sul database di produzione** finché l'integrazione non applica la migrazione: la prima esecuzione è una prova a secco.
+
+## Dopo: il ripristino a mano (file SQL: storia e riserva)
+
+> **Dal 14/11/2026 non è la strada normale**: vale la sezione precedente. I file qui sotto restano come riserva e come specifica di ciò che le funzioni fanno.
+
 
 Il file `docs/superpowers/simulazione/ripristino-demo.sql` è **un blocco solo**: `BEGIN; DO $ripristino$ … $ripristino$; COMMIT;`. Non c'è un secondo invio.
 
@@ -176,7 +224,7 @@ dopo una conferma vera. **Non è mai stato eseguito dall'editor SQL di Supabase*
 Un file `docs/collaudo/risultati/simulazione-anno-intero-AAAA-MM-GG.md` (non va in git): per ogni passo, lo stato letto, il codice
 d'errore se c'è stato un rifiuto, il contatore delle osservazioni, le invarianti, e se la schermata ha detto ciò che doveva. Conteggi e codici, mai nomi.
 
-## Azzerare l'anno nuovo
+## Azzerare l'anno nuovo (file SQL: storia e riserva; `demo_ripristina` lo fa già)
 
 `ripristino-demo.sql` rimette gli **stati** degli anni e toglie gettoni, passaggi e cronologia, ma lascia frequenze, voci di pagamento, sezioni,
 domande, listino, moduli e posti dell'anno nuovo. Quando un agente di collaudo deve trovare il 2027/28 della Demo **come appena nato** (il

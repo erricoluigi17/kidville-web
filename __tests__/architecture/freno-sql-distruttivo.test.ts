@@ -517,3 +517,32 @@ describe('freno SQL — le istruzioni degli agenti non lo aggirano', () => {
     ).toEqual([])
   })
 })
+
+describe('freno SQL — le funzioni demo_* (14/11/2026): il freno non si tocca', () => {
+  // Il titolare ha deciso che le cancellazioni delle prove le fa l'assistente. NON spegnendo il freno: con funzioni del database che
+  // rifiutano ogni sede non di prova, chiamate con una SELECT. Il freno guarda il testo che gli arriva, e una SELECT passa.
+  const DEMO = 'e2e00000-0000-4000-8000-00000000d000'
+
+  it('SELECT public.demo_ripristina(…) passa: nessuna decisione, nessun rifiuto', () => {
+    for (const q of [
+      `SELECT public.demo_ripristina('${DEMO}'::uuid, '2026-11-13 17:05:14.513256+00'::timestamptz)`,
+      `SELECT public.demo_ripristina('${DEMO}'::uuid, '2026-11-13 17:05:14.513256+00'::timestamptz, false)`,
+      `SELECT public.demo_fotografa('${DEMO}'::uuid)`,
+      `SELECT * FROM public.demo_controllo('${DEMO}'::uuid)`,
+    ]) {
+      const e = freno(sql(q))
+      expect(e.decisione, q).not.toBe('deny')
+      expect(e.decisione, q).toBeNull()
+    }
+  })
+
+  it('un DELETE scritto a mano, anche sulla Demo, è ancora negato', () => {
+    const e = freno(sql(`DELETE FROM public.incassi WHERE pagamento_id IN (SELECT id FROM public.pagamenti WHERE scuola_id = '${DEMO}')`))
+    expect(e.decisione).toBe('deny')
+    expect(e.motivo).toContain('DELETE')
+  })
+
+  it('l’apply_migration resta negata: la migrazione la applica l’integrazione al merge', () => {
+    expect(freno(sql('SELECT 1', 'mcp__supabase__apply_migration')).decisione).toBe('deny')
+  })
+})

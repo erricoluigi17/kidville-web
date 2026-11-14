@@ -135,6 +135,12 @@ assenza; la tabella per toglierne una resta nel Compito 1, passo 5 del piano
 `FRENO SQL esito=negato categoria=DELETE` in `.claude/.permessi-auto.log`. Dopo un cambio di CLI la
 prova si rifà con `EXPLAIN DELETE FROM public.app_log WHERE false` (vedi la storia dei permessi).
 
+🟩 **Le cancellazioni delle prove le fa l'assistente — dal 2026-11-14.** Il titolare ha deciso: *«le cancellazioni delle cose fatte per provare le
+fa l'assistente»*. **Il freno resta acceso e non si aggira.** Come: (1) la **Demo** si riporta alla partenza con le funzioni `demo_fotografa`,
+`demo_ripristina`, `demo_controllo`, chiamate con una `SELECT`: rifiutano ogni sede il cui uuid non comincia per `e2e00000` (procedura in
+`docs/superpowers/simulazione/anno-intero-demo.md`); (2) i **file finti in Storage** si tolgono dalla dashboard, uno per nome esatto; (3) una prova
+finita in una **sede vera** resta ferma al freno: si mostra al titolare.
+
 ⚠️ Il blocco `autoMode` va in **`~/.claude/settings.json`**, mai in `.claude/settings.json`: ha scope
 «User or managed», e da un file di progetto viene ignorato **in silenzio**. È stato nel posto
 sbagliato per sedici giorni senza avere alcun effetto. Si verifica con `claude auto-mode config`,

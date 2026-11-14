@@ -103,6 +103,10 @@ l'integrazione al merge. Il freno `.claude/hooks/supabase_sql_freno.py` nega `ap
 istruzioni distruttive su `execute_sql` (anche quelle dentro una stringa che il database esegue): si
 mostrano al titolare. Dettagli in `CLAUDE.md`, dove sta anche la nota sulle quattro aggiunte al freno,
 decise in assenza del titolare il 25/10 e confermate da lui una per una il 04/11.
+🟩 **Dal 2026-11-14 le cancellazioni delle prove le fa l'assistente** (decisione del titolare: *«le cancellazioni delle cose fatte per provare le fa
+l'assistente»*). Il freno resta acceso e non si aggira: la Demo si riporta alla partenza con le funzioni `demo_fotografa`, `demo_ripristina`,
+`demo_controllo` (una `SELECT`; rifiutano ogni sede che non comincia per `e2e00000`); i file finti in Storage si tolgono dalla dashboard, uno per
+nome esatto; una prova finita in una sede vera resta ferma al freno. Procedura in `docs/superpowers/simulazione/anno-intero-demo.md`.
 🟥 **Dal 2026-10-30 il piano lo approva il titolare**, dopo averlo letto: l'hook che approvava
 `ExitPlanMode` da solo è stato tolto, e non si rimette senza che lo chieda lui.
 🔴 Resta vero, e non cambia con i permessi: in produzione ci sono **dati reali di minori**. Non
